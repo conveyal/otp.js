@@ -1,0 +1,1 @@
+window.L = require('backbone/backbone.js');

@@ -1,0 +1,28 @@
+{
+  "author": "Conveyal",
+  "name": "otp.js",
+  "description": "OpenTripPlanner JS",
+  "version": "1.0.0",
+  "homepage": "http://conveyal.com/",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/conveyal/otp.js.git"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "leaflet": "0.6.2",
+    "mustache": "~0.7.2",
+    "backbone": "1.0.0"
+  },
+  "scripts": {
+    "test": "mocha-phantomjs test/index.html"
+  },
+  "devDependencies": {
+    "uglify-js": "~2.2.5",
+    "browserify": "~2.22.0"
+  },
+  "optionalDependencies": {},
+  "engines": {
+    "node": "*"
+  }
+}
