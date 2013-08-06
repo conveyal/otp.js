@@ -12,13 +12,19 @@
   "dependencies": {
     "leaflet": "0.6.2",
     "mustache": "~0.7.2",
-    "backbone": "1.0.0"
+    "backbone": "1.0.0",
+    "underscore": ">=1.4.3",
+    "jquery-browserify": ">=1.8.1"
   },
   "scripts": {
     "test": "mocha-phantomjs test/index.html"
   },
   "devDependencies": {
     "uglify-js": "~2.2.5",
+    "mocha": "~1.9",
+    "expect.js": "~0.2.0",
+    "sinon": "~1.7.3",
+    "happen": "~0.1.2",
     "browserify": "~2.22.0"
   },
   "optionalDependencies": {},

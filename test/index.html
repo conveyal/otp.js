@@ -1,0 +1,34 @@
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mocha Tests</title>
+  <link rel="stylesheet" href="../node_modules/mocha/mocha.css" />
+</head>
+<body>
+  <div id="mocha"></div>
+  <script src="../node_modules/jquery-browserify/lib/jquery.js"></script>
+  <script src="../node_modules/expect.js/expect.js"></script>
+  <script src="../node_modules/mocha/mocha.js"></script>
+  <script src="../node_modules/happen/src/happen.js"></script>
+
+  <script src="../node_modules/sinon/pkg/sinon-1.7.3.js"></script>
+  
+
+  <!--[if IE]>
+  <script src="../node_modules/sinon/pkg/sinon-ie-1.7.3.js"></script>
+  <![endif]-->
+
+  <script src="../dist/otp.standalone.uncompressed.js"></script>
+
+  <script>
+    mocha.setup('bdd');
+  </script>
+  <script src="util.js"></script>
+
+  <script src="spec/models.js"></script>
+
+  <script>
+    (window.mochaPhantomJS || window.mocha).run();
+  </script>
+</body>
+</html>
