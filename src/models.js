@@ -10,9 +10,6 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
       initialize: function(opts) {
 
         _.bindAll(this, 'request', 'processRequest');
-
-        this.response = null;
-
       },
 
       defaults: {  
@@ -53,17 +50,19 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
         $.ajax(this.urlRoot, {dataType: 'jsonp', data: OTP.utils.filterParams(this.attributes)})
           .done(function(data) {
             m.trigger('success', m.processRequest(data));
-          }); /*
+          })
           .fail(function(data){
             m.trigger('failure', data);
-          });*/
+          });
       },
 
       processRequest: function(data) {
 
-        this.response = new OTP.models.OtpPlanResponse(data);
+        var response = new OTP.models.OtpPlanResponse(data);
 
-        this.response.set('request', this);
+        response.set('request', this);
+
+        return response;
 
       }
 });
@@ -73,9 +72,15 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({
 
       initialize: function(opts){
 
+        // need this or need to move init code to constructor?
+        this.unset('plan');
+
         var rawAttributes = arguments[0]['plan'];
-        var processedAttributes = _.omit(rawAttributes, ['itineraries']);
+        var processedAttributes = _.omit(rawAttributes, ['itineraries', 'to', 'from']);
         
+        processedAttributes.to = new OTP.models.OtpItineraryStop(rawAttributes['to']);
+        processedAttributes.from = new OTP.models.OtpItineraryStop(rawAttributes['from']);
+
         processedAttributes.itineraries = new OTP.models.OtpItineraries();
         processedAttributes.itineraries.add(rawAttributes['itineraries']);
 
