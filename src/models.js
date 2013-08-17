@@ -64,6 +64,16 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
 
         return response;
 
+      },
+
+      getFromLatLng: function() {
+          var llStr = this.get('fromPlace').split('::')[0].split(',');
+          return [ parseFloat(llStr[0]), parseFloat(llStr[1]) ];
+      },
+
+      getToLatLng: function() {
+          var llStr = this.get('toPlace').split('::')[0].split(',');
+          return [ parseFloat(llStr[0]), parseFloat(llStr[1]) ];
       }
 });
 
@@ -83,6 +93,7 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({
 
         processedAttributes.itineraries = new OTP.models.OtpItineraries();
         processedAttributes.itineraries.add(rawAttributes['itineraries']);
+        //processedAttributes.itineraries.initListeners();
 
         this.set(processedAttributes);
       },
@@ -109,7 +120,7 @@ module.exports.OtpItinerary = Backbone.Model.extend({
         processedAttributes.legs.add(rawAttributes['legs']);
 
         this.set(processedAttributes);
-        
+
       },
 
       defaults: {  
@@ -124,7 +135,18 @@ module.exports.OtpItinerary = Backbone.Model.extend({
         transfers: null,
         fare: [],
         legs: []
-      }
+      },
+
+
+      /* returns [[south, west], [north, east]] */    
+    
+      getBoundsArray : function() {
+          var legs = this.get('legs');
+          var start = legs.at(0).get('from');
+          var end = legs.at(legs.length-1).get('to');
+          return [[Math.min(start.lat, end.lat), Math.min(start.lon, end.lon)],
+                  [Math.max(start.lat, end.lat), Math.max(start.lon, end.lon)]];
+      },
 
 
   });
@@ -132,7 +154,20 @@ module.exports.OtpItinerary = Backbone.Model.extend({
 module.exports.OtpItineraries = Backbone.Collection.extend({ 
       
       type: 'OtpItineraries',
-      model: module.exports.OtpItinerary
+      model: module.exports.OtpItinerary,
+
+      initialize : function() {
+        // for any itin added to this collection..
+        this.on("add", function(itin) {
+          // ..wire its "activate" event to trigger a "deactivate" on the collection's previously active itin (if any exists)
+          this.listenTo(itin, "activate", function() {
+            if(this.activeItinerary) this.activeItinerary.trigger("deactivate");
+            // ..and set the collection's active itin to the newly activated one
+            this.activeItinerary = itin;
+          })
+        });
+      },
+
   });
 
  
@@ -187,7 +222,39 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({
         notes: [],
 
         alerts: []
-      }
+      },
+
+      isTransit : function(mode) {
+        mode = mode || this.get('mode');
+        return mode === "TRANSIT" || mode === "SUBWAY" || mode === "RAIL" || mode === "BUS" || mode === "TRAM" || mode === "GONDOLA" || mode === "TRAINISH" || mode === "BUSISH";
+      },
+
+      isWalk : function(mode) {
+        mode = mode || this.get('mode');
+        return mode === "WALK";
+      },
+
+      isBicycle : function(mode) {
+        mode = mode || this.get('mode');
+        return mode === "BICYCLE";
+      },
+
+      isCar : function(mode) {
+        mode = mode || this.get('mode');
+        return mode === "CAR";
+      },
+
+      getMapColor : function(mode) {
+        mode = mode || this.get('mode');
+        if(mode === "WALK") return '#444';
+        if(mode === "BICYCLE") return '#0073e5';
+        if(mode === "SUBWAY") return '#f00';
+        if(mode === "RAIL") return '#b00';
+        if(mode === "BUS") return '#080';
+        if(mode === "TRAM") return '#800';
+        if(mode === "CAR") return '#444';
+        return '#aaa';
+      },
 
   });
 

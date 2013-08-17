@@ -1,0 +1,21 @@
+body {
+	font-family: sans-serif;
+}
+
+#narrative {
+	position: absolute;
+	top: 0px;
+	bottom: 0px;
+	left: 0px;
+	width: 380px;
+	overflow: auto;
+	padding: 10px;
+}
+
+#map {
+	position: absolute;
+	top: 0px;
+	bottom: 0px;
+	right: 0px;
+	left: 400px;
+}

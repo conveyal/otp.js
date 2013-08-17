@@ -1,0 +1,171 @@
+
+.otp-itinerary {
+	margin-top: 1em;
+	border: 2px solid black;
+}
+
+.otp-itinHeader {
+	padding: .4em;
+	font-weight: bold;
+	color: white;
+	background: #000;
+	cursor: pointer;
+}
+
+.otp-itinBody {
+	padding: .5em;	
+}
+
+
+.otp-leg {
+	margin-top: .5em;
+	font-size: .9em;
+}
+
+.otp-legHeader {
+	padding: .5em;
+	background: #ddd;
+	cursor: pointer;
+}
+
+.otp-legBody {
+	background: #f0f0f0;
+	padding: .5em;
+}
+
+
+.otp-transitLeg-leftCol {
+    font-size: .9em;
+    color: gray;
+    width: 50px;
+    float: left;
+}
+
+.otp-transitLeg-endpointDesc {
+    font-size: .9em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+    padding: .0em 0 0 5px;
+    cursor: pointer;
+}
+
+.otp-transitLeg-endpointDescSub {
+    font-size: .8em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+    padding: .0em 0 0 5px;
+    color: gray;
+    cursor: pointer;
+}
+
+.otp-transitLeg-buffer {
+    font-size: .9em;
+    height: .9em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+}
+
+.otp-transitLeg-elapsedDesc {
+    font-size: .9em;
+    border-left: 1px solid #ccc;
+    color: gray;
+    margin-left: 55px;
+    padding-left: 5px;
+}
+
+.otp-legStep-row {
+    background: #e8e8e8;
+    margin-bottom: .3em;
+    padding: .3em;
+    cursor: pointer;
+}
+
+.otp-legStep-dist {
+    margin: 0px 4px 0px 8px;
+    font-size: .8em;
+    width: 25px;
+    float: right;
+    text-align: center;
+    color: gray;
+    
+}
+
+.otp-legStep-text {
+    font-size: .8em;
+    margin: 0px 30px;
+}
+
+.otp-legStep-icon {
+    margin: 3px 8px 3px 4px;
+    width: 20px;
+    height: 20px;
+    float: left;
+}
+
+.otp-legStep-icon-LEFT {
+    background: url('images/directions/left.png')
+}
+
+.otp-legStep-icon-RIGHT {
+    background: url('images/directions/right.png')
+}
+
+.otp-legStep-icon-HARD_LEFT {
+    background: url('images/directions/hard_left.png')
+}
+
+.otp-legStep-icon-HARD_RIGHT {
+    background: url('images/directions/hard_right.png')
+}
+
+.otp-legStep-icon-SLIGHTLY_LEFT {
+    background: url('images/directions/slightly_left.png')
+}
+
+.otp-legStep-icon-SLIGHTLY_RIGHT {
+    background: url('images/directions/slightly_right.png')
+}
+
+.otp-legStep-icon-TURN_LEFT {
+    background: url('images/directions/turn_left.png')
+}
+
+.otp-legStep-icon-TURN_RIGHT {
+    background: url('images/directions/turn_right.png')
+}
+
+.otp-legStep-icon-EXIT_LEFT {
+    background: url('images/directions/exit_left.png')
+}
+
+.otp-legStep-icon-EXIT_RIGHT {
+    background: url('images/directions/exit_right.png')
+}
+
+.otp-legStep-icon-UTURN_LEFT {
+    background: url('images/directions/uturn_left.png')
+}
+
+.otp-legStep-icon-UTURN_RIGHT {
+    background: url('images/directions/uturn_right.png')
+}
+
+.otp-legStep-icon-CONTINUE {
+    background: url('images/directions/continue.png')
+}
+
+.otp-legStep-icon-MERGE {
+    background: url('images/directions/merge.png')
+}
+
+.otp-legStep-icon-ELEVATOR {
+    background: url('images/directions/elevator.png')
+}
+
+.otp-legStep-icon-CIRCLE_CLOCKWISE {
+    background: url('images/directions/circle_clockwise.png')
+}
+
+.otp-legStep-icon-CIRCLE_COUNTERCLOCKWISE {
+    background: url('images/directions/circle_counterclockwise.png')
+}
