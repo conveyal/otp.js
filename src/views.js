@@ -1,6 +1,6 @@
 var _ = require('underscore');
 var $ = jQuery = require('jquery-browserify');
-var Backbone = require('backbone');
+var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
 

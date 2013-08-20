@@ -1,2 +1,1 @@
-var $ = jQuery = require('jquery-browserify');
-window.L = require('backbone');
+window.Backbone = require('./lib/backbone.js');
