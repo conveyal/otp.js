@@ -62,10 +62,14 @@ var itinNarrativeTemplate = Handlebars.compile([
 var OtpItineraryNarrativeView = Backbone.View.extend({
  
     events: {
-        "click .otp-itinHeader" : "headerClicked"
+        "click .otp-itinHeader" : "headerClicked",
+        "mouseover .otp-itinHeader" : "headerMouseover",
+        "mouseout .otp-itinHeader" : "headerMouseout",
     },
 
     initialize : function() {
+        _.bindAll(this, "headerClicked", "headerMouseover", "headerMouseout");
+
         this.listenTo(this.model, "activate", this.expand);
         this.listenTo(this.model, "deactivate", this.collapse);
     },
@@ -98,18 +102,34 @@ var OtpItineraryNarrativeView = Backbone.View.extend({
     },
 
     headerClicked : function(e) {
-        if(!this.$el.find(".otp-itinBody").is(":visible")) {
+        if(!this.isActive()) {
             this.model.trigger("activate");
         } 
     },
+
+    headerMouseover : function(e) {
+        if(!this.isActive()) {
+            this.model.trigger("mouseover");
+        }
+    },
+
+    headerMouseout : function(e) {
+        if(!this.isActive()) {
+            this.model.trigger("mouseout");
+        }
+    },
+
+    isActive : function() {
+        return this.options.planView.model.get("itineraries").activeItinerary === this.model;
+    }
 
 });
 
 module.exports.OtpItineraryNarrativeView = OtpItineraryNarrativeView;
 
 
-Handlebars.registerHelper('formatTime', function(time) {
-    return OTP.utils.formatTime(time);
+Handlebars.registerHelper('formatTime', function(time, options) {
+    return OTP.utils.formatTime(time, options.hash['format']);
 });
 
 Handlebars.registerHelper('formatDuration', function(duration) {
@@ -267,6 +287,16 @@ var OtpStepNarrativeView = Backbone.View.extend({
 
 /** Map View **/
 
+var legFromBubbleTemplate = Handlebars.compile([
+    '<div class="otp-legBubble-icon-topRow-{{orientation}}">',
+        '<div class="otp-legBubble-arrow-right" style="float: left; margin-left:4px;"></div>',
+        '<div style="width: 16px; height: 16px; margin-left: 12px;">',
+            '<div class="otp-modeIcon-{{mode}}" style="margin: auto auto;"></div>',
+        '</div>',
+    '</div>',
+    '{{{formatTime from.departure format="h:mm"}}}'
+].join('\n'));
+
 module.exports.OtpItineraryMapView = Backbone.View.extend({
  
     initialize : function() {
@@ -275,8 +305,18 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         this.pathMarkerLayer = new L.LayerGroup();
         this.highlightLayer = new L.LayerGroup();
 
-        this.listenTo(this.model, "activate", this.render);
+        this.listenTo(this.model, "activate", function() {
+            this.preview = false;
+            this.render()
+        });
         this.listenTo(this.model, "deactivate", this.clearLayers);
+
+        this.listenTo(this.model, "mouseover", function() {
+            this.preview = true;
+            this.render();
+        });
+        this.listenTo(this.model, "mouseout", this.clearLayers);
+
     },
 
     attachToMap : function() {
@@ -305,18 +345,46 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             // draw the polyline
             var polyline = new L.Polyline(OTP.utils.decodePolyline(leg.get('legGeometry').points));
             var weight = 8;
-            polyline.setStyle({ color : leg.getMapColor(), weight: weight});
+            polyline.setStyle({
+                color : leg.getMapColor(),
+                weight: weight,
+                opacity: this.preview ? 0.2 : 0.5
+            });
             this.pathLayer.addLayer(polyline);
             polyline.leg = leg;
             polyline.bindPopup("(" + leg.get('routeShortName') + ") " + leg.get('routeLongName'));
             
-            /*if(leg.isTransit()) {
-                this.drawStartBubble(leg, false);
-            }*/
-
+            if(leg.isTransit() && !this.preview) {
+                this.pathMarkerLayer.addLayer(this.getLegFromBubbleMarker(leg, false));
+            }
         }
         
-        this.options.map.fitBounds(this.model.getBoundsArray());
+        if(!this.preview) this.options.map.fitBounds(this.model.getBoundsArray());
+    },
+
+    getLegFromBubbleMarker : function(leg, highlight) {
+        var quadrant = (leg.get('from').lat < leg.get('to').lat ? 's' : 'n') + (leg.get('from').lon < leg.get('to').lon ? 'w' : 'e');        highlight = highlight || false;
+        
+        var context = _.clone(leg.attributes);
+        context.orientation = quadrant[0];
+
+        return new L.Marker(
+            [leg.get('from').lat, leg.get('from').lon], {
+                icon: new L.DivIcon({
+                    className: 'otp-legBubble-icon otp-legBubble-icon-' + quadrant + (highlight ? "-highlight" : ""),
+                    iconSize: [32,44],
+                    iconAnchor: this.getLegBubbleAnchor(quadrant),
+                    html: legFromBubbleTemplate(context) 
+                })
+            }
+        );
+    },
+
+    getLegBubbleAnchor : function(quadrant) {
+        if(quadrant === 'nw') return [32,44];
+        if(quadrant === 'ne') return [0,44];
+        if(quadrant === 'sw') return [32,0];
+        if(quadrant === 'se') return [0,0];
     },
 
     clearLayers : function() {
