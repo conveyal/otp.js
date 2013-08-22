@@ -129,3 +129,8 @@
     background: url('images/mode/car.png');
     width: 15px; height: 16px;
 }
+
+.otp-routeShortName {
+
+    margin-top: -1px;
+}

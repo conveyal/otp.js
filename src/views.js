@@ -129,11 +129,17 @@ module.exports.OtpItineraryNarrativeView = OtpItineraryNarrativeView;
 
 
 Handlebars.registerHelper('formatTime', function(time, options) {
-    return OTP.utils.formatTime(time, options.hash['format']);
+    if(time)
+        return OTP.utils.formatTime(time, options.hash['format']);
+    else
+        return '';
 });
 
 Handlebars.registerHelper('formatDuration', function(duration) {
-    return OTP.utils.msToHrMin(duration);
+    if(duration)
+        return OTP.utils.msToHrMin(duration); 
+    else
+        return '';
 });
 
 
@@ -292,6 +298,7 @@ var legFromBubbleTemplate = Handlebars.compile([
         '<div class="otp-legBubble-arrow-right" style="float: left; margin-left:4px;"></div>',
         '<div style="width: 16px; height: 16px; margin-left: 12px;">',
             '<div class="otp-modeIcon-{{mode}}" style="margin: auto auto;"></div>',
+            '<div class="otp-routeShortName">{{routeShortName}}</div>',
         '</div>',
     '</div>',
     '{{{formatTime from.departure format="h:mm"}}}'
@@ -352,7 +359,19 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             });
             this.pathLayer.addLayer(polyline);
             polyline.leg = leg;
-            polyline.bindPopup("(" + leg.get('routeShortName') + ") " + leg.get('routeLongName'));
+
+            var popupContent = '';
+
+            if(leg.get('routeShortName'))
+                popupContent += leg.get('routeShortName');
+
+            if(leg.get('routeLongName'))
+                if(popupContent != '')
+                    popupContent += ': ';
+
+                popupContent += leg.get('routeLongName');
+
+            polyline.bindPopup(popupContent);
             
             if(leg.isTransit() && !this.preview) {
                 this.pathMarkerLayer.addLayer(this.getLegFromBubbleMarker(leg, false));
