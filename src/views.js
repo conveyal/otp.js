@@ -90,11 +90,11 @@ var OtpItineraryNarrativeView = Backbone.View.extend({
     },
 
     collapse : function() {
-        this.$el.find(".otp-itinBody").hide("fast");
+        this.$el.find(".otp-itinBody").slideUp("fast");
     },
 
     expand : function() {
-        this.$el.find(".otp-itinBody").show("fast");
+        this.$el.find(".otp-itinBody").slideDown("fast");
     },
 
     headerClicked : function(e) {
@@ -190,8 +190,8 @@ var OtpLegNarrativeView = Backbone.View.extend({
 
     headerClicked : function(e) {
         var body = this.$el.find(".otp-legBody");
-        if(body.is(":visible")) body.hide("fast");
-        else body.show("fast");
+        if(body.is(":visible")) body.slideUp("fast");
+        else body.slideDown("fast");
     }
 
 }); module.exports.OtpLegNarrativeView = OtpLegNarrativeView;
