@@ -381,7 +381,6 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         if(!this.preview) this.options.map.fitBounds(this.model.getBoundsArray());
     },
 
-
     getLegFromBubbleMarker : function(leg, highlight) {
         var quadrant = (leg.get('from').lat < leg.get('to').lat ? 's' : 'n') + (leg.get('from').lon < leg.get('to').lon ? 'w' : 'e');        highlight = highlight || false;
         
