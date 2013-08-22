@@ -66,9 +66,10 @@ var decodePolyline = function(polyline) {
 module.exports.decodePolyline = decodePolyline;
 
 
-var formatTime = function(time) {
+var formatTime = function(time, format) {
+    var format = format || "h:mma";
 	var m = moment(time);
-	return m.format("h:mma");
+	return m.format(format);
 };
 
 module.exports.formatTime = formatTime;
