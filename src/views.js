@@ -63,12 +63,12 @@ var OtpItineraryNarrativeView = Backbone.View.extend({
  
     events: {
         "click .otp-itinHeader" : "headerClicked",
-        "mouseover .otp-itinHeader" : "headerMouseover",
-        "mouseout .otp-itinHeader" : "headerMouseout",
+        "mouseenter .otp-itinHeader" : "headerMouseenter",
+        "mouseleave .otp-itinHeader" : "headerMouseleave",
     },
 
     initialize : function() {
-        _.bindAll(this, "headerClicked", "headerMouseover", "headerMouseout");
+        _.bindAll(this, "headerClicked", "headerMouseenter", "headerMouseleave");
 
         this.listenTo(this.model, "activate", this.expand);
         this.listenTo(this.model, "deactivate", this.collapse);
@@ -107,15 +107,15 @@ var OtpItineraryNarrativeView = Backbone.View.extend({
         } 
     },
 
-    headerMouseover : function(e) {
+    headerMouseenter : function(e) {
         if(!this.isActive()) {
-            this.model.trigger("mouseover");
+            this.model.trigger("mouseenter");
         }
     },
 
-    headerMouseout : function(e) {
+    headerMouseleave : function(e) {
         if(!this.isActive()) {
-            this.model.trigger("mouseout");
+            this.model.trigger("mouseleave");
         }
     },
 
@@ -158,17 +158,17 @@ var accessLegTemplate = Handlebars.compile([
 var transitLegTemplate = Handlebars.compile([
     '<div class="otp-leg">',
         '<div class="otp-legHeader">',
-            '<b>{{mode}}</b> to {{to.name}}',
+            '<b>{{mode}}</b> {{routeLongName}} to {{to.name}}',
         '</div>',
         '<div class="otp-legBody">',
             '<div class="otp-transitLeg-leftCol">{{formatTime startTime}}</div>',
-            '<div class="otp-transitLeg-endpointDesc"><b>Depart</b>: {{from.name}}</div>',
+            '<div class="otp-transitLeg-endpointDesc otp-from"><b>Depart</b>: {{from.name}}</div>',
             '<div class="otp-transitLeg-endpointDescSub">Stop #{{from.stopId.id}}</div>',
             '<div class="otp-transitLeg-buffer"></div>',
             '<div class="otp-transitLeg-elapsedDesc"><i>Time in transit: {{formatDuration duration}}</i></div>',
             '<div class="otp-transitLeg-buffer"></div>',
             '<div class="otp-transitLeg-leftCol">{{formatTime endTime}}</div>',
-            '<div class="otp-transitLeg-endpointDesc"><b>Arrive:</b>{{to.name}}</div>',
+            '<div class="otp-transitLeg-endpointDesc otp-to"><b>Arrive</b>: {{to.name}}</div>',
         '</div>',    
     '</div>'
 ].join('\n'));
@@ -185,7 +185,11 @@ var genericLegTemplate = Handlebars.compile([
 var OtpLegNarrativeView = Backbone.View.extend({
  
     events: {
-        "click .otp-legHeader" : "headerClicked"
+        "click .otp-legHeader" : "headerClicked",
+        "mouseenter .otp-legHeader" : "headerMouseenter",
+        "mouseleave .otp-legHeader" : "headerMouseleave",        
+        "click .otp-from" : "fromClicked",
+        "click .otp-to" : "toClicked",
     },
 
     render : function() {
@@ -218,7 +222,23 @@ var OtpLegNarrativeView = Backbone.View.extend({
         var body = this.$el.find(".otp-legBody");
         if(body.is(":visible")) body.slideUp("fast");
         else body.slideDown("fast");
-    }
+    },
+
+    headerMouseenter : function(e) {
+        this.model.trigger("mouseenter");
+    },
+
+    headerMouseleave : function(e) {
+        this.model.trigger("mouseleave");
+    },
+
+    fromClicked : function(e) {
+        this.model.trigger("fromclick");
+    },
+
+    toClicked : function(e) {
+        this.model.trigger("toclick");
+    },
 
 }); module.exports.OtpLegNarrativeView = OtpLegNarrativeView;
 
@@ -264,6 +284,9 @@ var stepTemplate = Handlebars.compile([
 var OtpStepNarrativeView = Backbone.View.extend({
  
     events: {
+        "click .otp-legStep-row" : "rowClicked",
+        "mouseenter .otp-legStep-row" : "rowMouseenter",
+        "mouseleave .otp-legStep-row" : "rowMouseleave",   
     },
 
     render : function() {
@@ -285,6 +308,18 @@ var OtpStepNarrativeView = Backbone.View.extend({
         context.distanceUnit = distStr.split(" ")[1];
 
         this.$el.html(stepTemplate(context));
+    },
+
+    rowClicked : function(e) {
+        this.model.trigger("click");
+    },
+
+    rowMouseenter : function(e) {
+        this.model.trigger("mouseenter");
+    },
+
+    rowMouseleave : function(e) {
+        this.model.trigger("mouseleave");
     },
 
 }); module.exports.OtpStepNarrativeView = OtpStepNarrativeView;
@@ -314,16 +349,60 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
 
         this.listenTo(this.model, "activate", function() {
             this.preview = false;
-            this.render()
+            this.render();
+            this.options.map.fitBounds(this.model.getBoundsArray())
         });
         this.listenTo(this.model, "deactivate", this.clearLayers);
 
-        this.listenTo(this.model, "mouseover", function() {
+        this.listenTo(this.model, "mouseenter", function() {
             this.preview = true;
             this.render();
         });
-        this.listenTo(this.model, "mouseout", this.clearLayers);
+        this.listenTo(this.model, "mouseleave", this.clearLayers);
 
+        for(var l=0; l < this.model.get('legs').length; l++) {
+           var leg = this.model.get('legs').at(l);
+
+            this.listenTo(leg, "mouseenter", _.bind(function() {
+                this.view.highlightLeg = this.leg;
+                this.view.render();
+            }, {view: this, leg : leg}));
+
+            this.listenTo(leg, "mouseleave", _.bind(function() {
+                this.view.highlightLeg = null;
+                this.view.render();
+            }, {view: this, leg : leg}));
+
+            this.listenTo(leg, "fromclick", _.bind(function() {
+                this.view.options.map.panTo([this.leg.get("from").lat, this.leg.get("from").lon]);
+            }, {view: this, leg : leg}));
+
+            this.listenTo(leg, "toclick", _.bind(function() {
+                this.view.options.map.panTo([this.leg.get("to").lat, this.leg.get("to").lon]);
+            }, {view: this, leg : leg}));
+
+            var steps = leg.get('steps');
+            if(!steps) continue;
+            for(var s=0; s < steps.length; s++) {
+                var step = steps.at(s);
+
+                this.listenTo(step, "click", _.bind(function() {
+                    this.view.options.map.panTo([this.step.get('lat'), this.step.get('lon')]);
+                }, {view: this, step : step}));
+    
+                this.listenTo(step, "mouseenter", _.bind(function() {
+                    var popup = L.popup()
+                    .setLatLng([this.step.get('lat'), this.step.get('lon')])
+                    .setContent(this.step.get('streetName'))
+                    .openOn(this.view.options.map);
+                }, {view: this, step : step}));
+
+                this.listenTo(step, "mouseleave", _.bind(function() {
+                    this.view.options.map.closePopup();
+                }, {view: this, step : step}));
+
+            }
+        }
     },
 
     attachToMap : function() {
@@ -349,9 +428,22 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         for(var i=0; i < this.model.get('legs').length; i++) {
             var leg = this.model.get('legs').at(i);
 
-            // draw the polyline
-            var polyline = new L.Polyline(OTP.utils.decodePolyline(leg.get('legGeometry').points));
+            var points = OTP.utils.decodePolyline(leg.get('legGeometry').points);
             var weight = 8;
+
+            // draw highlight, if applicable
+            if(this.highlightLeg === leg) {
+                var highlight = new L.Polyline(points);
+                highlight.setStyle({
+                    color : "#ffff00",
+                    weight: weight * 2,
+                    opacity: this.preview ? 0.2 : 0.5
+                });
+                this.highlightLayer.addLayer(highlight);
+            }
+
+            // draw the polyline
+            var polyline = new L.Polyline(points);
             polyline.setStyle({
                 color : leg.getMapColor(),
                 weight: weight,
@@ -374,11 +466,9 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             polyline.bindPopup(popupContent);
             
             if(leg.isTransit() && !this.preview) {
-                this.pathMarkerLayer.addLayer(this.getLegFromBubbleMarker(leg, false));
+                this.pathMarkerLayer.addLayer(this.getLegFromBubbleMarker(leg, this.highlightLeg === leg));
             }
         }
-        
-        if(!this.preview) this.options.map.fitBounds(this.model.getBoundsArray());
     },
 
     getLegFromBubbleMarker : function(leg, highlight) {
