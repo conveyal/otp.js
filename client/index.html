@@ -49,13 +49,13 @@ $(document).ready(function() {
 	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan"
     var requestModel = new OTP.models.OtpPlanRequest(helpers.testRequest, {urlRoot: api });
 
-    var requestMapView = new OTP.views.OtpRequestMapView({
+    var requestMapView = new OTP.map_views.OtpRequestMapView({
     	model: requestModel,
     	map: map
     });
     requestMapView.render();
 
-    var narrativeView = new OTP.views.OtpPlanResponseNarrativeView({
+    var narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({
         el: $('#narrative'),
         map: map,
     });
