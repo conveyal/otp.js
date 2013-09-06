@@ -8,12 +8,8 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
  
     render : function() {
     	var itins = this.model.get("itineraries");
-
     	this.$el.html("Found " + itins.length + " itineraries:");
-
     	_.each(itins.models, this.processItinerary, this);
-
-        itins.at(0).trigger("activate");
     },
 
     processItinerary : function(itin, index) {
@@ -25,26 +21,8 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
 
     	itinView.render();
     	this.$el.append(itinView.el);
-
-        if(this.options.map) {
-            var itinMapView = new OTP.map_views.OtpItineraryMapView({
-                map: this.options.map,
-                model : itin,
-                planView : this
-            });
-        }
     },
 
-    newResponse : function(response) {
-
-        // fire a deactivate event on the old active itin, if needed
-        if(this.model && this.model.get("itineraries") && this.model.get("itineraries").activeItinerary) {
-            this.model.get("itineraries").activeItinerary.trigger("deactivate");
-        }
-
-        this.model = response;
-        this.render();
-    },
 });
 
 module.exports.OtpPlanResponseNarrativeView = OtpPlanResponseNarrativeView;

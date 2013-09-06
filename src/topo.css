@@ -1,0 +1,38 @@
+.leaflet-control-topo {
+	box-shadow: 0 1px 7px rgba(0,0,0,0.4);
+	-webkit-border-radius: 5px;
+	        border-radius: 5px;
+}
+
+.leaflet-control-topo-collapsed {
+	width: 36px;
+	height: 36px;
+	background: #f8f8f9;
+}
+
+.leaflet-control-topo-expanded {
+	width: 80%;
+	height: 200px;	
+	background: #f8f8f9;
+}
+
+.leaflet-control-topo-toggle {
+	position: absolute;
+	right: 0px;
+	bottom: 0px;
+	background: red;
+	width: 28px;
+	height: 28px;
+	margin: 4px;
+	cursor: pointer;
+}
+
+.leaflet-control-topo-graph {
+	position: absolute;
+	top: 0px;
+	right: 32px;
+	bottom: 0px;
+	left: 0px;
+	background: blue;
+	margin: 4px;
+}

@@ -9,6 +9,7 @@
 	<link rel="stylesheet" href="style.css" />
 	<link rel="stylesheet" href="../src/narrative.css" />
 	<link rel="stylesheet" href="../src/map.css" />
+    <link rel="stylesheet" href="../src/topo.css" />
 
 	<link rel="stylesheet" href="../node_modules/leaflet/dist/leaflet.css" />
 </head>
@@ -46,6 +47,13 @@ $(document).ready(function() {
     mapquestOsmLayer.addTo(map);
 
 
+    var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
+    topoControl.addTo(map);
+    /*var topoView = new OTP.topo_views.OtpTopoView({
+        container: topoControl
+    });
+    topoView.render();*/
+    
 	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan"
     var requestModel = new OTP.models.OtpPlanRequest(helpers.testRequest, {urlRoot: api });
 
@@ -55,15 +63,13 @@ $(document).ready(function() {
     });
     requestMapView.render();
 
-    var narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({
-        el: $('#narrative'),
+    var responseView = new OTP.views.OtpPlanResponseView({
+        narrative: $('#narrative'),
         map: map,
     });
 
     requestModel.on('success', function(response) {
-    	//narrativeView.model = response;
-        //narrativeView.render();
-        narrativeView.newResponse(response);
+        responseView.newResponse(response);
     });
 
     requestModel.request();
