@@ -1,6 +1,7 @@
 var _ = require('underscore');
 var $ = jQuery = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
+var Handlebars = require('handlebars');
 
 
 var OtpPlanResponseView = Backbone.View.extend({
@@ -16,9 +17,14 @@ var OtpPlanResponseView = Backbone.View.extend({
             narrativeView.render();
         }
     	var itins = this.model.get("itineraries");
-    	_.each(itins.models, this.processItinerary, this);
 
-        itins.at(0).trigger("activate");
+        if(_.size(itins) > 0) {
+        	_.each(itins.models, this.processItinerary, this);
+
+            itins.at(0).trigger("activate");
+        }
+        else 
+            console.log('no itineraries returned');
     },
 
     processItinerary : function(itin, index) {
@@ -50,3 +56,4 @@ var OtpPlanResponseView = Backbone.View.extend({
 });
 
 module.exports.OtpPlanResponseView = OtpPlanResponseView;
+

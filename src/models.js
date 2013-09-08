@@ -86,16 +86,22 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({
         this.unset('plan');
 
         var rawAttributes = arguments[0]['plan'];
-        var processedAttributes = _.omit(rawAttributes, ['itineraries', 'to', 'from']);
         
-        processedAttributes.to = new OTP.models.OtpItineraryStop(rawAttributes['to']);
-        processedAttributes.from = new OTP.models.OtpItineraryStop(rawAttributes['from']);
+        if(rawAttributes) {
 
-        processedAttributes.itineraries = new OTP.models.OtpItineraries();
-        processedAttributes.itineraries.add(rawAttributes['itineraries']);
-        //processedAttributes.itineraries.initListeners();
+          var processedAttributes = _.omit(rawAttributes, ['itineraries', 'to', 'from']);
+        
+          processedAttributes.to = new OTP.models.OtpItineraryStop(rawAttributes['to']);
+          processedAttributes.from = new OTP.models.OtpItineraryStop(rawAttributes['from']);
 
-        this.set(processedAttributes);
+          processedAttributes.itineraries = new OTP.models.OtpItineraries();
+          processedAttributes.itineraries.add(rawAttributes['itineraries']);
+          //processedAttributes.itineraries.initListeners();
+
+          this.set(processedAttributes);
+
+        }
+        
       },
 
       defaults: {  
