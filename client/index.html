@@ -66,6 +66,7 @@ $(document).ready(function() {
     var responseView = new OTP.views.OtpPlanResponseView({
         narrative: $('#narrative'),
         map: map,
+        topo: topoControl.getGraphElement()
     });
 
     requestModel.on('success', function(response) {

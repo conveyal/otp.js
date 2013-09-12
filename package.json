@@ -15,7 +15,8 @@
     "underscore": ">=1.4.3",
     "jquery-browserify": ">=1.8.1",
     "handlebars": "1.0.12",
-    "moment": "~2.1.0"
+    "moment": "~2.1.0",
+    "raphael": "2.1.0"
   },
   "scripts": {
     "test": "mocha-phantomjs test/index.html"
