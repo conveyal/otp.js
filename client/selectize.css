@@ -1,5 +1,5 @@
 /**
- * selectize.css (v0.7.4)
+ * selectize.css (v0.7.5)
  * Copyright (c) 2013 Brian Reavis & contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this
@@ -38,9 +38,9 @@
   padding: 5px 8px;
   background: #f8f8f8;
   border-bottom: 1px solid #d0d0d0;
-  -webkit-border-radius: 0px 0px 0 0;
-     -moz-border-radius: 0px 0px 0 0;
-          border-radius: 0px 0px 0 0;
+  -webkit-border-radius: 3px 3px 0 0;
+     -moz-border-radius: 3px 3px 0 0;
+          border-radius: 3px 3px 0 0;
 }
 
 .selectize-dropdown-header-close {
@@ -79,12 +79,12 @@
   border-top: 0 none;
 }
 
-.selectize-control.plugin-remove_button .item {
+.selectize-control.plugin-remove_button [data-value] {
   position: relative;
   padding-right: 24px !important;
 }
 
-.selectize-control.plugin-remove_button .item .remove {
+.selectize-control.plugin-remove_button [data-value] .remove {
   position: absolute;
   top: 0;
   right: 0;
@@ -99,19 +99,19 @@
   text-decoration: none;
   vertical-align: middle;
   border-left: 1px solid #d0d0d0;
-  -webkit-border-radius: 0 0px 0px 0;
-     -moz-border-radius: 0 0px 0px 0;
-          border-radius: 0 0px 0px 0;
+  -webkit-border-radius: 0 2px 2px 0;
+     -moz-border-radius: 0 2px 2px 0;
+          border-radius: 0 2px 2px 0;
   -webkit-box-sizing: border-box;
      -moz-box-sizing: border-box;
           box-sizing: border-box;
 }
 
-.selectize-control.plugin-remove_button .item .remove:hover {
+.selectize-control.plugin-remove_button [data-value] .remove:hover {
   background: rgba(0, 0, 0, 0.05);
 }
 
-.selectize-control.plugin-remove_button .item.active .remove {
+.selectize-control.plugin-remove_button [data-value].active .remove {
   border-left-color: #cacaca;
 }
 
@@ -144,9 +144,9 @@
   padding: 8px 8px;
   overflow: hidden;
   border: 1px solid #d0d0d0;
-  -webkit-border-radius: 0px;
-     -moz-border-radius: 0px;
-          border-radius: 0px;
+  -webkit-border-radius: 3px;
+     -moz-border-radius: 3px;
+          border-radius: 3px;
   -webkit-box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.1);
           box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.1);
   -webkit-box-sizing: border-box;
@@ -173,9 +173,9 @@
 }
 
 .selectize-input.dropdown-active {
-  -webkit-border-radius: 0px 0px 0 0;
-     -moz-border-radius: 0px 0px 0 0;
-          border-radius: 0px 0px 0 0;
+  -webkit-border-radius: 3px 3px 0 0;
+     -moz-border-radius: 3px 3px 0 0;
+          border-radius: 3px 3px 0 0;
 }
 
 .selectize-input > * {
@@ -251,9 +251,9 @@
   background: #ffffff;
   border: 1px solid #d0d0d0;
   border-top: 0 none;
-  -webkit-border-radius: 0 0 0px 0px;
-     -moz-border-radius: 0 0 0px 0px;
-          border-radius: 0 0 0px 0px;
+  -webkit-border-radius: 0 0 3px 3px;
+     -moz-border-radius: 0 0 3px 3px;
+          border-radius: 0 0 3px 3px;
   -webkit-box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   -webkit-box-sizing: border-box;
@@ -268,9 +268,9 @@
 
 .selectize-dropdown [data-selectable] .highlight {
   background: rgba(125, 168, 208, 0.2);
-  -webkit-border-radius: 0px;
-     -moz-border-radius: 0px;
-          border-radius: 0px;
+  -webkit-border-radius: 1px;
+     -moz-border-radius: 1px;
+          border-radius: 1px;
 }
 
 .selectize-dropdown [data-selectable],

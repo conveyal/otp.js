@@ -102,7 +102,31 @@ var OtpItineraryTopoView = Backbone.View.extend({
                 var graphArray = [];
                 _.each(leg.get("steps").models, function(step, index) {
                     var stepDistance = step.get('distance');
-                    var elevArray = step.get("elevation");
+
+                    var elevArray;
+
+                    // check for old style strings -- covert to array of pairs
+                    if(_.isArray(step.get("elevation")))
+                        elevArray = step.get("elevation");
+                    else{
+                        var pairs = _([]);
+                        elevArray = _.reduce(step.get("elevation").split(','), function(m, v) {
+
+                            if(m.last() && m.last().size() == 1) {
+                                var p = m.last();
+                                p.push(v);
+                                m[m.length] = p;
+                            }
+                            else {
+                                m.push(_([v]));
+                            }
+                                
+                            return m;
+                        }, pairs);
+                    }
+                        
+
+
                     elevArray.sort(function(a,b) {
                         if(a.first < b.first) return -1;
                         if(a.first > b.first) return 1;
@@ -163,7 +187,7 @@ var OtpItineraryTopoView = Backbone.View.extend({
                 walkBikeDist += legDistance;
                 var t = walkBikeDist / totalWalkBikeDist;
                 if(t < 1) {
-                    paper.rect(axisWidth +  Math.round(t * graphWidth), 0, 1, graphHeight).attr({ "fill": "#000", "stroke" : null });
+                    paper.rect(axisWidth +  Math.round(t * graphWidth), 0, 1, graphHeight).attr({ "fill": "#aaa", "stroke" : null });
                 }
 
                 lastT = t;
@@ -221,12 +245,14 @@ var LeafletTopoGraphControl = L.Control.extend({
 
     _expand : function() {
         L.DomUtil.addClass(this._container, 'leaflet-control-topo-expanded');
+        $(this._container).width($(this._map._container).width() * 0.8);
         this._graphDiv.trigger($.Event('resize'));
         this._expanded = true;
     },
 
     _collapse : function() {
         this._container.className = this._container.className.replace(' leaflet-control-topo-expanded', '');
+        $(this._container).width('36px');
         this._expanded = false;
     },
 

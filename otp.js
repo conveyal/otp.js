@@ -9,4 +9,6 @@ OTP = module.exports = {
 	narrative_views: require('./src/narrative_views'),
 	map_views: require('./src/map_views'),
 	topo_views: require('./src/topo_views'),
+	bike_views: require('./src/bike_views'),
+	request_views: require('./src/request_views')
 };

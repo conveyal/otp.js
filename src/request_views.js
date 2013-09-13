@@ -39,6 +39,11 @@ var requestFormTemplate = Handlebars.compile([
                 '</div>',
 
                 '<div class="control-group">',
+                    '<div id="bikeTriangle" style="height: 100px; cursor: pointer;">',
+                    '</div>',    
+                '</div>',
+
+                '<div class="control-group">',
                     '<label class="control-label" for="maxWalkDist">Maximum walk: </label>',
                     '<div class="controls">',
                         '<select id="maxWalkDistance" class="span12" placeholder="Arrive"><option value="402">1/4 mile</option><option value="804">1/2 mile</option><option value="1223" selected>3/4 mile</option><option value="1609">1 mile</option><option value="3218">2 miles</option><option value="4828">3 miles</option></select>',
@@ -77,7 +82,7 @@ var OtpRequestFormView = Backbone.View.extend({
 
         this.model.on("change", function(data) {
             
-            var reverseLookup = true;
+            var reverseLookup = false;
 
             
 
@@ -90,7 +95,13 @@ var OtpRequestFormView = Backbone.View.extend({
                         url: 'http://localhost:9000/r/' + encodeURIComponent(data.attributes.fromPlace),
                         type: 'GET',
                         error: function() {
-                            //callback();
+                            view.updatingForm = true;
+
+                            select.clearOptions();
+                            select.addOption({address: "Marker location", latlon: data.attributes.fromPlace, lat: '', lon: '', city: '', state: ''});
+                            select.setValue(data.attributes.fromPlace);
+                            
+                            view.updatingForm = false;                        
                         },
                         success: function(res) {
                                 view.updatingForm = true;
@@ -125,7 +136,13 @@ var OtpRequestFormView = Backbone.View.extend({
                         url: 'http://localhost:9000/r/' + encodeURIComponent(data.attributes.toPlace),
                         type: 'GET',
                         error: function() {
-                            //callback();
+                            view.updatingForm = true;
+
+                            select.clearOptions();
+                            select.addOption({address: "Marker location", latlon: data.attributes.toPlace, lat: '', lon: '', city: '', state: ''});
+                            select.setValue(data.attributes.toPlace);
+
+                            view.updatingForm = false;
                         },
                         success: function(res) {
                                 view.updatingForm = true;
@@ -165,6 +182,12 @@ var OtpRequestFormView = Backbone.View.extend({
         $('#date').datepicker('setValue', new Date());
 
         $('#time').timepicker();
+
+
+        this.bikeTriangle = new OTP.bike_views.OtpBikeTrianglePanel({
+            model: this.model,
+            el: $('#bikeTriangle')
+        });
 
 
         var loadCallback = function(query, callback, select) {

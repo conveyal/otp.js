@@ -72,15 +72,8 @@ $(document).ready(function() {
     L.control.layers(baseLayers).addTo(map);
     osmLayer.addTo(map);
 
-
-    //var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-    //topoControl.addTo(map);
-    /*var topoView = new OTP.topo_views.OtpTopoView({
-        container: topoControl
-    });
-    topoView.render();*/
-
-    
+    var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
+    topoControl.addTo(map);
     
 	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan?"
     var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: api });
