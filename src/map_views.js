@@ -27,7 +27,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         this.listenTo(this.model, "activate", function() {
             this.preview = false;
             this.render();
-            this.options.map.fitBounds(this.model.getBoundsArray())
+            //this.options.map.fitBounds(this.model.getBoundsArray())
         });
         this.listenTo(this.model, "deactivate", this.clearLayers);
 
@@ -68,10 +68,10 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
                 }, {view: this, step : step}));
     
                 this.listenTo(step, "mouseenter", _.bind(function() {
-                    var popup = L.popup()
-                    .setLatLng([this.step.get('lat'), this.step.get('lon')])
-                    .setContent(this.step.get('streetName'))
-                    .openOn(this.view.options.map);
+                    //var popup = L.popup()
+                    //.setLatLng([this.step.get('lat'), this.step.get('lon')])
+                    //.setContent(this.step.get('streetName'))
+                    //.openOn(this.view.options.map);
                 }, {view: this, step : step}));
 
                 this.listenTo(step, "mouseleave", _.bind(function() {
@@ -101,7 +101,9 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         if(!this.attachedToMap) this.attachToMap();
         this.clearLayers();
 
-        //console.log(itin.itinData);
+        var mapBounds = new L.LatLngBounds()
+
+
         for(var i=0; i < this.model.get('legs').length; i++) {
             var leg = this.model.get('legs').at(i);
 
@@ -114,7 +116,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
                 highlight.setStyle({
                     color : "#ffff00",
                     weight: weight * 2,
-                    opacity: this.preview ? 0.2 : 0.5
+                    opacity: this.preview ? 0.75 : 0.75
                 });
                 this.highlightLayer.addLayer(highlight);
             }
@@ -124,46 +126,106 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             polyline.setStyle({
                 color : leg.getMapColor(),
                 weight: weight,
-                opacity: this.preview ? 0.2 : 0.5
+                opacity: this.preview ? 0.75 : 0.75
             });
             this.pathLayer.addLayer(polyline);
             polyline.leg = leg;
 
-            var popupContent = '';
+            mapBounds.extend(polyline.getBounds());
 
-            if(leg.get('routeShortName'))
-                popupContent += leg.get('routeShortName');
+            if(leg.get('mode') == "WALK" || leg.get('mode') == "BICYCLE") {
+                var popupContent = '<img src="../src/images/mode/' + leg.get('mode').toLowerCase() + '.png"/> <img src="../src/images/mode/arrow_right.png"/> ' + leg.get('to').name;
 
-            if(leg.get('routeLongName'))
-                if(popupContent != '')
-                    popupContent += ': ';
+                popupContent += '<br/>';
 
-                popupContent += leg.get('routeLongName');
+                var minutes = leg.get('duration') / 1000 / 60;
+                popupContent += Math.round(minutes) + ' mins ';
 
-            polyline.bindPopup(popupContent);
-            
-            if(leg.isTransit() && !this.preview) {
-                this.pathMarkerLayer.addLayer(this.getLegFromBubbleMarker(leg, this.highlightLeg === leg));
+                var distance = OTP.utils.distanceString(leg.get('distance'));
+                popupContent += distance;
+
+                polyline.bindLabel(popupContent);
+
+                for(var step in leg.get('steps').models) {
+                    this.pathMarkerLayer.addLayer(this.getStepBubbleMarker(leg, leg.get('steps').models[step]));
+                }
             }
+            else if (leg.get('mode') == "BUS") {
+                var popupContent = '<img src="../src/images/mode/bus.png"/> ';
+
+                if(leg.get('routeShortName'))
+                    popupContent += leg.get('routeShortName');
+
+                if(leg.get('routeLongName')) {
+                    if(popupContent != '')
+                        popupContent += ' ';
+
+                    popupContent += leg.get('routeLongName') + '<br/> ';
+                }
+
+                popupContent += ' <img src="../src/images/mode/arrow_right.png"/> ' + leg.get('to').name;
+
+
+                var minutes = leg.get('duration') / 1000 / 60;
+                popupContent += ' (' + Math.round(minutes) + ' mins)';
+
+                polyline.bindLabel(popupContent);
+            }
+
+            var marker = this.getLegFromBubbleMarker(leg, this.highlightLeg === leg);
+            this.pathMarkerLayer.addLayer(marker);
         }
+
+        this.options.map.fitBounds(mapBounds);
+    },
+
+    getStepBubbleMarker : function(leg, step) {
+        
+        var marker = new L.CircleMarker([step.get('lat'), step.get('lon')], { color: '#666', stroke: 3, radius: 5, fillColor: '#aaa', opacity: 1.0, fillOpacity: 1.0});
+
+        if(step.get('relativeDirection')) {
+
+            var popupContent = '<span class="otp-legStepLabel-icon otp-legStep-icon-' + step.get('relativeDirection') + '"></span>' + ' <img src="../src/images/mode/' + leg.get('mode').toLowerCase() + '.png"/> ' + step.get('streetName');
+
+            popupContent += ' (';
+
+            var distance = OTP.utils.distanceString(step.get('distance'));
+            
+            popupContent += distance + ' )';
+
+
+            marker.bindLabel(popupContent);
+
+        }
+
+        return marker;
     },
 
     getLegFromBubbleMarker : function(leg, highlight) {
-        var quadrant = (leg.get('from').lat < leg.get('to').lat ? 's' : 'n') + (leg.get('from').lon < leg.get('to').lon ? 'w' : 'e');        highlight = highlight || false;
+        //var quadrant = (leg.get('from').lat < leg.get('to').lat ? 's' : 'n') + (leg.get('from').lon < leg.get('to').lon ? 'w' : 'e');        highlight = highlight || false;
         
-        var context = _.clone(leg.attributes);
-        context.orientation = quadrant[0];
+        //var context = _.clone(leg.attributes);
+        //context.orientation = quadrant[0];
 
-        return new L.Marker(
-            [leg.get('from').lat, leg.get('from').lon], {
-                icon: new L.DivIcon({
-                    className: 'otp-legBubble-icon otp-legBubble-icon-' + quadrant + (highlight ? "-highlight" : ""),
-                    iconSize: [32,44],
-                    iconAnchor: this.getLegBubbleAnchor(quadrant),
-                    html: legFromBubbleTemplate(context) 
-                })
-            }
-        );
+        var popupContent = '<img src="../src/images/mode/arrow_right.png"/> <img src="../src/images/mode/' + leg.get('mode').toLowerCase() + '.png"/> ';
+
+        if(leg.get('routeShortName'))
+            popupContent += leg.get('routeShortName');
+
+        if(leg.get('routeLongName')) {
+            if(popupContent != '')
+                popupContent += ' ';
+
+            popupContent += leg.get('routeLongName');
+        }
+
+        popupContent += ' ' + OTP.utils.formatTime(leg.get('startTime')) + ' ';
+
+        var marker = new L.CircleMarker([leg.get('from').lat, leg.get('from').lon], { color: '#000', stroke: 10, radius: 5, fillColor: '#fff', opacity: 1.0, fillOpacity: 1.0});
+
+        marker.bindLabel(popupContent);
+
+        return marker;
     },
 
     getLegBubbleAnchor : function(quadrant) {
@@ -196,6 +258,16 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
 module.exports.OtpRequestMapView = Backbone.View.extend({
  
     initialize : function() {
+
+        _.bindAll(this, 'markerMove', 'mapClick');
+
+        this.model.on('change', this.render, this);
+
+        var view = this;
+        this.options.map.on('click', function(evt) {
+            view.mapClick(evt.latlng);
+        });
+
         this.attachedToMap = false;
 
         this.markerLayer = new L.LayerGroup();
@@ -215,46 +287,60 @@ module.exports.OtpRequestMapView = Backbone.View.extend({
         if(!this.attachedToMap) this.attachToMap();
         this.clearLayers();
 
-        this.startMarker = new L.Marker(this.model.getFromLatLng(), {
-            icon: new L.DivIcon({
-                className : 'otp-startFlagIcon',
-                iconSize: null,
-                iconAnchor: null,
-            }),
-            draggable: true
-        });
-        this.startMarker.bindPopup('<strong>Start</strong>');
-        this.startMarker.on('dragend', $.proxy(function() {
-            this.model.set({
-                fromPlace: [ 
-                    this.startMarker.getLatLng().lat,
-                    this.startMarker.getLatLng().lng
-                ].join(',')
+        if(this.model.getFromLatLng()) {
+            this.startMarker = new L.Marker(this.model.getFromLatLng(), {
+                icon: new L.DivIcon({
+                    className : 'otp-startFlagIcon',
+                    iconSize: null,
+                    iconAnchor: null,
+                }),
+                draggable: true
             });
-            this.model.request();
-        }, this));
-        this.markerLayer.addLayer(this.startMarker);
-
-        this.endMarker = new L.Marker(this.model.getToLatLng(), {
-            icon: new L.DivIcon({
-                className : 'otp-endFlagIcon',
-                iconSize: null,
-                iconAnchor: null,
-            }),
-            draggable: true
-        });
-        this.endMarker.bindPopup('<strong>End</strong>');
-        this.endMarker.on('dragend', $.proxy(function() {
-            this.model.set({
-                toPlace: [ 
-                    this.endMarker.getLatLng().lat,
-                    this.endMarker.getLatLng().lng
-                ].join(',')
+            this.startMarker.bindLabel('<strong>Start</strong>');
+            this.startMarker.on('dragend', $.proxy(function() {
+                this.markerMove(this.startMarker.getLatLng(), null);
+            }, this));
+            this.markerLayer.addLayer(this.startMarker);
+        }
+        
+        if(this.model.getToLatLng()) {
+            this.endMarker = new L.Marker(this.model.getToLatLng(), {
+                icon: new L.DivIcon({
+                    className : 'otp-endFlagIcon',
+                    iconSize: null,
+                    iconAnchor: null,
+                }),
+                draggable: true
             });
-            this.model.request();
-        }, this));
-        this.markerLayer.addLayer(this.endMarker);
+            this.endMarker.bindLabel('<strong>End</strong>');
+            this.endMarker.on('dragend', $.proxy(function() {
+                
+                this.markerMove(null, this.endMarker.getLatLng());
 
+            }, this));
+            this.markerLayer.addLayer(this.endMarker);
+        }
+
+    },
+
+    mapClick: function (latlng) {
+
+        if(!this.model.attributes.fromPlace)
+          this.model.set({fromPlace: latlng.lat + ',' + latlng.lng});
+        else if(!this.model.attributes.toPlace)
+          this.model.set({toPlace: latlng.lat + ',' + latlng.lng});
+
+    },
+
+    markerMove: function (start, end) {
+
+        if(start) {
+          this.model.set({fromPlace: start.lat + ',' + start.lng});
+        }
+
+        if(end) {
+          this.model.set({toPlace: end.lat + ',' + end.lng});
+        }
     },
 
     clearLayers : function() {

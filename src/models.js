@@ -10,6 +10,9 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
       initialize: function(opts) {
 
         _.bindAll(this, 'request', 'processRequest');
+
+        this.on('change', this.request);
+
       },
 
       defaults: {  
@@ -43,9 +46,15 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
         maxTransfers: null
       },
 
+      
+
       request: function() {
 
         var m = this;
+
+        // don't make complete requests
+        if(!this.attributes.fromPlace || !this.attributes.toPlace)
+          return false;
 
         $.ajax(this.urlRoot, {dataType: 'jsonp', data: OTP.utils.filterParams(this.attributes)})
           .done(function(data) {
@@ -67,11 +76,17 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
       },
 
       getFromLatLng: function() {
+          if(!this.get('fromPlace'))
+            return null;
+
           var llStr = this.get('fromPlace').split('::')[0].split(',');
           return [ parseFloat(llStr[0]), parseFloat(llStr[1]) ];
       },
 
       getToLatLng: function() {
+          if(!this.get('toPlace'))
+            return null;
+          
           var llStr = this.get('toPlace').split('::')[0].split(',');
           return [ parseFloat(llStr[0]), parseFloat(llStr[1]) ];
       }
@@ -101,7 +116,7 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({
           this.set(processedAttributes);
 
         }
-        
+
       },
 
       defaults: {  

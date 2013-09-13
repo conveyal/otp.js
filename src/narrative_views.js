@@ -3,13 +3,37 @@ var $ = jQuery = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
+var narrativeNewTemplate = Handlebars.compile([
+    '<div class="well">',
+        '<p class="text-info">',
+            '<strong>To plan a trip:</strong> select a start and end location by clicking the map, or by entering an address above.',
+        '</p>',
+    '</div>',
+    '<div id="itineraries"></div>'
+].join('\n'));
+
+var narrativeAdjustTemplate = Handlebars.compile([
+    '<div class="well">',
+        '<p class="text-info">',
+            'Drag start and end location pins on the map or use the form above to adjust trip settings.',
+        '</p>',
+    '</div>',
+    '<div id="itineraries"></div>'
+].join('\n'));
 
 var OtpPlanResponseNarrativeView = Backbone.View.extend({
  
     render : function() {
-    	var itins = this.model.get("itineraries");
-    	this.$el.html("Found " + itins.length + " itineraries:");
-    	_.each(itins.models, this.processItinerary, this);
+    	
+
+        if(this.model) {
+            this.$el.html(narrativeAdjustTemplate());
+
+            var itins = this.model.get("itineraries");
+    	   _.each(itins.models, this.processItinerary, this);
+        }
+        else
+            this.$el.html(narrativeNewTemplate());
     },
 
     processItinerary : function(itin, index) {
@@ -29,9 +53,9 @@ module.exports.OtpPlanResponseNarrativeView = OtpPlanResponseNarrativeView;
 
 
 var itinNarrativeTemplate = Handlebars.compile([
-	'<div class="otp-itinerary">',
+	'<div class="well">',
         '<div class="otp-itinHeader">',
-    		'Itinerary {{index}}',
+    		'<span style="float:right;">{{formatDuration duration}}</span>Option {{index}}: {{#each legs}}<nobr><div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>{{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}<div class="otp-legMode-icon otp-legMode-icon-arrow-right"></div></nobr>{{/each}}',
         '</div>',
         '<div class="otp-itinBody"></div>',
 	'</div>'
@@ -53,11 +77,16 @@ var OtpItineraryNarrativeView = Backbone.View.extend({
     },
 
     render : function() {
+        var legs = this.model.get("legs");
+        var duration = this.model.get("duration");
+
         var context = _.clone(this.model.attributes);
         context.index = this.options.index + 1;
+        context.legs = legs.models;
+        context.duration = duration;    
         this.$el.html(itinNarrativeTemplate(context));
         
-        var legs = this.model.get("legs");
+        
         _.each(legs.models, this.processLeg, this);
 
         this.$el.find(".otp-itinBody").hide();
@@ -126,7 +155,7 @@ Handlebars.registerHelper('formatDuration', function(duration) {
 var accessLegTemplate = Handlebars.compile([
     '<div class="otp-leg">',
         '<div class="otp-legHeader">',
-            '<b>{{mode}}</b> to {{to.name}}',
+            '<span style="float:right;">{{formatDuration duration}}</span><b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div></b> to {{to.name}}',
         '</div>',
         '<div class="otp-legBody">',
         '</div>',    
@@ -136,7 +165,7 @@ var accessLegTemplate = Handlebars.compile([
 var transitLegTemplate = Handlebars.compile([
     '<div class="otp-leg">',
         '<div class="otp-legHeader">',
-            '<b>{{mode}}</b> {{routeLongName}} to {{to.name}}',
+            '<b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div> {{routeShortName}}</b> {{routeLongName}} to {{to.name}}',
         '</div>',
         '<div class="otp-legBody">',
             '<div class="otp-transitLeg-leftCol">{{formatTime startTime}}</div>',
@@ -154,7 +183,7 @@ var transitLegTemplate = Handlebars.compile([
 var genericLegTemplate = Handlebars.compile([
     '<div class="otp-leg">',
         '<div class="otp-legHeader">',
-            '<b>{{mode}}</b> to {{to.name}}',
+            '<span style="float:right;">{{formatDuration duration}}</span><b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div></b> to {{to.name}}',
         '</div>',
     '</div>'
 ].join('\n'));

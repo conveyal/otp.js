@@ -1,21 +1,58 @@
 body {
 	font-family: sans-serif;
+	padding: 0;
+    margin: 0;
+    overflow: hidden;
+    max-height: 100%;
+
+}
+
+.well {
+	margin-bottom: 10px
+}
+
+.container-fluid {
+	padding-left: 10px;
+	padding-right: 0px;
+}
+
+.select {
+	width: 100%;
+}
+
+.control-group .control-label {
+	width: 100px;
+}
+
+.control-group .controls {
+	margin-left: 110px;
+}
+
+.title {
+	display: block;
+}
+
+.description {
+	font-size: 12px;
+	display: block;
+	opacity: 0.5;
+	white-space: nowrap;
+	width: 100%;
+	text-overflow: ellipsis;
+	overflow: hidden;
 }
 
 #narrative {
-	position: absolute;
-	top: 0px;
-	bottom: 0px;
-	left: 0px;
-	width: 380px;
-	overflow: auto;
-	padding: 10px;
+	
+	overflow-y: auto;
+	padding-right: 5px;
 }
 
 #map {
-	position: absolute;
-	top: 0px;
-	bottom: 0px;
-	right: 0px;
-	left: 400px;
+	border: thin solid #aaa;
+	margin-left: 10px;
 }
+
+#map, body, html {
+	height: 100%;
+} 

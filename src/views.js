@@ -5,26 +5,31 @@ var Handlebars = require('handlebars');
 
 
 var OtpPlanResponseView = Backbone.View.extend({
+
+    initialize: function () {
+
+        this.render();
+    },
  
     render : function() {
 
         if(this.options.narrative) {
-            console.log(this.options.narrative);
             var narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({
                 el: this.options.narrative,
                 model: this.model
             });
             narrativeView.render();
         }
-    	var itins = this.model.get("itineraries");
 
-        if(_.size(itins) > 0) {
-        	_.each(itins.models, this.processItinerary, this);
+        if(this.model) {
+        	var itins = this.model.get("itineraries");
 
-            itins.at(0).trigger("activate");
+            if(_.size(itins) > 0) {
+            	_.each(itins.models, this.processItinerary, this);
+
+                itins.at(0).trigger("activate");
+            }
         }
-        else 
-            console.log('no itineraries returned');
     },
 
     processItinerary : function(itin, index) {

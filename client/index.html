@@ -1,61 +1,96 @@
+<!DOCTYPE html>
+
+
 <html>
 
 <head>
 	<title>otp.js Leaflet Client</title>
 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <link rel="stylesheet" href="bootstrap.min.js" />
 	<script src="../dist/otp.uncompressed.js"></script>
+    <script src="bootstrap-datepicker.js"></script>
+    <script src="bootstrap-timepicker.js"></script>
+    <script src="selectize.js"></script>
 	<script src="../test/util.js"></script>
 
-	<link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="bootstrap.min.css" />
+    <link rel="stylesheet" href="bootstrap-datepicker.css" />
+    <link rel="stylesheet" href="bootstrap-timepicker.css" />
+	<link rel="stylesheet" href="selectize.css" />
+    <link rel="stylesheet" href="style.css" />
 	<link rel="stylesheet" href="../src/narrative.css" />
 	<link rel="stylesheet" href="../src/map.css" />
     <link rel="stylesheet" href="../src/topo.css" />
 
+    <link rel="stylesheet" href="../src/topo.css" />
+
 	<link rel="stylesheet" href="../node_modules/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="leaflet.label.css" />
 </head>
 
-<body>
-	<div id="narrative"></div>
-	<div id="map"></div>
+<body> 
+   <div class="container-fluid" style="height: 100%">
+      <div class="row-fluid" style="height: 100%">
+        <div class="span3">
+            <div class="row-fluid" id="request"></div>
+
+            <div class="row-fluid" id="narrative">
+
+
+            </div>
+        </div>
+            <div class="span9" id="map"></div>
+       
+    
+	   </div>
+    </div>
 
 <script type="text/javascript" language="javascript">
 $(document).ready(function() {
 
-	var map = L.map('map').setView([51.505, -0.09], 13);
+
+
+	var map = L.map('map').setView([44.9473,-123.0564], 13);
 
 	// add an OpenStreetMap tile layer
-	var osmLayer = L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png', {
-	    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-jc4m5i21/{z}/{x}/{y}.png', {
+        subdomains : ['a','b','c','d'],
+	    attribution: 'Street Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
 	});
     
-    var mapquestOsmLayer = L.tileLayer('http://{s}.mqcdn.com/tiles/1.0.0/osm/{z}/{x}/{y}.png', {
-        subdomains : ['otile1','otile2','otile3','otile4'],
-        attribution : 'Data, imagery and map information provided by <a href="http://open.mapquest.com" target="_blank">MapQuest</a>, <a href="http://www.openstreetmap.org/" target="_blank">OpenStreetMap</a> and contributors.'
-    });
-    
-    var mapquestAerialLayer = L.tileLayer('http://{s}.mqcdn.com/tiles/1.0.0/sat/{z}/{x}/{y}.png', {
-        subdomains : ['otile1','otile2','otile3','otile4'],
-        attribution : 'Data, imagery and map information provided by <a href="http://open.mapquest.com" target="_blank">MapQuest</a>, <a href="http://www.openstreetmap.org/" target="_blank">OpenStreetMap</a> and contributors.'
+    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-a3mk3jug/{z}/{x}/{y}.png', {
+        subdomains : ['a','b','c','d'],
+        attribution : 'Satellite Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
     });
 
     var baseLayers = {
-        "MapQuest OSM" : mapquestOsmLayer,
-        "MapQuest Aerial" : mapquestAerialLayer,
-        "OSM Default" : osmLayer
+        "Street Map" : osmLayer,
+        "Satellite Map" : aerialLayer
     };
     L.control.layers(baseLayers).addTo(map);
-    mapquestOsmLayer.addTo(map);
+    osmLayer.addTo(map);
 
 
-    var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-    topoControl.addTo(map);
+    //var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
+    //topoControl.addTo(map);
     /*var topoView = new OTP.topo_views.OtpTopoView({
         container: topoControl
     });
     topoView.render();*/
+
     
-	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan"
-    var requestModel = new OTP.models.OtpPlanRequest(helpers.testRequest, {urlRoot: api });
+    
+	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan?"
+    var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: api });
+
+    var requestView = new OTP.request_views.OtpRequestFormView({
+        model: requestModel,
+        el: $('#request')
+    });
+
+    requestView.render();
 
     var requestMapView = new OTP.map_views.OtpRequestMapView({
     	model: requestModel,
@@ -73,6 +108,9 @@ $(document).ready(function() {
     });
 
     requestModel.request();
+
+    $('#narrative').height($(window).height() - $('#request').height());
+    $(window).resize(function() { $('#narrative').height($(window).height() - $('#request').height()) });
 });
 </script>
 

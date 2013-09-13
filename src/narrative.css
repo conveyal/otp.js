@@ -5,10 +5,7 @@
 }
 
 .otp-itinHeader {
-	padding: .4em;
 	font-weight: bold;
-	color: white;
-	background: #000;
 	cursor: pointer;
 }
 
@@ -102,6 +99,14 @@
     float: left;
 }
 
+.otp-legStepLabel-icon {
+    width: 20px;
+    height: 20px;
+    display: inline-block;
+    vertical-align:middle;
+}
+
+
 .otp-legStep-icon-LEFT {
     background: url('images/directions/left.png')
 }
@@ -168,4 +173,47 @@
 
 .otp-legStep-icon-CIRCLE_COUNTERCLOCKWISE {
     background: url('images/directions/circle_counterclockwise.png')
+}
+
+
+
+.otp-legMode-icon {
+    width: 18px;
+    margin-left: -2px;
+    margin-top: -4px;
+    height: 20px;
+    display: inline-block;
+    vertical-align:middle;
+}
+
+.otp-legMode-icon-WALK {
+    background: url('images/mode/walk.png')
+}
+
+.otp-legMode-icon-BUS {
+    background: url('images/mode/bus.png')
+}
+
+.otp-legMode-icon-RAIL {
+    background: url('images/mode/rail.png')
+}
+
+.otp-legMode-icon-BICYCLE {
+    background: url('images/mode/bicycle.png')
+}
+
+.otp-legMode-icon-SUBWAY {
+    background: url('images/mode/subway.png')
+}
+
+.otp-legMode-icon-TRAM {
+    background: url('images/mode/tram.png')
+}
+
+.otp-legMode-icon-arrow-right {
+    background: url('images/mode/arrow_right.png')
+}
+
+.otp-legMode-icon-arrow-left {
+    background: url('images/mode/arrow_left.png')
 }
