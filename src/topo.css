@@ -12,7 +12,7 @@
 
 .leaflet-control-topo-expanded {
 	width: 80%;
-	height: 200px;	
+	height: 200px;
 	background: #f8f8f9;
 }
 
@@ -20,7 +20,7 @@
 	position: absolute;
 	right: 0px;
 	bottom: 0px;
-	background: red;
+	background: url('images/topo-control-icon.png');
 	width: 28px;
 	height: 28px;
 	margin: 4px;
@@ -33,6 +33,6 @@
 	right: 32px;
 	bottom: 0px;
 	left: 0px;
-	background: blue;
+	/*background: blue;*/
 	margin: 4px;
 }

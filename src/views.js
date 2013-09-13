@@ -38,12 +38,14 @@ var OtpPlanResponseView = Backbone.View.extend({
             var itinMapView = new OTP.map_views.OtpItineraryMapView({
                 map: this.options.map,
                 model : itin,
+                planView : this
             });
         }
         if(this.options.topo) {
             var itinTopoView = new OTP.topo_views.OtpItineraryTopoView({
-                map: this.options.map,
+                el: this.options.topo,
                 model : itin,
+                planView : this
             });
         }
     },
