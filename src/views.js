@@ -43,6 +43,7 @@ var OtpPlanResponseView = Backbone.View.extend({
         }
         if(this.options.topo) {
             var itinTopoView = new OTP.topo_views.OtpItineraryTopoView({
+                map: this.options.map,
                 el: this.options.topo,
                 model : itin,
                 planView : this

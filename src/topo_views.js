@@ -10,18 +10,10 @@ var getElevation = function(elevCoord) {
 var OtpItineraryTopoView = Backbone.View.extend({
  
     initialize : function() {
-        _.bindAll(this, "refresh");
+        _.bindAll(this, "refresh", "mousemove", "mouseleave", "click");
         this.refresh();
         
         this.$el.resize(this.refresh);
-
-        this.$el.mousemove(function(evt) {
-            // todo: draw marker on map corresponding to mouseover location
-        });
-
-        this.$el.click(function() {
-            // todo: recenter map to clicked location
-        });
 
         this.listenTo(this.model, "activate", this.render);
     },
@@ -46,6 +38,14 @@ var OtpItineraryTopoView = Backbone.View.extend({
 
         
         this._graph = $("<div>");
+
+        // apply mouse listeners for map interactivity, if map reference provided
+        if(this.options.map) {
+            this._graph.mousemove(this.mousemove)
+                .mouseleave(this.mouseleave)
+                .click(this.click);
+        }
+
         var paper = Raphael(this._graph[0], w, h);
 
         // initial pass through legs to calculate total distance covered, elevation range
@@ -74,13 +74,6 @@ var OtpItineraryTopoView = Backbone.View.extend({
                 paper.rect(0, y, w, 1).attr({ "fill": "#bbb", "stroke" : null });
             }
             if(e < maxElev) y -= 15;
-            
-            /*paper.text(25, y-2, ""+e).attr({
-                fill: 'black',
-                'font-size' : '12px',
-                'font-weight' : 'bold',
-                'text-anchor' : 'end'
-            });*/
 
             $("<div>").html(e+"'").css({
                 position : 'absolute',
@@ -94,12 +87,27 @@ var OtpItineraryTopoView = Backbone.View.extend({
 
         var walkBikeDist = 0;
         var lastT = 0;
+
+        this._legXCoords = [axisWidth];
+        this._legLatLngs = [];
+        this._legDistances = [];
+
         _.each(legs.models, function(leg, index) {
             if(leg.isWalk() || leg.isBicycle()) {
                 var legDistance = leg.get("distance");
                 var legDistanceCovered = 0;
-                //var pathStr = null;
                 var graphArray = [];
+                
+                var latLngs = OTP.utils.decodePolyline(leg.get('legGeometry').points);
+                this._legLatLngs.push(latLngs);
+                
+                var legDistDeg = 0;
+                for(var i = 0; i < latLngs.length - 1; i++) {
+                    var from = latLngs[i], to = latLngs[i+1];
+                    legDistDeg += Math.sqrt(Math.pow(to.lat - from.lat, 2) + Math.pow(to.lng - from.lng, 2));
+                }
+                this._legDistances.push(legDistDeg);
+                
                 _.each(leg.get("steps").models, function(step, index) {
                     var stepDistance = step.get('distance');
 
@@ -187,12 +195,16 @@ var OtpItineraryTopoView = Backbone.View.extend({
                 walkBikeDist += legDistance;
                 var t = walkBikeDist / totalWalkBikeDist;
                 if(t < 1) {
-                    paper.rect(axisWidth +  Math.round(t * graphWidth), 0, 1, graphHeight).attr({ "fill": "#aaa", "stroke" : null });
+                    var x = axisWidth +  Math.round(t * graphWidth);
+                    paper.rect(x, 0, 1, graphHeight).attr({ "fill": "#aaa", "stroke" : null });
+                    this._legXCoords.push(x);
                 }
 
                 lastT = t;
             }
         }, this);
+
+        this._legXCoords.push(axisWidth + graphWidth);
 
         this._renderedH = h;
         this._renderedW = w;
@@ -200,7 +212,90 @@ var OtpItineraryTopoView = Backbone.View.extend({
         if(this.options.planView.model.get("itineraries").activeItinerary === this.model) {
             this.render();
         }
-    }
+    },
+
+    mousemove : function(evt) {
+        if(!this._legXCoords || !this.options.map) return;
+
+        if(evt.offsetX === undefined) { // Firefox
+            x = evt.pageX - this._graph.offset().left;
+        }             
+        else { // Chrome
+            x = evt.offsetX;
+        }
+
+        for(var i=0; i < this._legXCoords.length - 1; i++) {
+            if(x >= this._legXCoords[i] && x < this._legXCoords[i+1]) {
+
+                // create/update the vertical cursor in the topo graph:
+                if(!this._xCursor) {
+                    this._xCursor = $('<div/>').css({
+                        position : 'absolute',
+                        left : x,
+                        top : 0,
+                        height : this._graph.height(),
+                        width : 1,
+                        background : 'black'
+                    }).appendTo(this._graph);
+                }
+                else {
+                    this._xCursor.css({ left : x });
+                }
+
+                // create/update the map marker
+                var t = (x - this._legXCoords[i]) / (this._legXCoords[i+1] - this._legXCoords[i]);
+                var d = t * this._legDistances[i];
+                var ll = this.pointAlongPath(this._legLatLngs[i], d);
+                if(!this._marker) {
+                    this._marker = new L.Marker(ll, {
+                        icon: new L.DivIcon({
+                            className : 'otp-crosshairIcon',
+                            iconSize: null,
+                            iconAnchor: null
+                        })
+                    }).addTo(this.options.map);
+                }
+                else {
+                    this._marker.setLatLng(ll);
+                }
+                this._lastLatLng = ll;
+            }
+        }
+    },
+
+    mouseleave : function(evt) {
+        if(this._xCursor) {
+            this._xCursor.remove();
+            this._xCursor = null;
+        }
+        if(this._marker && this.options.map) {
+            this.options.map.removeLayer(this._marker);
+            this._marker = this._lastLatLng = null;
+        }
+    },
+
+    click : function(evt) {
+        if(this._lastLatLng && this.options.map) {
+            this.options.map.panTo(this._lastLatLng);
+        }
+    },
+
+    pointAlongPath : function(latLngs, d) {
+        if(d <= 0) return latLngs[0];
+        for(var i = 0; i < latLngs.length - 1; i++) {
+            var from = latLngs[i], to = latLngs[i+1];
+            var segLen = Math.sqrt(Math.pow(to.lat - from.lat, 2) + Math.pow(to.lng - from.lng, 2));
+            if(d <= segLen) { // this segment contains the point at distance d
+                var lat = latLngs[i].lat + (d/segLen * (latLngs[i+1].lat - latLngs[i].lat));
+                var lng = latLngs[i].lng + (d/segLen * (latLngs[i+1].lng - latLngs[i].lng));
+                return new L.LatLng(lat, lng);
+            }
+            d -= segLen;
+        }
+
+        return latLngs[latLngs.length-1];
+    },    
+
 });
 
 module.exports.OtpItineraryTopoView = OtpItineraryTopoView;
