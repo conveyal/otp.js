@@ -336,3 +336,108 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({
 
 // to do: alert model
 // to do fare model
+
+
+
+
+module.exports.OtpStopsInRectangleRequest = Backbone.Model.extend({ 
+
+      initialize: function(opts) {
+
+        _.bindAll(this, 'request', 'processRequest');
+
+        this.on('change', this.request);
+      },
+
+      defaults: {  
+        routerId: null,
+        agency: null,
+        leftUpLat: null,
+        leftUpLon: null,
+        rightDownLat: null,
+        rightDownLon: null,
+        extended: false
+      },
+
+
+      request: function() {
+
+        var m = this;
+
+        // don't make incomplete requests
+        if(!this.attributes.leftUpLat || !this.attributes.leftUpLon || !this.attributes.rightDownLat || !this.attributes.rightDownLon)
+          return false;
+
+        $.ajax(this.urlRoot, {dataType: 'jsonp', data: OTP.utils.filterParams(this.attributes)})
+          .done(function(data) {
+            m.trigger('success', m.processRequest(data));
+          })
+          .fail(function(data){
+            m.trigger('failure', data);
+          });
+      },
+
+      processRequest: function(data) {
+
+        var response = new OTP.models.OtpStopsResponse(data);
+        response.set('request', this);
+        return response;
+      },
+
+});
+
+module.exports.OtpStopsResponse = Backbone.Model.extend({ 
+
+      initialize: function() {
+
+        var rawAttributes = arguments[0];        
+        var processedAttributes = _.omit(rawAttributes, ['stops']);
+      
+        // re-map the stop's "id" object to "stopId"; otherwise the backbone collection doesn't properly initialize 
+        _.each(rawAttributes['stops'], function(stop) {
+          stop.stopId = stop.id;
+          delete stop.id;
+        });
+
+        processedAttributes.stops = new OTP.models.OtpStops();
+        processedAttributes.stops.add(rawAttributes['stops']);
+
+        this.set(processedAttributes);
+      },
+
+      defaults: {  
+        request: null,
+        stops: []
+      }
+
+});
+
+
+module.exports.OtpStop = Backbone.Model.extend({ 
+
+    initialize: function() {      
+    },
+
+    defaults: {
+      stopId: null,
+      direction: null,
+      locationType: null,
+      parentStation: null,
+      stopName: null,
+      stopLon: null,
+      stopLat: null,
+      stopDesc: null,
+      stopCode: null,
+      stopUrl: null,
+      wheelchairBoarding: null,
+      zoneId: null,
+      routes: []
+    }
+});
+
+
+module.exports.OtpStops = Backbone.Collection.extend({ 
+      
+    type: 'OtpStops',
+    model: module.exports.OtpStop
+});

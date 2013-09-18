@@ -301,7 +301,7 @@ module.exports.OtpRequestMapView = Backbone.View.extend({
                 this.markerMove(this.startMarker.getLatLng(), null);
             }, this));
             this.markerLayer.addLayer(this.startMarker);
-        }
+        } 
         
         if(this.model.getToLatLng()) {
             this.endMarker = new L.Marker(this.model.getToLatLng(), {
@@ -344,6 +344,72 @@ module.exports.OtpRequestMapView = Backbone.View.extend({
     },
 
     clearLayers : function() {
+        this.markerLayer.clearLayers();
+    }
+});
+
+
+// views for the stops overlay
+
+module.exports.OtpStopsRequestMapView = Backbone.View.extend({
+ 
+    initialize : function() {
+        _.bindAll(this, "mapViewChanged");
+
+        if(!this.options.minimumZoom) this.options.minimumZoom = 15;
+
+        this.options.map.on("viewreset dragend", this.mapViewChanged);
+    },
+
+    mapViewChanged : function(e) {
+        if(this.options.map.getZoom() < this.options.minimumZoom) return;
+
+        var data = {
+            leftUpLat: this.options.map.getBounds().getNorth(), 
+            leftUpLon: this.options.map.getBounds().getWest(),
+            rightDownLat: this.options.map.getBounds().getSouth(),
+            rightDownLon: this.options.map.getBounds().getEast()
+        };
+
+        this.model.set(data);        
+    }
+});
+
+module.exports.OtpStopsResponseMapView = Backbone.View.extend({
+ 
+    initialize : function() {
+        _.bindAll(this, "mapViewChanged");
+
+        this.markerLayer = new L.LayerGroup();
+        this.options.map.addLayer(this.markerLayer);
+        this.options.map.on("viewreset dragend", this.mapViewChanged);
+    },
+
+    render : function() {
+        this.markerLayer.clearLayers();
+        _.each(this.model.get('stops').models, function(stop) {
+            var stopMarker = new L.CircleMarker([stop.get('stopLat'), stop.get('stopLon')], { 
+                color: '#666',
+                stroke: 2,
+                radius: 3,
+                fillColor: '#eee', 
+                opacity: 1.0, 
+                fillOpacity: 1.0
+            });
+            stopMarker.bindLabel(stop.get('stopName'));
+            
+            this.markerLayer.addLayer(stopMarker);
+
+        }, this);
+
+    },
+
+    newResponse : function(response) {
+        this.model = response;
+        this.render();
+    },
+
+    mapViewChanged : function(e) {
         this.markerLayer.clearLayers();
     }
 });

@@ -52,7 +52,8 @@ $(document).ready(function() {
 
 
 
-	var map = L.map('map').setView([44.9473,-123.0564], 13);
+	//var map = L.map('map').setView([44.9473,-123.0564], 13);
+    var map = L.map('map').setView([45.52, -122.681944], 13);
 
 	// add an OpenStreetMap tile layer
 	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-jc4m5i21/{z}/{x}/{y}.png', {
@@ -102,6 +103,22 @@ $(document).ready(function() {
     });
 
     requestModel.request();
+
+    // set up the stops request model and view
+    var stopsApi = "http://localhost:8080/opentripplanner-api-webapp/ws/transit/stopsInRectangle?"
+    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: stopsApi });
+
+    var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
+        model: stopsRequestModel,
+        map: map
+    });
+    var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
+        map: map
+    });
+    stopsRequestModel.on('success', function(response) {
+        stopsResponseMapView.newResponse(response);
+    });
+
 
     $('#narrative').height($(window).height() - $('#request').height());
     $(window).resize(function() { $('#narrative').height($(window).height() - $('#request').height()) });
