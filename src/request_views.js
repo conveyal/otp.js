@@ -34,7 +34,7 @@ var requestFormTemplate = Handlebars.compile([
                 '<div class="optimizeControl control-group">',
                     '<label class="control-label" for="type">Find: </label>',
                     '<div class="controls">',
-                        '<select id="optimize" class="span12" placeholder="Arrive"><option value="QUICK">Quickest trip</option><option value="TRANSFERS">Fewest transfers</option><option>Custom trip</option></select>',
+                        '<select id="optimize" class="apiParam span12" placeholder="Arrive"><option value="QUICK">Quickest trip</option><option value="TRANSFERS">Fewest transfers</option><option>Custom trip</option></select>',
                     '</div>',
                 '</div>',
 
