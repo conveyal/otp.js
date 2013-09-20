@@ -4,6 +4,39 @@ var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
 var requestFormTemplate = Handlebars.compile([
+    
+        '<div class="row-fluid" style="margin: 5px 0px;">',
+            '<select id="fromPlace" class="apiParam" style="width: 100%" placeholder="Start Address"></select>',
+        '</div>',
+        '<div class="row-fluid" style="margin: 5px 0px;">',
+            '<select id="toPlace" class="apiParam" style="width: 100%"  placeholder="End Address"></select>',
+        '</div>',
+        '<div class="row-fluid">',
+            '<select id="arriveBy" class="apiParam span3" placeholder="Arrive"><option value="true">Arrive</option><option value="false" selected>Depart</option></select>',
+        
+            '<div class="input-append bootstrap-timepicker">',
+                '<input id="time" type="text" class="apiParam input-small">',
+                '<span class="add-on"><i class="icon-time"></i></span>',
+            '</div>',
+
+            '<div class="input-append date" data-date-format="mm/dd/yyyy">',
+                '<input id="date" class="apiParam input-small" size="16" type="text"><span class="add-on"><i class="icon-th"></i></span>',
+            '</div>',
+    
+            '<form class="form-horizontal">',
+                '<div class="control-group">',
+                    '<label class="control-label" for="mode">Travel by: </label>',
+                    '<div class="controls">',
+                        '<select id="mode" class="apiParam span12" placeholder="Arrive"><option value="TRANSIT,WALK">Transit</option><option value="WALK">Walk only</option><option value="BICYCLE">Bike only</option><option value="TRANSIT,BICYCLE">Transit & Bike</option></select>',
+                    '</div>',
+                '</div>',
+
+                '<div class="optimizeControl control-group">',
+                    '<label class="control-label" for="type">Find: </label>',
+                    '<div class="controls">',
+                        '<select id="optimize" class="apiParam span12" placeholder="Arrive"><option value="QUICK">Quickest trip</option><option value="TRANSFERS">Fewest transfers</option><option>Custom trip</option></select>',
+                    '</div>',
+                '</div>',
 
                 '<div class="row">', 
                     '<select id="fromPlace" class="apiParam col-md-12" placeholder="Start Address"></select>', 
