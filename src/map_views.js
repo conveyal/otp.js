@@ -1,5 +1,5 @@
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
@@ -391,7 +391,7 @@ module.exports.OtpStopsResponseMapView = Backbone.View.extend({
             var stopMarker = new L.CircleMarker([stop.get('stopLat'), stop.get('stopLon')], { 
                 color: '#666',
                 stroke: 2,
-                radius: 3,
+                radius: 4,
                 fillColor: '#eee', 
                 opacity: 1.0, 
                 fillOpacity: 1.0

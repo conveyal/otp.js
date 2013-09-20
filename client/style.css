@@ -1,32 +1,16 @@
 body {
 	font-family: sans-serif;
-	padding: 0;
+	padding: 15px;
     margin: 0;
     overflow: hidden;
     max-height: 100%;
 
 }
 
-.well {
-	margin-bottom: 10px
+.row {
+	margin-bottom: 10px;
 }
 
-.container-fluid {
-	padding-left: 10px;
-	padding-right: 0px;
-}
-
-.select {
-	width: 100%;
-}
-
-.control-group .control-label {
-	width: 100px;
-}
-
-.control-group .controls {
-	margin-left: 110px;
-}
 
 .title {
 	display: block;
@@ -42,17 +26,28 @@ body {
 	overflow: hidden;
 }
 
-#narrative {
-	
+.well {
+	padding: 10px;
+}
+
+#itineraries {
+
 	overflow-y: auto;
 	padding-right: 5px;
 }
 
-#map {
-	border: thin solid #aaa;
-	margin-left: 10px;
+.bikeTriangleControl {
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	-khtml-user-select: none;
+	-moz-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
 }
 
-#map, body, html {
-	height: 100%;
-} 
+
+#map {
+	border: thin solid #aaa;
+	margin-left: 5px;
+}
+

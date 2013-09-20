@@ -1,7 +1,7 @@
 'use strict';
 
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 
 
@@ -61,7 +61,7 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
             m.trigger('success', m.processRequest(data));
           })
           .fail(function(data){
-            m.trigger('failure', data);
+            m.trigger('failure', m.processRequest(data));
           });
       },
 

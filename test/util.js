@@ -2,13 +2,13 @@ var helpers = {};
 
 helpers.testRequest = {
 
-    fromPlace:          "45.529192,-122.678499",
-    toPlace:            "45.515601,-122.645368",
+    fromPlace:          "44.92038354980176,-123.0367856294105",
+    toPlace:            "44.95073954444539,-123.03010365538245",
     mode:               "TRANSIT,WALK",
     min:                "QUICK",
-    maxWalkDistance:    "840",
+    maxWalkDistance:    "7500",
     time:               "12:10 pm",
-    date:               "8/5/2013",
+    date:               "9/10/2013",
     arriveBy:           "false" ,
     itinID:             "1" 
 };

@@ -1,5 +1,5 @@
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Raphael = require('raphael');
 

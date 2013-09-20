@@ -1,64 +1,119 @@
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
 var requestFormTemplate = Handlebars.compile([
-    
-        '<div class="row-fluid" style="margin: 5px 0px;">',
-            '<select id="fromPlace" class="apiParam" style="width: 100%" placeholder="Start Address"></select>',
-        '</div>',
-        '<div class="row-fluid" style="margin: 5px 0px;">',
-            '<select id="toPlace" class="apiParam" style="width: 100%"  placeholder="End Address"></select>',
-        '</div>',
-        '<div class="row-fluid">',
-            '<select id="arriveBy" class="apiParam span3" placeholder="Arrive"><option value="true">Arrive</option><option value="false" selected>Depart</option></select>',
+
+                '<div class="row">', 
+                    '<select id="fromPlace" class="apiParam col-md-12" placeholder="Start Address"></select>', 
+                '</div>', 
+                '<div class="row">', 
+                    '<select id="toPlace" class="apiParam col-md-12" placeholder="End Address"></select>', 
+                '</div>', 
+               
+                '<div id="hidableSettings">',
+
+                     '<div class="row">', 
+                        '<div class="col-md-12">', 
+                            '<select id="arriveBy" class="apiParam form-control" placeholder="Arrive"><option value="true">Arrive at</option><option value="false" selected>Depart by</option></select>', 
+                        '</div>', 
+                    '</div>', 
+
+                
+                    '<div class="row">', 
+                        '<div class="input-group date col-md-12" id="time">', 
+                            '<input type="text" class="form-control apiParam" data-format="HH:mm PP"/>', 
+                            '<span class="input-group-addon"><span class="glyphicon glyphicon-time"></span></span>', 
+                        '</div>', 
+                    '</div>', 
+                    '<div class="row">', 
+                        '<div class="input-group date col-md-12" id="date">', 
+                            '<input type="text" class="form-control apiParam"/>', 
+                            '<span class="input-group-addon"><span class="glyphicon glyphicon-time"></span></span>', 
+                        '</div>', 
+                    '</div>', 
+            
+                    '<div class="row">', 
+                        '<div class="col-sm-4">', 
+                            '<label for="mode">Travel by: </label>', 
+                        '</div>', 
+                        
+                        '<div class="col-sm-8">', 
+                            '<select id="mode" class="apiParam form-control" placeholder="Arrive">', 
+                                '<option value="TRANSIT,WALK">Transit</option>', 
+                                '<option value="WALK">Walk only</option>', 
+                                '<option value="BICYCLE">Bike only</option>', 
+                                '<option value="TRANSIT,BICYCLE">Transit & Bike</option>', 
+                            '</select>', 
+                        '</div>', 
+                    '</div>', 
+
+                    '<div class="row optimizeControl">', 
+                        '<div class="col-sm-4">', 
+                            '<label for="type">Find: </label>', 
+                        '</div>', 
+
+                        '<div class="col-sm-8">', 
+                            '<select id="optimize" class="apiParam form-control" placeholder="Arrive">', 
+                                '<option value="QUICK" selected>Quickest trip</option>', 
+                                '<option value="TRANSFERS">Fewest transfers</option>', 
+                            '</select>', 
+                        '</div>', 
+                    '</div>', 
+
+                    '<div class="maxWalkControl row">', 
+                        '<div class="col-sm-6">', 
+                           '<label for="maxWalkDist">Maximum walk:</label>', 
+                        '</div>', 
+                        '<div class="col-sm-6">', 
+                            '<select id="maxWalkDistance" class="apiParam form-control" placeholder="Arrive">', 
+                                '<option value="402">1/4 mile</option>', 
+                                '<option value="804">1/2 mile</option>', 
+                                '<option value="1223">3/4 mile</option>', 
+                                '<option value="1609" selected>1 mile</option>', 
+                                '<option value="3218">2 miles</option>', 
+                                '<option value="4828">3 miles</option>', 
+                            '</select>', 
+                        '</div>', 
+                    '</div>', 
+
+                    '<div class="maxBikeControl row">', 
+                        '<div class="col-sm-6">', 
+                            '<label class="control-label" for="maxWalkDist">Maximum bike: </label>', 
+                        '</div>', 
+                        '<div class="col-sm-6">', 
+                            '<select id="maxBikeDistance" class="apiParam form-control" placeholder="Arrive">', 
+                                '<option value="804">1/2 mile</option>', 
+                                '<option value="1609">1 mile</option>', 
+                                '<option value="4026" selected>2.5 miles</option>', 
+                                '<option value="8047">5 miles</option>', 
+                                '<option value="16093">10 miles</option>', 
+                            '</select>', 
+                        '</div>', 
+                    '</div>',   
+                        
+                    '<div class="row bikeTriangleControl">',   
+                        '<div class=" col-md-offset-2 col-lg-offset-4">', 
+                            '<div id="bikeTriangle" style="height: 110px; cursor: pointer;"></div>',    
+                        '</div>', 
+                    '</div>', 
+                '</div>',
+
+                '<div class="row" id="hideSettings">', 
+                    '<div class="col-sm-12">', 
+                        '<button class="btn toggleSettings btn-default col-sm-12">Hide Settings <span class="glyphicon glyphicon-chevron-up"></span></button>',
+                    '</div>',
+                '</div>',
+
+                '<div class="row" id="showSettings">', 
+                    '<div class="col-sm-12">', 
+                        '<button class="btn toggleSettings btn-default col-sm-12">Show Settings <span class="glyphicon glyphicon-chevron-down"></span></button>',
+                    '</div>',
+                '</div>'
+
+     
         
-            '<div class="input-append bootstrap-timepicker">',
-                '<input id="time" type="text" class="apiParam input-small">',
-                '<span class="add-on"><i class="icon-time"></i></span>',
-            '</div>',
-
-            '<div class="input-append date" data-date-format="mm/dd/yyyy">',
-                '<input id="date" class="apiParam input-small" size="16" type="text"><span class="add-on"><i class="icon-th"></i></span>',
-            '</div>',
-    
-            '<form class="form-horizontal">',
-                '<div class="control-group">',
-                    '<label class="control-label" for="mode">Travel by: </label>',
-                    '<div class="controls">',
-                        '<select id="mode" class="apiParam span12" placeholder="Arrive"><option value="TRANSIT,WALK">Transit</option><option value="WALK">Walk only</option><option value="BICYCLE">Bike only</option><option value="TRANSIT,BICYCLE">Transit & Bike</option></select>',
-                    '</div>',
-                '</div>',
-
-                '<div class="optimizeControl control-group">',
-                    '<label class="control-label" for="type">Find: </label>',
-                    '<div class="controls">',
-                        '<select id="optimize" class="span12" placeholder="Arrive"><option value="QUICK">Quickest trip</option><option value="TRANSFERS">Fewest transfers</option><option>Custom trip</option></select>',
-                    '</div>',
-                '</div>',
-
-                '<div class="bikeTriangleControl control-group">',
-                    '<div id="bikeTriangle" style="height: 100px; cursor: pointer;">',
-                    '</div>',    
-                '</div>',
-
-                '<div class="maxWalkControl control-group">',
-                    '<label class="control-label" for="maxWalkDist">Maximum walk: </label>',
-                    '<div class="controls">',
-                        '<select id="maxWalkDistance" class="apiParam span12" placeholder="Arrive"><option value="402">1/4 mile</option><option value="804">1/2 mile</option><option value="1223" selected>3/4 mile</option><option value="1609">1 mile</option><option value="3218">2 miles</option><option value="4828">3 miles</option></select>',
-                    '</div>',
-                '</div>',
-
-                '<div class="maxBikeControl control-group">',
-                    '<label class="control-label" for="maxWalkDist">Maximum bike: </label>',
-                    '<div class="controls">',
-                        '<select id="maxBikeDistance" class="apiParam span12" placeholder="Arrive"><option value="804">1/2 mile</option><option value="1609">1 mile</option><option value="4026">2.5 miles</option><option value="8047">5 miles</option><option value="16093">10 miles</option></select>',
-                    '</div>',
-                '</div>',
-
-            '</form>',
-        '</div>'
 ].join('\n'));
 
 var geocodeItem = Handlebars.compile([
@@ -73,10 +128,13 @@ var OtpRequestFormView = Backbone.View.extend({
  
     events: {
         "change .apiParam"      : "changeForm",
-        "change #mode"          : "updateModeControls"
+        "change #mode"          : "updateModeControls",
+        "click .toggleSettings" : "toggleSettings"
     },
 
     initialize : function() {
+
+        _.bindAll(this, 'changeForm');  
 
         var view = this;
 
@@ -85,8 +143,6 @@ var OtpRequestFormView = Backbone.View.extend({
         this.model.on("change", function(data) {
             
             var reverseLookup = false;
-
-            
 
             if(_.has(data.changed, 'fromPlace') && data.attributes.fromPlace &&  view.selectFrom) {
 
@@ -178,19 +234,32 @@ var OtpRequestFormView = Backbone.View.extend({
 
         this.$el.html(html);
 
+        this.$('#showSettings').hide();
+
         view.updatingForm = true;
 
-        $('#date').datepicker();
-        $('#date').datepicker('setValue', new Date());
+        this.$('#date').datetimepicker({
+            pickTime: false
+        });
 
-        $('#time').timepicker();
+        this.datepicker = this.$('#date').data('datetimepicker');
+        this.datepicker.setLocalDate(new Date());
+        this.$('#date').on('changeDate', this.changeForm);
 
+        this.$('#time').datetimepicker({
+            pick12HourFormat: true,
+            pickSeconds: false,
+            pickDate: false
+        });
+
+        this.timepicker = this.$('#time').data('datetimepicker');
+        this.timepicker.setLocalDate(new Date());
+        this.$('#time').on('changeDate', this.changeForm);
 
         this.bikeTriangle = new OTP.bike_views.OtpBikeTrianglePanel({
             model: this.model,
-            el: $('#bikeTriangle')
+            el: this.$('#bikeTriangle')
         });
-
 
         var loadCallback = function(query, callback, select) {
             if (!query.length) return callback();
@@ -218,6 +287,7 @@ var OtpRequestFormView = Backbone.View.extend({
             valueField: 'latlon',
             labelField: 'address',
             searchField: 'address',
+            plugins: ['remove_button'],
             loadThrottle: 1000,
             create: false,
             render: { option: function(item, escape) {
@@ -233,6 +303,7 @@ var OtpRequestFormView = Backbone.View.extend({
             valueField: 'latlon',
             labelField: 'address',
             searchField: 'address',
+            plugins: ['remove_button'],
             loadThrottle: 1000,
             create: false,
             render: { option: function(item, escape) {
@@ -261,18 +332,27 @@ var OtpRequestFormView = Backbone.View.extend({
             $('#maxWalkDistance').val() : $('#maxBikeDistance').val()
 
         var data = {
-            fromPlace: $('#fromPlace').val(),
-            toPlace: $('#toPlace').val(),
-            date: $('#date').val(),
-            time: $('#time').val(),
-            arriveBy: $('#arriveBy').val(),
+            fromPlace: this.$('#fromPlace').val(),
+            toPlace: this.$('#toPlace').val(),
+            date: this.$('#date input').val(),
+            time: this.$('#time input').val(),
+            arriveBy: this.$('#arriveBy').val(),
             maxWalkDistance: maxDistance,
-            //triangleSafetyFactor: $('#').val(),
-            //triangleSlopeFactor: $('#').val(),
-            //triangleTimeFactor: $('#').val(),
-            optimize: $('#optimize').val(),
-            mode: $('#mode').val()
+            optimize: this.$('#optimize').val(),
+            mode: this.$('#mode').val()
         };
+
+        var mode = $('#mode').val();
+        if(mode.indexOf("BICYCLE") != -1) { 
+            data.triangleSafetyFactor = $('#').val();
+            data.triangleSlopeFactor = $('#').val();
+            data.triangleTimeFactor = $('#').val();
+        }
+        else {
+            this.model.unset('triangleSafetyFactor', {silent: true});
+            this.model.unset('triangleSlopeFactor', {silent: true});
+            this.model.unset('triangleTimeFactor', {silent: true});
+        }
 
         this.model.set(data);
 
@@ -287,11 +367,34 @@ var OtpRequestFormView = Backbone.View.extend({
         if(mode.indexOf("BICYCLE") != -1 && mode.indexOf("TRANSIT") != -1) this.$el.find(".maxBikeControl").show();
         else this.$el.find(".maxBikeControl").hide();
 
-        if(mode.indexOf("TRANSIT") != -1) this.$el.find(".optimizeControl").show();
-        else this.$el.find(".optimizeControl").hide();
+        if(mode.indexOf("TRANSIT") != -1 && mode.indexOf("BICYCLE") == -1) 
+            this.$el.find(".optimizeControl").show();
+        else 
+            this.$el.find(".optimizeControl").hide();
 
         if(mode.indexOf("BICYCLE") != -1) this.$el.find(".bikeTriangleControl").show();
         else this.$el.find(".bikeTriangleControl").hide();
+    },
+
+    toggleSettings : function() {
+
+        if($('#hidableSettings').is(":visible")) {
+            $('#hidableSettings').slideUp("fast", function(){
+                $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));
+            });
+            $('#showSettings').show();
+            $('#hideSettings').hide();
+        }
+        else {
+            $('#hidableSettings').slideDown("fast", function(){
+                $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));
+            });
+            $('#showSettings').hide();
+            $('#hideSettings').show();
+        }
+
+
+            
     }
 
 });

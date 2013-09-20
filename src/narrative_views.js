@@ -1,10 +1,10 @@
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Handlebars = require('handlebars');
 
 var narrativeNewTemplate = Handlebars.compile([
-    '<div class="well">',
+    '<div id="messageWell" class="well">',
         '<p class="text-info">',
             '<strong>To plan a trip:</strong> select a start and end location by clicking the map, or by entering an address above.',
         '</p>',
@@ -13,7 +13,7 @@ var narrativeNewTemplate = Handlebars.compile([
 ].join('\n'));
 
 var narrativeAdjustTemplate = Handlebars.compile([
-    '<div class="well">',
+    '<div id="messageWell" class="well">',
         '<p class="text-info">',
             'Drag start and end location pins on the map or use the form above to adjust trip settings.',
         '</p>',
@@ -31,6 +31,11 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
 
             var itins = this.model.get("itineraries");
     	   _.each(itins.models, this.processItinerary, this);
+
+            $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));
+            $(window).resize(function() { 
+                $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));
+            }); 
         }
         else
             this.$el.html(narrativeNewTemplate());
@@ -44,7 +49,7 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
     	});
 
     	itinView.render();
-    	this.$el.append(itinView.el);
+    	this.$('#itineraries').append(itinView.el);
     },
 
 });
@@ -56,6 +61,7 @@ var itinNarrativeTemplate = Handlebars.compile([
 	'<div class="well">',
         '<div class="otp-itinHeader">',
     		'<span style="float:right;">{{formatDuration duration}}</span>Option {{index}}: {{#each legs}}<nobr><div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>{{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}<div class="otp-legMode-icon otp-legMode-icon-arrow-right"></div></nobr>{{/each}}',
+            '<br/><span>{{formatTime startTime}} - {{formatTime endTime}}</span>',
         '</div>',
         '<div class="otp-itinBody"></div>',
 	'</div>'

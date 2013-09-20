@@ -1,5 +1,5 @@
 var _ = require('underscore');
-var $ = jQuery = require('jquery-browserify');
+var $ = require('jquery-browserify');
 var Backbone = require('../lib/backbone');
 var Raphael = require('raphael');
 
@@ -102,14 +102,14 @@ var OtpBikeTrianglePanel = Backbone.View.extend({
         this.safeBar = canvas.rect(barLeft, margin*3 + barHeight*2, barWidth*.333, barHeight);
         this.safeBar.attr({fill:safeFill, stroke:"none"});
 
-        this.quickLabel = canvas.text(barLeft + barWidth/2, margin+barHeight/2, this.quickName + ": 33%");
-        this.quickLabel.attr({"font-size":"13px", opacity:1});
+        this.quickLabel = canvas.text(barLeft + margin, margin+barHeight/2, this.quickName + ": 33%");
+        this.quickLabel.attr({"font-size":"13px", "text-anchor" : "start",  opacity:1});
 
-        this.flatLabel = canvas.text(barLeft + barWidth/2, margin*2+barHeight+barHeight/2,  this.flatName + ": 33%");
-        this.flatLabel.attr({"font-size":"13px", opacity:1});
+        this.flatLabel = canvas.text(barLeft + margin, margin*2+barHeight+barHeight/2,  this.flatName + ": 33%");
+        this.flatLabel.attr({"font-size":"13px", "text-anchor" : "start", opacity:1});
 
-        this.safeLabel = canvas.text(barLeft + barWidth/2, margin*3+barHeight*2+barHeight/2, this.safeName + ": 33%");
-        this.safeLabel.attr({"font-size":"13px", opacity:1});
+        this.safeLabel = canvas.text(barLeft + margin, margin*3+barHeight*2+barHeight/2, this.safeName + ": 33%");
+        this.safeLabel.attr({"font-size":"13px", "text-anchor" : "start", opacity:1});
 
         var cx = margin+tri_side/2, cy = height-margin-(1/Math.sqrt(3))*(tri_side/2);
         this.cursorVert = canvas.rect(cx-.5, cy-this.cursor_size/2-2, 1, this.cursor_size+4).attr({
