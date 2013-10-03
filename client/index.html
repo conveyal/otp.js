@@ -8,26 +8,19 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-    <script src="../dist/otp.uncompressed.js"></script>
-    <script src="bootstrap/js/bootstrap.min.js"></script>
-    <script src="selectize/selectize.js"></script>
-    <script src="datetimepicker/bootstrap-datetimepicker.js"></script>
+    <script src="otp.js"></script>
 
-    <link rel="stylesheet" href="bootstrap/css/bootstrap.min.css" />
-    <link rel="stylesheet" href="datetimepicker/bootstrap-datetimepicker.css" />
-	<link rel="stylesheet" href="selectize/selectize.bootstrap3.css" />
+    <script src="lib/bootstrap/js/bootstrap.min.js"></script>
+    <script src="lib/selectize/selectize.js"></script>
+    <script src="lib/datetimepicker/bootstrap-datetimepicker.js"></script>
 
-    <link rel="stylesheet" href="../node_modules/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="lib/bootstrap/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="lib/datetimepicker/bootstrap-datetimepicker.css" />
+	<link rel="stylesheet" href="lib/selectize/selectize.bootstrap3.css" />
 
     <!-- otp.js css include  -->
 
-    <link rel="stylesheet" href="style.css" />    
-	<link rel="stylesheet" href="../src/narrative.css" />
-	<link rel="stylesheet" href="../src/map.css" />
-    <link rel="stylesheet" href="../src/topo.css" />
-
-	
-    <link rel="stylesheet" href="leaflet.label.css" /> 
+    <link rel="stylesheet" href="otp.css" />    
 
 </head>
 
@@ -51,8 +44,7 @@ $(document).ready(function() {
 
 	var map = L.map('map').setView([44.9473,-123.0564], 13);
     map.attributionControl.setPrefix('');
-    //var map = L.map('map').setView([45.52, -122.681944], 13);
-
+    
 	// add an OpenStreetMap tile layer
 	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-jc4m5i21/{z}/{x}/{y}.png', {
         subdomains : ['a','b','c','d'],
@@ -71,10 +63,24 @@ $(document).ready(function() {
     L.control.layers(baseLayers).addTo(map);
     osmLayer.addTo(map);
 
+    var stopsApi = "http://localhost:8080/opentripplanner-api-webapp/ws/transit/stopsInRectangle?"
+    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: stopsApi });
+
+    var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
+        model: stopsRequestModel,
+        map: map
+    });
+    var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
+        map: map
+    });
+    stopsRequestModel.on('success', function(response) {
+        stopsResponseMapView.newResponse(response);
+    });
+
     var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
     topoControl.addTo(map);
     
-	var api = "http://10.0.1.67:8080/opentripplanner-api-webapp/ws/plan?"
+	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan?"
     var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: api }); 
 
     var requestView = new OTP.request_views.OtpRequestFormView({
@@ -112,24 +118,7 @@ $(document).ready(function() {
     $(window).resize(function() { 
         $('#map').height($(window).height() - 30);
         map.invalidateSize();
-    }); 
-
-    // set up the stops request model and view
-   /* var stopsApi = "http://10.1.10.75:8080/opentripplanner-api-webapp/ws/transit/stopsInRectangle?"
-    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: stopsApi });
-
-    var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
-        model: stopsRequestModel,
-        map: map
-    });
-    var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
-        map: map
-    });
-    stopsRequestModel.on('success', function(response) {
-        stopsResponseMapView.newResponse(response);
-    });*/
-
-    
+    });     
     
 });
 
