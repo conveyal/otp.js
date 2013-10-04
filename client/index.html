@@ -10,6 +10,8 @@
 
     <script src="otp.js"></script>
 
+    <script src="otp.config.js"></script>
+
     <script src="lib/bootstrap/js/bootstrap.min.js"></script>
     <script src="lib/selectize/selectize.js"></script>
     <script src="lib/datetimepicker/bootstrap-datetimepicker.js"></script>
@@ -46,12 +48,12 @@ $(document).ready(function() {
     map.attributionControl.setPrefix('');
     
 	// add an OpenStreetMap tile layer
-	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-jc4m5i21/{z}/{x}/{y}.png', {
+	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.osmMapKey + '/{z}/{x}/{y}.png', {
         subdomains : ['a','b','c','d'],
 	    attribution: 'Street Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
 	});
     
-    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/conveyal.map-a3mk3jug/{z}/{x}/{y}.png', {
+    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.aerialMapKey + '/{z}/{x}/{y}.png', {
         subdomains : ['a','b','c','d'],
         attribution : 'Satellite Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
     });
@@ -63,8 +65,7 @@ $(document).ready(function() {
     L.control.layers(baseLayers).addTo(map);
     osmLayer.addTo(map);
 
-    var stopsApi = "http://localhost:8080/opentripplanner-api-webapp/ws/transit/stopsInRectangle?"
-    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: stopsApi });
+    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: OTP.config.otpApi + '/transit/stopsInRectangle' });
 
     var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
         model: stopsRequestModel,
@@ -79,9 +80,8 @@ $(document).ready(function() {
 
     var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
     topoControl.addTo(map);
-    
-	var api = "http://localhost:8080/opentripplanner-api-webapp/ws/plan?"
-    var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: api }); 
+
+    var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: OTP.config.otpApi + '/plan' }); 
 
     var requestView = new OTP.request_views.OtpRequestFormView({
         model: requestModel,

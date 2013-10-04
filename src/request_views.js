@@ -142,7 +142,7 @@ var OtpRequestFormView = Backbone.View.extend({
 
         this.model.on("change", function(data) {
             
-            var reverseLookup = false;
+            var reverseLookup = OTP.config.reverseGeocode;
 
             if(_.has(data.changed, 'fromPlace') && data.attributes.fromPlace &&  view.selectFrom) {
 
@@ -150,7 +150,7 @@ var OtpRequestFormView = Backbone.View.extend({
 
                 if(reverseLookup) {
                     $.ajax({
-                        url: 'http://localhost:9000/r/' + encodeURIComponent(data.attributes.fromPlace),
+                        url: OTP.config.simplecoderApi + '/r/' + encodeURIComponent(data.attributes.fromPlace),
                         type: 'GET',
                         error: function() {
                             view.updatingForm = true;
@@ -192,7 +192,7 @@ var OtpRequestFormView = Backbone.View.extend({
 
                 if(reverseLookup) {
                     $.ajax({
-                        url: 'http://localhost:9000/r/' + encodeURIComponent(data.attributes.toPlace),
+                        url: OTP.config.simplecoderApi + '/r/' + encodeURIComponent(data.attributes.toPlace),
                         type: 'GET',
                         error: function() {
                             view.updatingForm = true;
@@ -266,7 +266,7 @@ var OtpRequestFormView = Backbone.View.extend({
         var loadCallback = function(query, callback, select) {
             if (!query.length) return callback();
             $.ajax({
-                url: 'http://localhost:9000/q/' + encodeURIComponent(query) + '/' + encodeURIComponent('Salem, OR'),
+                url: OTP.config.simplecoderApi + '/q/' + encodeURIComponent(query) + '/' + encodeURIComponent('Salem, OR'),
                 type: 'GET',
 
                 error: function() {
