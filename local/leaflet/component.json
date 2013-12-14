@@ -1,0 +1,12 @@
+{
+  "name": "leaflet",
+  "version": "0.6.4",
+  "description": "",
+  "main" : "leaflet-src.js",
+  "scripts": [
+    "leaflet-src.js"
+  ],
+  "styles": [
+  	"leaflet.css"
+  ]
+}

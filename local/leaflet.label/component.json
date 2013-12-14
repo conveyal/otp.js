@@ -1,0 +1,12 @@
+{
+  "name": "leaflet.label",
+  "version": "0.1.4-dev",
+  "description": "",
+  "main" : "leaflet.label-src.js",
+  "scripts": [
+    "leaflet.label-src.js"
+  ],
+  "styles": [
+  	"leaflet.label.css"
+  ]
+}

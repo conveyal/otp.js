@@ -1,3 +1,7 @@
 dist/
 node_modules/
 bower_components/
+components/
+client/build/
+otp.js
+otp.css

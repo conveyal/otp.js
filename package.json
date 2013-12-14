@@ -1,37 +1,33 @@
 {
-  "author": "Conveyal",
   "name": "otp.js",
-  "description": "OpenTripPlanner JS",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "",
+  "keywords": [],
+  "author": "Conveyal",
   "homepage": "http://conveyal.com/",
   "repository": {
     "type": "git",
     "url": "git://github.com/conveyal/otp.js.git"
   },
-  "main": "index.js",
   "dependencies": {
-    "leaflet": "0.6.2",
-    "mustache": "~0.7.2",
-    "underscore": ">=1.4.3",
-    "jquery-browserify": ">=1.8.1",
-    "handlebars": "1.0.12",
-    "moment": "~2.1.0",
-    "raphael": "2.1.0"
-  },
-  "scripts": {
-    "test": "mocha-phantomjs test/index.html"
   },
   "devDependencies": {
-    "debowerify": "~0.1.4",
-    "uglify-js": "~2.2.5",
-    "mocha": "~1.9",
-    "expect.js": "~0.2.0",
-    "sinon": "~1.7.3",
-    "happen": "~0.1.2",
-    "browserify": "2.22.0"
+    "component": "*",
+    "component-uglifyjs": "*",
+    "jshint": "*"
   },
-  "optionalDependencies": {},
-  "engines": {
-    "node": "*"
+  "scripts": {
+    "test": "make lint"
+  },
+  "jshintConfig": {
+    "boss": true,
+    "browser": true,
+    "indent": 2,
+    "laxbreak": true,
+    "maxcomplexity": 10,
+    "node": true,
+    "quotmark": "single",
+    "trailing": true,
+    "undef": true
   }
 }

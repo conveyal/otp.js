@@ -1,0 +1,37 @@
+{
+  "name": "otp.js",
+  "version": "1.0.0",
+  "description": "",
+  "dependencies": {
+    "jashkenas/underscore": "*",
+    "jashkenas/backbone": "*",
+    "moment/moment": "*",
+    "components/jquery": "*"
+  },
+  "local": [
+    "leaflet",
+    "leaflet.label",
+    "handlebars",
+    "raphael",
+    "bootstrap",
+    "selectize",
+    "datetimepicker"
+  ],
+  "paths": [
+    "local"
+  ],
+  "development": {
+  },
+  "main": "lib/otp.js",
+  "scripts": [
+    "lib/otp.js",
+    "lib/models.js",  
+    "lib/views.js",  
+    "lib/bike_views.js",
+    "lib/map_views.js",
+    "lib/narrative_views.js",
+    "lib/request_views.js",
+    "lib/topo_views.js",
+    "lib/utils.js"
+  ]
+}

@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 
-
 <html>
 
 <head>
@@ -8,20 +7,11 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-    <script src="otp.js"></script>
-
+    <script src="build/build.js"></script>
     <script src="otp.config.js"></script>
+    <script src="index.js"></script>
 
-    <script src="lib/bootstrap/js/bootstrap.min.js"></script>
-    <script src="lib/selectize/selectize.js"></script>
-    <script src="lib/datetimepicker/bootstrap-datetimepicker.js"></script>
-
-    <link rel="stylesheet" href="lib/bootstrap/css/bootstrap.min.css" />
-    <link rel="stylesheet" href="lib/datetimepicker/bootstrap-datetimepicker.css" />
-	<link rel="stylesheet" href="lib/selectize/selectize.bootstrap3.css" />
-
-    <!-- otp.js css include  -->
-
+    <link rel="stylesheet" href="build/build.css" />    
     <link rel="stylesheet" href="otp.css" />    
 
 </head>
@@ -37,93 +27,6 @@
             <div id="map" style="height: 700px"></div>    
         </div>
     </div>
-    
-
-<script type="text/javascript" language="javascript">
-
-
-$(document).ready(function() {
-
-	var map = L.map('map').setView([44.9473,-123.0564], 13);
-    map.attributionControl.setPrefix('');
-    
-	// add an OpenStreetMap tile layer
-	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.osmMapKey + '/{z}/{x}/{y}.png', {
-        subdomains : ['a','b','c','d'],
-	    attribution: 'Street Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
-	});
-    
-    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.aerialMapKey + '/{z}/{x}/{y}.png', {
-        subdomains : ['a','b','c','d'],
-        attribution : 'Satellite Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
-    });
-
-    var baseLayers = {
-        "Street Map" : osmLayer,
-        "Satellite Map" : aerialLayer
-    };
-    L.control.layers(baseLayers).addTo(map);
-    osmLayer.addTo(map);
-
-    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest({}, {urlRoot: OTP.config.otpApi + '/transit/stopsInRectangle' });
-
-    var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
-        model: stopsRequestModel,
-        map: map
-    });
-    var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
-        map: map
-    });
-    stopsRequestModel.on('success', function(response) {
-        stopsResponseMapView.newResponse(response);
-    });
-
-    var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-    topoControl.addTo(map);
-
-    var requestModel = new OTP.models.OtpPlanRequest({}, {urlRoot: OTP.config.otpApi + '/plan' }); 
-
-    var requestView = new OTP.request_views.OtpRequestFormView({
-        model: requestModel,
-        el: $('#request')
-    });
-
-    requestView.render();
-
-    var requestMapView = new OTP.map_views.OtpRequestMapView({
-    	model: requestModel,
-    	map: map
-    });
-    requestMapView.render();
-
-    var responseView = new OTP.views.OtpPlanResponseView({
-        narrative: $('#narrative'),
-        map: map,
-        topo: topoControl.getGraphElement()
-    });
-
-    requestModel.on('success', function(response) {
-        responseView.newResponse(response);
-    });
-
-    requestModel.on('failure', function(response) {
-        responseView.newResponse(response);
-    });
-
-    requestModel.request();
-
-    $('#map').height($(window).height() - 30);
-    map.invalidateSize();
-
-    $(window).resize(function() { 
-        $('#map').height($(window).height() - 30);
-        map.invalidateSize();
-    });     
-    
-});
-
-
-</script>
 
 </body>
 

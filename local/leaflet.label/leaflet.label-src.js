@@ -6,6 +6,7 @@
 	http://leafletjs.com
 	https://github.com/jacobtoye
 */
+
 (function (window, document, undefined) {
 /*
  * Leaflet.label assumes that you have already included the Leaflet library.
