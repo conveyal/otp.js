@@ -22,9 +22,9 @@
   ],
   "development": {
   },
-  "main": "lib/otp.js",
+  "main": "lib/index.js",
   "scripts": [
-    "lib/otp.js",
+    "lib/index.js",
     "lib/models.js",  
     "lib/views.js",  
     "lib/bike_views.js",
