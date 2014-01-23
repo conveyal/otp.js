@@ -33,5 +33,11 @@
     "lib/request_views.js",
     "lib/topo_views.js",
     "lib/utils.js"
+  ],
+  "styles" : [
+    "lib/narrative.css",
+    "lib/map.css",
+    "lib/topo.css",
+    "lib/client.css"
   ]
 }
