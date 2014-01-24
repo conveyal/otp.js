@@ -79,12 +79,15 @@ $(document).ready(function() {
 
     requestModel.request();
 
-    $('#map').height($(window).height() - 30);
-    map.invalidateSize();
+    var resize = function() {
+        var height = $(window).height() - 30;
+        $('#map').height(height);
+        $('#sidebar').height(height);
+        map.invalidateSize(); 
+    };
 
-    $(window).resize(function() { 
-        $('#map').height($(window).height() - 30);
-        map.invalidateSize();
-    });     
-    
+    $(window).resize(resize);
+
+    resize.call();
 });
+

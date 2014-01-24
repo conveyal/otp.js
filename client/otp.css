@@ -30,6 +30,11 @@ body {
 	padding: 10px;
 }
 
+#sidebar {
+	overflow-y: auto;
+	padding-right: 15px;
+}
+
 #itineraries {
 
 	overflow-y: auto;
@@ -446,9 +451,10 @@ body {
 	right: 32px;
 	bottom: 0px;
 	left: 0px;
-	/*background: blue;*/
 	margin: 4px;
 }
+
+
 /* required styles */
 
 .leaflet-map-pane,
