@@ -53,5 +53,6 @@ body {
 
 #sidebar {
 	overflow-y: auto;
+	overflow-x: hidden;
 	padding-right: 15px;
 }
