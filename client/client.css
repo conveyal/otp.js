@@ -50,3 +50,8 @@ body {
 	border: thin solid #aaa;
 	margin-left: 5px;
 }
+
+#sidebar {
+	overflow-y: auto;
+	padding-right: 15px;
+}

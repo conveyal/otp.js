@@ -5,3 +5,4 @@ components/
 client/build/
 otp.js
 otp.css
+otpjs/

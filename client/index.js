@@ -1,7 +1,7 @@
 var _ = require('underscore');
 var L = require('leaflet');
 
-var OTP = require('otp.js');
+var OTP = require('otpjs');
 OTP.config = OTP_config;
 
 

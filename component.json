@@ -1,5 +1,5 @@
 {
-  "name": "otp.js",
+  "name": "otpjs",
   "version": "1.0.0",
   "description": "",
   "dependencies": {
@@ -37,7 +37,9 @@
   "styles" : [
     "lib/narrative.css",
     "lib/map.css",
-    "lib/topo.css",
-    "lib/client.css"
+    "lib/topo.css"
+  ],
+  "images" : [
+    "lib/images"
   ]
 }

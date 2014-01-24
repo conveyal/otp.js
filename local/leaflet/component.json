@@ -6,6 +6,9 @@
   "scripts": [
     "leaflet-src.js"
   ],
+  "images": [
+    "images"
+  ],
   "styles": [
   	"leaflet.css"
   ]
