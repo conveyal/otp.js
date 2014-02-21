@@ -142,91 +142,69 @@ var OtpRequestFormView = Backbone.View.extend({
 
         this.model.on("change", function(data) {
             
-            var reverseLookup = OTP.config.reverseGeocode;
-
             if(_.has(data.changed, 'fromPlace') && data.attributes.fromPlace &&  view.selectFrom) {
 
                 var select = view.selectFrom[0].selectize;
+                view.updateReverseGeocoder('From',  data.attributes.fromPlace, select)
 
-                if(reverseLookup) {
-                    $.ajax({
-                        url: OTP.config.simplecoderApi + '/r/' + encodeURIComponent(data.attributes.fromPlace),
-                        type: 'GET',
-                        error: function() {
-                            view.updatingForm = true;
-
-                            select.clearOptions();
-                            select.addOption({address: "From marker location", latlon: data.attributes.fromPlace, lat: '', lon: '', city: '', state: ''});
-                            select.setValue(data.attributes.fromPlace);
-                            
-                            view.updatingForm = false;                        
-                        },
-                        success: function(res) {
-                                view.updatingForm = true;
-                                res.address = 'From ' + res.address;
-                                res.latlon = res.lat + ',' + res.lon;
-                                select.clearOptions();
-                                select.addOption(res);
-                                select.setValue(res.latlon);
-                                view.updatingForm = false;
-                        }
-                    });
-                }
-                else {
-
-                    // this isn't great but appears to be neccesary as selectize triggers a change event even when programatically updated
-                    view.updatingForm = true;
-
-                    select.clearOptions();
-                    select.addOption({address: "From marker location", latlon: data.attributes.fromPlace, lat: '', lon: '', city: '', state: ''});
-                    select.setValue(data.attributes.fromPlace);
-                    
-                    view.updatingForm = false;
-
-                }
             }
 
             if(_.has(data.changed, 'toPlace') && data.attributes.toPlace && view.selectTo) {
 
                 var select = view.selectTo[0].selectize;
-
-                if(reverseLookup) {
-                    $.ajax({
-                        url: OTP.config.simplecoderApi + '/r/' + encodeURIComponent(data.attributes.toPlace),
-                        type: 'GET',
-                        error: function() {
-                            view.updatingForm = true;
-
-                            select.clearOptions();
-                            select.addOption({address: "To marker location", latlon: data.attributes.toPlace, lat: '', lon: '', city: '', state: ''});
-                            select.setValue(data.attributes.toPlace);
-
-                            view.updatingForm = false;
-                        },
-                        success: function(res) {
-                                view.updatingForm = true;
-                                res.address = 'To ' + res.address;
-                                res.latlon = res.lat + ',' + res.lon;
-                                select.clearOptions();
-                                select.addOption(res);
-                                select.setValue(res.latlon);
-                                view.updatingForm = false;
-                        }
-                    });
-                }
-                else {
-                    
-                    view.updatingForm = true;
-
-                    select.clearOptions();
-                    select.addOption({address: "To marker location", latlon: data.attributes.toPlace, lat: '', lon: '', city: '', state: ''});
-                    select.setValue(data.attributes.toPlace);
-
-                    view.updatingForm = false;
-                }
+                 view.updateReverseGeocoder('To',  data.attributes.toPlace, select);
+                
             }
         });  
     },
+
+    updateReverseGeocoder: function (field, latlon, select) {
+
+        var reverseLookup = OTP.config.reverseGeocode;
+
+        var view = this;
+
+
+        if(reverseLookup) {
+   
+            error = function() {
+                view.updatingForm = true;
+
+                select.clearOptions();
+                select.addOption({address: field + " marker location", latlon: latlon , lat: '', lon: '', city: '', state: ''});
+                select.setValue(data.attributes.fromPlace);
+                
+                view.updatingForm = false;    
+
+            };
+
+            success = function(response) {
+                view.updatingForm = true;
+                select.clearOptions();
+                response.address =  field + ' ' + response.address;
+                select.addOption(response);
+                select.setValue(response.latlon);
+                view.updatingForm = false;
+            
+            };
+
+            OTP.geocoder.Geocoder.reverse(latlon, error, success)
+        }
+        else {
+
+            // this isn't great but appears to be neccesary as selectize triggers a change event even when programatically updated
+            view.updatingForm = true;
+
+            select.clearOptions();
+            select.addOption({address: field + " marker location", latlon: latlon, lat: '', lon: '', city: '', state: ''});
+            select.setValue(latlon);
+            
+            view.updatingForm = false;
+
+        }
+    },
+
+    
 
     render : function() {
 
@@ -263,41 +241,21 @@ var OtpRequestFormView = Backbone.View.extend({
             el: this.$('#bikeTriangle')
         });
 
-        var loadCallback = function(query, callback, select) {
-            if (!query.length) return callback();
-            $.ajax({
-                url: OTP.config.simplecoderApi + '/q/' + encodeURIComponent(query) + '/' + encodeURIComponent('Salem, OR'),
-                type: 'GET',
-
-                error: function() {
-                    callback();
-                },
-                success: function(res) {
-                        select.clearOptions();
-                        var data = new Array();
-                        for(var item in res.slice(0, 10)) {
-                            res[item].latlon = res[item].lat + ',' + res[item].lon;
-                            data.push(res[item]);
-                        }
-
-                        callback(data);
-                }
-            });
-        }
+       
 
         this.selectFrom = $('#fromPlace').selectize({
             valueField: 'latlon',
             labelField: 'address',
             searchField: 'address',
             plugins: ['remove_button'],
-            loadThrottle: 1000,
+            loadThrottle: 100,
             create: false,
             render: { option: function(item, escape) {
                     return geocodeItem(item);
                 }
             },
             load: function(query, callback) {
-                loadCallback(query, callback, view.selectFrom[0].selectize);
+                OTP.geocoder.Geocoder.lookup(query, callback, view.selectFrom[0].selectize);
             }
         });
 
@@ -306,14 +264,14 @@ var OtpRequestFormView = Backbone.View.extend({
             labelField: 'address',
             searchField: 'address',
             plugins: ['remove_button'],
-            loadThrottle: 1000,
+            loadThrottle: 100,
             create: false,
             render: { option: function(item, escape) {
                     return geocodeItem(item);
                 }
             },
             load: function(query, callback) {
-                loadCallback(query, callback, view.selectTo[0].selectize);
+                OTP.geocoder.Geocoder.lookup(query, callback, view.selectTo[0].selectize);
             }
         });
 

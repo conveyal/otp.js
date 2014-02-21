@@ -1,0 +1,8 @@
+{
+  "name": "client",
+  "version": "",
+  "description": "",
+  "styles": [
+  	"client.css
+  ]
+}

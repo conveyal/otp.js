@@ -4,6 +4,8 @@ OTP = module.exports = {
 	utils: require('./src/utils'),
 
 	models: require('./src/models'),
+
+	geocoder: require('./src/geocoder'),
 	
 	views: require('./src/views'),
 	narrative_views: require('./src/narrative_views'),

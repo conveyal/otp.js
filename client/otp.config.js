@@ -4,9 +4,9 @@ OTP.config = {
 	"osmMapKey": "conveyal.map-jc4m5i21",
 	"aerialMapKey": "conveyal.map-a3mk3jug",
 
-	"otpApi": "http://localhost:8080/opentripplanner-api-webapp/ws",
-	"simplecoderApi": "http://localhost:9000",
+	"otpApi": "http://maps.cherriots.org:8080/opentripplanner-api-webapp/ws",
+	"esriApi": "http://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/",
 
-	"reverseGeocode": false
+	"reverseGeocode": true
 
 };

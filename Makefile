@@ -55,6 +55,7 @@ client/otp.css: dist/otp.css
 
 client/otp.js: dist/otp.js 
 	cp dist/otp.js client/otp.js
+	cp dist/otp.uncompressed.js client/otp.uncompressed.js
 
 client/images: node_modules/leaflet/dist/images src/images 
 	cp -r node_modules/leaflet/dist/images client/
