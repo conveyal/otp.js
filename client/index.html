@@ -44,7 +44,7 @@
 
 $(document).ready(function() {
 
-	var map = L.map('map').setView([44.9473,-123.0564], 13);
+	var map = L.map('map', {doubleClickZoom: false}).setView([44.9473,-123.0564], 13);
     map.attributionControl.setPrefix('');
     
 	// add an OpenStreetMap tile layer

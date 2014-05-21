@@ -42,12 +42,12 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
 
             this.listenTo(leg, "mouseenter", _.bind(function() {
                 this.view.highlightLeg = this.leg;
-                this.view.render();
+                this.view.render(true);
             }, {view: this, leg : leg}));
 
             this.listenTo(leg, "mouseleave", _.bind(function() {
                 this.view.highlightLeg = null;
-                this.view.render();
+                this.view.render(true);
             }, {view: this, leg : leg}));
 
             this.listenTo(leg, "fromclick", _.bind(function() {
@@ -96,7 +96,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
         this.attachedToMap = false;
     },
 
-    render : function() {
+    render : function(skipFitBounds) {
                
         if(!this.attachedToMap) this.attachToMap();
         this.clearLayers();
@@ -176,7 +176,8 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             this.pathMarkerLayer.addLayer(marker);
         }
 
-        this.options.map.fitBounds(mapBounds);
+        if(!skipFitBounds)
+            this.options.map.fitBounds(mapBounds);
     },
 
     getStepBubbleMarker : function(leg, step) {
