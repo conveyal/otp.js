@@ -1,4 +1,3 @@
-
 /**
  * microplugin.js
  * Copyright (c) 2013 Brian Reavis & contributors
@@ -127,7 +126,7 @@
 	};
 
 	var utils = {
-		isArray: Array.isArray || function() {
+		isArray: Array.isArray || function(vArg) {
 			return Object.prototype.toString.call(vArg) === '[object Array]';
 		}
 	};

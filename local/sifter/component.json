@@ -1,0 +1,9 @@
+{
+  "name": "sifter",
+  "version": "",
+  "description": "",
+  "main" : "sifter.js",
+  "scripts": [
+    "sifter.js"
+  ]
+}

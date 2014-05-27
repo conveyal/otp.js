@@ -4,9 +4,14 @@
   "description": "",
   "main" : "selectize.js",
   "scripts": [
-    "selectize.js",
-    "sifter.js",
-    "microplugin.js"
+    "selectize.js"
+  ],
+  "dependencies": {
+    "components/jquery": "*"
+  },
+  "local" : [
+    "sifter",
+    "microplugin"
   ],
   "styles": [
   	"selectize.bootstrap3.css"

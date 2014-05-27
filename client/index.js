@@ -1,5 +1,6 @@
 var _ = require('underscore');
 var L = require('leaflet');
+var $ = require('jquery');
 
 var OTP = require('otpjs');
 OTP.config = OTP_config;

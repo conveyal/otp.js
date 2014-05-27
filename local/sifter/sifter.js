@@ -176,12 +176,120 @@
 				return scoreObject(tokens[0], data);
 			};
 		}
-		return function(data) {
-			for (var i = 0, sum = 0; i < token_count; i++) {
-				sum += scoreObject(tokens[i], data);
-			}
-			return sum / token_count;
+
+		if (search.options.conjunction === 'and') {
+			return function(data) {
+				var score;
+				for (var i = 0, sum = 0; i < token_count; i++) {
+					score = scoreObject(tokens[i], data);
+					if (score <= 0) return 0;
+					sum += score;
+				}
+				return sum / token_count;
+			};
+		} else {
+			return function(data) {
+				for (var i = 0, sum = 0; i < token_count; i++) {
+					sum += scoreObject(tokens[i], data);
+				}
+				return sum / token_count;
+			};
+		}
+	};
+
+	/**
+	 * Returns a function that can be used to compare two
+	 * results, for sorting purposes. If no sorting should
+	 * be performed, `null` will be returned.
+	 *
+	 * @param {string|object} search
+	 * @param {object} options
+	 * @return function(a,b)
+	 */
+	Sifter.prototype.getSortFunction = function(search, options) {
+		var i, n, self, field, fields, fields_count, multiplier, multipliers, get_field, implicit_score, sort;
+
+		self   = this;
+		search = self.prepareSearch(search, options);
+		sort   = (!search.query && options.sort_empty) || options.sort;
+
+		/**
+		 * Fetches the specified sort field value
+		 * from a search result item.
+		 *
+		 * @param  {string} name
+		 * @param  {object} result
+		 * @return {mixed}
+		 */
+		get_field  = function(name, result) {
+			if (name === '$score') return result.score;
+			return self.items[result.id][name];
 		};
+
+		// parse options
+		fields = [];
+		if (sort) {
+			for (i = 0, n = sort.length; i < n; i++) {
+				if (search.query || sort[i].field !== '$score') {
+					fields.push(sort[i]);
+				}
+			}
+		}
+
+		// the "$score" field is implied to be the primary
+		// sort field, unless it's manually specified
+		if (search.query) {
+			implicit_score = true;
+			for (i = 0, n = fields.length; i < n; i++) {
+				if (fields[i].field === '$score') {
+					implicit_score = false;
+					break;
+				}
+			}
+			if (implicit_score) {
+				fields.unshift({field: '$score', direction: 'desc'});
+			}
+		} else {
+			for (i = 0, n = fields.length; i < n; i++) {
+				if (fields[i].field === '$score') {
+					fields.splice(i, 1);
+					break;
+				}
+			}
+		}
+
+		multipliers = [];
+		for (i = 0, n = fields.length; i < n; i++) {
+			multipliers.push(fields[i].direction === 'desc' ? -1 : 1);
+		}
+
+		// build function
+		fields_count = fields.length;
+		if (!fields_count) {
+			return null;
+		} else if (fields_count === 1) {
+			field = fields[0].field;
+			multiplier = multipliers[0];
+			return function(a, b) {
+				return multiplier * cmp(
+					get_field(field, a),
+					get_field(field, b)
+				);
+			};
+		} else {
+			return function(a, b) {
+				var i, result, a_value, b_value, field;
+				for (i = 0; i < fields_count; i++) {
+					field = fields[i].field;
+					result = multipliers[i] * cmp(
+						get_field(field, a),
+						get_field(field, b)
+					);
+					if (result) return result;
+				}
+				return 0;
+			};
+		}
 	};
 
 	/**
@@ -195,8 +303,19 @@
 	 */
 	Sifter.prototype.prepareSearch = function(query, options) {
 		if (typeof query === 'object') return query;
+
+		options = extend({}, options);
+
+		var option_fields     = options.fields;
+		var option_sort       = options.sort;
+		var option_sort_empty = options.sort_empty;
+
+		if (option_fields && !is_array(option_fields)) options.fields = [option_fields];
+		if (option_sort && !is_array(option_sort)) options.sort = [option_sort];
+		if (option_sort_empty && !is_array(option_sort_empty)) options.sort_empty = [option_sort_empty];
+
 		return {
-			options : extend({}, options),
+			options : options,
 			query   : String(query || '').toLowerCase(),
 			tokens  : this.tokenize(query),
 			total   : 0,
@@ -210,9 +329,9 @@
 	 * The `options` parameter can contain:
 	 *
 	 *   - fields {string|array}
-	 *   - sort {string}
-	 *   - direction {string}
+	 *   - sort {array}
 	 *   - score {function}
+	 *   - filter {bool}
 	 *   - limit {integer}
 	 *
 	 * Returns an object containing:
@@ -229,44 +348,32 @@
 	 */
 	Sifter.prototype.search = function(query, options) {
 		var self = this, value, score, search, calculateScore;
+		var fn_sort;
+		var fn_score;
 
 		search  = this.prepareSearch(query, options);
 		options = search.options;
 		query   = search.query;
 
 		// generate result scoring function
-		if (!is_array(options.fields)) options.fields = [options.fields];
-		calculateScore = options.score || self.getScoreFunction(search);
+		fn_score = options.score || self.getScoreFunction(search);
 
 		// perform search and sort
 		if (query.length) {
 			self.iterator(self.items, function(item, id) {
-				score = calculateScore(item);
-				if (score > 0) {
+				score = fn_score(item);
+				if (options.filter === false || score > 0) {
 					search.items.push({'score': score, 'id': id});
 				}
-			});
-			search.items.sort(function(a, b) {
-				return b.score - a.score;
 			});
 		} else {
 			self.iterator(self.items, function(item, id) {
 				search.items.push({'score': 1, 'id': id});
 			});
-			if (options.sort) {
-				search.items.sort((function() {
-					var field = options.sort;
-					var multiplier = options.direction === 'desc' ? -1 : 1;
-					return function(a, b) {
-						a = a && String(self.items[a.id][field] || '').toLowerCase();
-						b = b && String(self.items[b.id][field] || '').toLowerCase();
-						if (a > b) return 1 * multiplier;
-						if (b > a) return -1 * multiplier;
-						return 0;
-					};
-				})());
-			}
 		}
+
+		fn_sort = self.getSortFunction(search, options);
+		if (fn_sort) search.items.sort(fn_sort);
 
 		// apply limits
 		search.total = search.items.length;
@@ -279,6 +386,17 @@
 
 	// utilities
 	// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+	var cmp = function(a, b) {
+		if (typeof a === 'number' && typeof b === 'number') {
+			return a > b ? 1 : (a < b ? -1 : 0);
+		}
+		a = String(a || '').toLowerCase();
+		b = String(b || '').toLowerCase();
+		if (a > b) return 1;
+		if (b > a) return -1;
+		return 0;
+	};
 
 	var extend = function(a, b) {
 		var i, n, k, object;
@@ -308,14 +426,17 @@
 
 	var DIACRITICS = {
 		'a': '[aÀÁÂÃÄÅàáâãäå]',
-		'c': '[cÇç]',
-		'e': '[eÈÉÊËèéêë]',
+		'c': '[cÇçćĆčČ]',
+		'd': '[dđĐďĎ]',
+		'e': '[eÈÉÊËèéêëěĚ]',
 		'i': '[iÌÍÎÏìíîï]',
-		'n': '[nÑñ]',
+		'n': '[nÑñňŇ]',
 		'o': '[oÒÓÔÕÕÖØòóôõöø]',
+		'r': '[rřŘ]',
 		's': '[sŠš]',
-		'u': '[uÙÚÛÜùúûü]',
-		'y': '[yŸÿý]',
+		't': '[tťŤ]',
+		'u': '[uÙÚÛÜùúûüůŮ]',
+		'y': '[yŸÿýÝ]',
 		'z': '[zŽž]'
 	};
 
@@ -323,5 +444,5 @@
 	// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 	return Sifter;
-
 }));
+

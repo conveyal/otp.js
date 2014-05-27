@@ -8,5 +8,8 @@
   ],
   "styles": [
   	"bootstrap-datetimepicker.css"
-  ]
+  ],
+  "dependencies": {
+    "components/jquery": "*"
+  }
 }
