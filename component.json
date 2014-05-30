@@ -6,7 +6,8 @@
     "jashkenas/underscore": "*",
     "jashkenas/backbone": "*",
     "moment/moment": "*",
-    "components/jquery": "*"
+    "components/jquery": "*",
+    "kpwebb/select2": "*"
   },
   "local": [
     "leaflet",
@@ -14,19 +15,17 @@
     "handlebars",
     "raphael",
     "bootstrap",
-    "selectize",
     "datetimepicker"
   ],
   "paths": [
     "local"
   ],
-  "development": {
-  },
+  "development": {},
   "main": "lib/index.js",
   "scripts": [
     "lib/index.js",
-    "lib/models.js",  
-    "lib/views.js",  
+    "lib/models.js",
+    "lib/views.js",
     "lib/bike_views.js",
     "lib/map_views.js",
     "lib/narrative_views.js",
@@ -34,12 +33,12 @@
     "lib/topo_views.js",
     "lib/utils.js"
   ],
-  "styles" : [
+  "styles": [
     "lib/narrative.css",
     "lib/map.css",
     "lib/topo.css"
   ],
-  "images" : [
+  "images": [
     "lib/images"
   ]
 }
