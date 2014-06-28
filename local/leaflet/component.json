@@ -1,6 +1,6 @@
 {
   "name": "leaflet",
-  "version": "0.6.4",
+  "version": "0.7.3",
   "description": "",
   "main" : "leaflet-src.js",
   "scripts": [
@@ -10,6 +10,6 @@
     "images"
   ],
   "styles": [
-  	"leaflet.css"
+    "leaflet.css"
   ]
 }
