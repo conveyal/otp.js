@@ -11,16 +11,20 @@
 
     <!-- include the core otpjs build files -->
     <script src="build/build.js"></script>
-    <link rel="stylesheet" href="build/build.css" />    
+    <link rel="stylesheet" href="build/build.css" />
 
     <!-- include the client-specific code, styles, and configuration -->
     <script src="otp.config.js"></script>
     <script src="index.js"></script>
     <link rel="stylesheet" href="client.css" />
 
+    <!--[if lt IE 9]>
+        <script src="http://cdnjs.cloudflare.com/ajax/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+
 </head>
 
-<body> 
+<body>
 
     <div class="row">
         <div id="sidebar" class="col-sm-4 col-md-3">
@@ -28,7 +32,7 @@
             <div class="row" id="narrative"></div>
         </div>
         <div class="col-sm-8 col-md-9">
-            <div id="map" style="height: 700px"></div>    
+            <div id="map" style="height: 700px"></div>
         </div>
     </div>
 
