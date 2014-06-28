@@ -2,11 +2,12 @@ var $ = require('jquery');
 var _ = require('underscore');
 var L = require('leaflet');
 
+var Backbone = require('backbone');
+
 var OTP = require('otpjs');
 OTP.config = OTP_config;
 
 $(document).ready(function() {
-
 
     // set up the leafet map object
 	var map = L.map('map').setView(OTP.config.initLatLng, (OTP.config.initZoom || 13));
@@ -94,6 +95,24 @@ $(document).ready(function() {
     });
 
     requestModel.request();
+
+
+
+    var Router = Backbone.Router.extend({
+      routes: {
+        'plan(?*querystring)': 'plan'
+      },
+      plan: function (querystring) {
+        requestModel.fromQueryString(querystring);
+      }
+    });
+
+    router = new Router();
+    Backbone.history.start();
+
+    requestModel.on('change', function() {
+        router.navigate('plan' + requestModel.toQueryString());
+    });
 
     // make the UI responsive to resizing of the containing window
     var resize = function() {
