@@ -6,7 +6,7 @@
     "jashkenas/underscore": "*",
     "jashkenas/backbone": "*",
     "moment/moment": "*",
-    "components/jquery": "*",
+    "components/jquery": "1.11.0",
     "kpwebb/select2": "*"
   },
   "local": [
