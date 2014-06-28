@@ -1,12 +1,12 @@
+var $ = require('jquery');
 var _ = require('underscore');
 var L = require('leaflet');
-var $ = require('jquery');
 
 var OTP = require('otpjs');
 OTP.config = OTP_config;
 
-
 $(document).ready(function() {
+
 
     // set up the leafet map object
 	var map = L.map('map').setView(OTP.config.initLatLng, (OTP.config.initZoom || 13));
