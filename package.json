@@ -1,7 +1,7 @@
 {
-  "name": "otp.js",
-  "version": "1.1.0",
-  "description": "",
+  "name": "otpjs",
+  "version": "0.10.0",
+  "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "keywords": [],
   "author": "Conveyal",
   "homepage": "http://conveyal.com/",

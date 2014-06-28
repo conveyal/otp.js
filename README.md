@@ -1,7 +1,7 @@
 
 otp.js is a lightweight library for modular development of modern [OpenTripPlanner](http://opentripplanner.org) front-end interfaces.
 
-The core of the library is a collection of data models and views (`lib/`), written using backbone.js, that encapuslate OTP API requests and responses. Also included is a simple web client (`client/`) that shows how otp.js can be used to create a functional OTP front-end.
+The core of the library is a collection of data models and views (`lib/`), written using backbone.js, that encapsulate OTP API requests and responses (OTP API version 0.10). Also included is a simple web client (`client/`) that shows how otp.js can be used to create a functional OTP front-end.
 
 otp.js uses [Component](https://github.com/component/component) for dependency and build process management.
 

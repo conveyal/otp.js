@@ -1,7 +1,7 @@
 {
   "name": "otpjs",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.10.0",
+  "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
     "jashkenas/underscore": "*",
     "jashkenas/backbone": "*",
