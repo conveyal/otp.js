@@ -10,7 +10,6 @@
     "kpwebb/select2": "*"
   },
   "local": [
-    "leaflet",
     "leaflet.label",
     "handlebars",
     "raphael",
