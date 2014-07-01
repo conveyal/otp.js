@@ -29,11 +29,11 @@ server:
 
 otp.js: components $(JS)
 	$(MAKE) lint
-	$(COMPONENT) build --dev --verbose --out client/build
-	$(COMPONENT) build --verbose --standalone otp --out . --name otp
+	$(COMPONENT) build --dev --verbose --out client/build --prefix '.'
+	$(COMPONENT) build --verbose --standalone otp --out . --name otp  --prefix '.'
 
 otp.min.js: otp.js
-	$(COMPONENT) build --verbose --use component-uglifyjs --standalone otp --out . --name otp.min
+	$(COMPONENT) build --verbose --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
 
 watch:
 	watch $(MAKE) build
