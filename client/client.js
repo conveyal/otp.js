@@ -58,7 +58,7 @@ $(document).ready(function() {
     });
 
     // create the main OTP trip plan request model and point it to the API
-    var requestModel = new OTP.models.OtpPlanRequest();
+    var requestModel = new OTP.models.OtpPlanRequest({app_key : OTP.config.otpApiKey, app_id: OTP.config.otpAppId});
     requestModel.urlRoot = OTP.config.otpApi + '/plan';
 
     // create and render the main request view, which displays the trip

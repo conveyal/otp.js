@@ -12,12 +12,12 @@ clean:
 	rm -rf build components node_modules
 
 components: component.json
-	$(COMPONENT) install --dev --verbose
+	$(COMPONENT) install --dev --debug
 
 install: node_modules
 
 # lint: $(JS)
-# 	$(JSHINT) --verbose $(JS)
+# 	$(JSHINT) --debug $(JS)
 
 node_modules: package.json
 	npm install
@@ -29,11 +29,11 @@ server:
 
 otp.js: components $(JS)
 	$(MAKE) lint
-	$(COMPONENT) build --dev --verbose --out client/build --prefix '.'
-	$(COMPONENT) build --verbose --standalone otp --out . --name otp  --prefix '.'
+	$(COMPONENT) build --dev --debug --out client/build
+	$(COMPONENT) build --debug --standalone otp --out . --name otp
 
 otp.min.js: otp.js
-	$(COMPONENT) build --verbose --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
+	$(COMPONENT) build --debug --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
 
 watch:
 	watch $(MAKE) build
