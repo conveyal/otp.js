@@ -35,7 +35,7 @@ $(document).ready(function() {
     // create the trip topography widget and add it to the map
     var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
     topoControl.addTo(map);
-    
+
     // create a data model for the currently visible stops, and point it
     // to the corresponding API method
     var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest();
@@ -59,12 +59,13 @@ $(document).ready(function() {
 
     // create the main OTP trip plan request model and point it to the API
     var requestModel = new OTP.models.OtpPlanRequest();
-    requestModel.urlRoot = OTP.config.otpApi + '/plan';
+    requestModel.urlRoot = OTP.config.otpApi + 'default' + '/plan';
 
     // create and render the main request view, which displays the trip
     // preference form
     var requestView = new OTP.request_views.OtpRequestFormView({
         model: requestModel,
+				map : map,
         el: $('#request')
     });
     requestView.render();
@@ -87,10 +88,10 @@ $(document).ready(function() {
 
     // instruct the response view to listen to relevant request model events
     requestModel.on('success', function(response) {
-        responseView.newResponse(response); 
+        responseView.newResponse(response);
     });
     requestModel.on('failure', function(response) {
-        responseView.newResponse(false); 
+        responseView.newResponse(false);
     });
 
     requestModel.request();
@@ -99,8 +100,21 @@ $(document).ready(function() {
 
     var Router = Backbone.Router.extend({
       routes: {
+				'start/:lat/:lon/:zoom': 'start',
+				'start/:lat/:lon/:zoom/:routerId': 'startWithRouterId',
         'plan(?*querystring)': 'plan'
       },
+			start : function(lat, lon, zoom) {
+				map.setView(L.latLng(lat, lon), zoom);
+			},
+			startWithRouterId : function(lat, lon, zoom, routerId){
+				OTP.config.routerId = routerId;
+
+				requestModel.urlRoot = OTP.config.otpApi + routerId + '/plan';
+
+				map.setView(L.latLng(lat, lon), zoom);
+
+			},
       plan: function (querystring) {
         requestModel.fromQueryString(querystring);
       }
@@ -123,4 +137,3 @@ $(document).ready(function() {
     $(window).resize(resize);
     resize.call();
 });
-

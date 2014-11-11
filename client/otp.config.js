@@ -1,12 +1,12 @@
 
 var OTP_config = {
-	
-	"initLatLng" : [44.9473,-123.0564],
+
+	"initLatLng" : [42.703632059618045,-73.7948226928711],
 
 	"osmMapKey": "conveyal.ikck6888", // temporary -- do not use in production, provide your own
 	"aerialMapKey": "conveyal.map-a3mk3jug", // unset
 
-	"otpApi": "http://maps.cherriots.org:8080/opentripplanner-api-webapp/ws",
+	"otpApi": "http://ny511.dev.conveyal.com/otp/routers/",
 	"esriApi": "http://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/",
 
 	"reverseGeocode": false
