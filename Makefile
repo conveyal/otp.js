@@ -12,7 +12,7 @@ clean:
 	rm -rf build components node_modules
 
 components: component.json
-	$(COMPONENT) install --dev --verbose
+	$(COMPONENT) install --dev
 
 install: node_modules
 
@@ -29,11 +29,11 @@ server:
 
 otp.js: components $(JS)
 	$(MAKE) lint
-	$(COMPONENT) build --dev --verbose --out client/build --prefix '.'
-	$(COMPONENT) build --verbose --standalone otp --out . --name otp  --prefix '.'
+	$(COMPONENT) build --dev --out client/build --prefix '.'
+	$(COMPONENT) build --standalone otp --out . --name otp  --prefix '.'
 
 otp.min.js: otp.js
-	$(COMPONENT) build --verbose --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
+	$(COMPONENT) build --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
 
 watch:
 	watch $(MAKE) build
