@@ -9,8 +9,6 @@
     "type": "git",
     "url": "git://github.com/conveyal/otp.js.git"
   },
-  "dependencies": {
-  },
   "devDependencies": {
     "component": "*",
     "component-uglifyjs": "*",
@@ -18,16 +16,5 @@
   },
   "scripts": {
     "test": "make lint"
-  },
-  "jshintConfig": {
-    "boss": true,
-    "browser": true,
-    "indent": 2,
-    "laxbreak": true,
-    "maxcomplexity": 10,
-    "node": true,
-    "quotmark": "single",
-    "trailing": true,
-    "undef": true
   }
 }

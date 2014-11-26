@@ -1,0 +1,22 @@
+<div class="otp-legStep-row">
+  <div class="otp-legStep-icon otp-legStep-icon-{{relativeDirection}}"></div>
+  <div class="otp-legStep-dist">
+    <span style="font-weight:bold; font-size: 1.2em;">{{distanceValue}}</span><br>{{distanceUnit}}
+  </div>
+  <div class="otp-legStep-text">
+  {{#if isRoundabout}}
+    Take roundabout {{relativeDirection}} to {{ordinal exit}} exit on {{streetName}}
+  {{else}}
+    {{#if isFirst}}
+      Start on <b>{{streetName}}</b> heading {{absoluteDirection}}
+    {{else}}
+      {{#if stayOn}}
+        <b>{{relativeDirection}}</b> to continue on <b>{{streetName}}</b>
+      {{else}}
+        <b>{{relativeDirection}}</b> on to <b>{{streetName}}</b>
+      {{/if}}
+    {{/if}}
+  {{/if}}
+  </div>
+  <div style="clear:both;"></div>
+</div>

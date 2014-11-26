@@ -1,0 +1,18 @@
+<div class="well">
+  <div class="otp-itinHeader">
+    <span style="float:right;">{{formatDuration duration}}</span>
+    Option {{index}}:
+    {{#each legs}}
+    <nobr>
+      <div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>
+      {{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}
+      {{#unless @last}}
+      <div class="otp-legMode-icon otp-legMode-icon-arrow-right"></div>
+      {{/unless}}
+    </nobr>
+    {{/each}}
+    <br>
+    <span>{{formatTime startTime timeOffset}} - {{formatTime endTime timeOffset}}</span>
+  </div>
+  <div class="otp-itinBody"></div>
+</div>

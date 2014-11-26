@@ -1,0 +1,15 @@
+<div class="otp-leg">
+  <div class="otp-legHeader">
+    <b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div> {{routeShortName}}</b> {{routeLongName}} to {{to.name}}
+  </div>
+  <div class="otp-legBody">
+    <div class="otp-transitLeg-leftCol">{{formatTime startTime timeOffset}}</div>
+    <div class="otp-transitLeg-endpointDesc otp-from"><b>Depart</b>: {{from.name}}</div>
+    <div class="otp-transitLeg-endpointDescSub">Stop #{{from.stopId.id}}</div>
+    <div class="otp-transitLeg-buffer"></div>
+    <div class="otp-transitLeg-elapsedDesc"><i>Time in transit: {{formatDuration duration}}</i></div>
+    <div class="otp-transitLeg-buffer"></div>
+    <div class="otp-transitLeg-leftCol">{{formatTime endTime timeOffset}}</div>
+    <div class="otp-transitLeg-endpointDesc otp-to"><b>Arrive</b>: {{to.name}}</div>
+  </div>
+</div>

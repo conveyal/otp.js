@@ -1,39 +1,32 @@
-COMPONENT := ./node_modules/.bin/component
-JSHINT := ./node_modules/.bin/jshint
-SERVE := ./node_modules/.bin/serve
+
+COMPONENT = component
+JSHINT = jshint
+SERVE = serve
 
 JS := $(shell find lib -name '*.js' -print)
 
 PORT = 3000
 
-build: otp.js
+build: components $(JS)
+	@$(COMPONENT) build --dev --out client/build
 
 clean:
 	rm -rf build components node_modules
 
 components: component.json
-	$(COMPONENT) install --dev
+	@$(COMPONENT) install --dev
 
 install: node_modules
+	@npm install -g component jshint myth serve
 
-# lint: $(JS)
-# 	$(JSHINT) --verbose $(JS)
+lint: $(JS)
+	@$(JSHINT) --verbose $(JS)
 
 node_modules: package.json
-	npm install
-
-release: otp.min.js
+	@npm install
 
 server:
-	$(SERVE) --port $(PORT)
-
-otp.js: components $(JS)
-	$(MAKE) lint
-	$(COMPONENT) build --dev --out client/build --prefix '.'
-	$(COMPONENT) build --standalone otp --out . --name otp  --prefix '.'
-
-otp.min.js: otp.js
-	$(COMPONENT) build --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
+	@$(SERVE) --port $(PORT)
 
 watch:
 	watch $(MAKE) build

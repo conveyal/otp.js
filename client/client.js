@@ -1,31 +1,31 @@
 var $ = require('jquery');
 var _ = require('underscore');
+var L = window.L;
 
 var Backbone = require('backbone');
 
 var OTP = require('otpjs');
-OTP.config = OTP_config;
 
 $(document).ready(function() {
 
     // set up the leafet map object
-	var map = L.map('map').setView(OTP.config.initLatLng, (OTP.config.initZoom || 13));
+	var map = L.map('map').setView(window.OTP_config.initLatLng, (window.OTP_config.initZoom || 13));
     map.attributionControl.setPrefix('');
 
 	// create OpenStreetMap tile layers for streets and aerial imagery
-	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.osmMapKey + '/{z}/{x}/{y}.png', {
+	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + window.OTP_config.osmMapKey + '/{z}/{x}/{y}.png', {
         subdomains : ['a','b','c','d'],
 	    attribution: 'Street Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
 	});
-    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.aerialMapKey + '/{z}/{x}/{y}.png', {
+    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + window.OTP_config.aerialMapKey + '/{z}/{x}/{y}.png', {
         subdomains : ['a','b','c','d'],
         attribution : 'Satellite Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
     });
 
     // create a leaflet layer control and add it to the map
     var baseLayers = {
-        "Street Map" : osmLayer,
-        "Satellite Map" : aerialLayer
+        'Street Map' : osmLayer,
+        'Satellite Map' : aerialLayer
     };
     L.control.layers(baseLayers).addTo(map);
 
@@ -39,7 +39,7 @@ $(document).ready(function() {
     // create a data model for the currently visible stops, and point it
     // to the corresponding API method
     var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest();
-    stopsRequestModel.urlRoot = OTP.config.otpApi + '/transit/stopsInRectangle';
+    stopsRequestModel.urlRoot = window.OTP_config.otpApi + '/transit/stopsInRectangle';
 
     // create the stops request view, which monitors the map and updates the
     // bounds of the visible stops request as the viewable area changes
@@ -59,7 +59,7 @@ $(document).ready(function() {
 
     // create the main OTP trip plan request model and point it to the API
     var requestModel = new OTP.models.OtpPlanRequest();
-    requestModel.urlRoot = OTP.config.otpApi + 'default' + '/plan';
+    requestModel.urlRoot = window.OTP_config.otpApi + 'default' + '/plan';
 
     // create and render the main request view, which displays the trip
     // preference form
@@ -108,9 +108,9 @@ $(document).ready(function() {
 				map.setView(L.latLng(lat, lon), zoom);
 			},
 			startWithRouterId : function(lat, lon, zoom, routerId){
-				OTP.config.routerId = routerId;
+				window.OTP_config.routerId = routerId;
 
-				requestModel.urlRoot = OTP.config.otpApi + routerId + '/plan';
+				requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan';
 
 				map.setView(L.latLng(lat, lon), zoom);
 
@@ -120,7 +120,7 @@ $(document).ready(function() {
       }
     });
 
-    router = new Router();
+    var router = new Router();
     Backbone.history.start();
 
     requestModel.on('change', function() {

@@ -6,20 +6,18 @@
     "jashkenas/underscore": "*",
     "jashkenas/backbone": "*",
     "moment/moment": "*",
-    "components/jquery": "1.11.0",
+    "components/bootstrap": "3.3.1",
     "kpwebb/select2": "*"
   },
   "local": [
     "leaflet.label",
     "handlebars",
     "raphael",
-    "bootstrap",
     "datetimepicker"
   ],
   "paths": [
     "local"
   ],
-  "development": {},
   "main": "lib/index.js",
   "scripts": [
     "lib/index.js",
@@ -39,5 +37,17 @@
   ],
   "images": [
     "lib/images"
+  ],
+  "templates": [
+    "lib/access-leg.html",
+    "lib/generic-leg.html",
+    "lib/leg-from-bubble.html",
+    "lib/map-context-menu.html",
+    "lib/narrative-adjust.html",
+    "lib/narrative-new.html",
+    "lib/narrative-itinerary.html",
+    "lib/request-form.html",
+    "lib/step.html",
+    "lib/transit-leg.html"
   ]
 }

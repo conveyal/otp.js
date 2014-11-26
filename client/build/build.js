@@ -1,42 +1,105 @@
-
 /**
- * Require the given path.
+ * Require the module at `name`.
  *
- * @param {String} path
+ * @param {String} name
  * @return {Object} exports
  * @api public
  */
 
-function require(path, parent, orig) {
-  var resolved = require.resolve(path);
+function require(name) {
+  var module = require.modules[name];
+  if (!module) throw new Error('failed to require "' + name + '"');
 
-  // lookup failed
-  if (null == resolved) {
-    orig = orig || path;
-    parent = parent || 'root';
-    var err = new Error('Failed to require "' + orig + '" from "' + parent + '"');
-    err.path = orig;
-    err.parent = parent;
-    err.require = true;
-    throw err;
-  }
-
-  var module = require.modules[resolved];
-
-  // perform real require()
-  // by invoking the module's
-  // registered function
-  if (!module._resolving && !module.exports) {
-    var mod = {};
-    mod.exports = {};
-    mod.client = mod.component = true;
-    module._resolving = true;
-    module.call(this, mod.exports, require.relative(resolved), mod);
-    delete module._resolving;
-    module.exports = mod.exports;
+  if (!('exports' in module) && typeof module.definition === 'function') {
+    module.client = module.component = true;
+    module.definition.call(this, module.exports = {}, module);
+    delete module.definition;
   }
 
   return module.exports;
+}
+
+/**
+ * Meta info, accessible in the global scope unless you use AMD option.
+ */
+
+require.loader = 'component';
+
+/**
+ * Internal helper object, contains a sorting function for semantiv versioning
+ */
+require.helper = {};
+require.helper.semVerSort = function(a, b) {
+  var aArray = a.version.split('.');
+  var bArray = b.version.split('.');
+  for (var i=0; i<aArray.length; ++i) {
+    var aInt = parseInt(aArray[i], 10);
+    var bInt = parseInt(bArray[i], 10);
+    if (aInt === bInt) {
+      var aLex = aArray[i].substr((""+aInt).length);
+      var bLex = bArray[i].substr((""+bInt).length);
+      if (aLex === '' && bLex !== '') return 1;
+      if (aLex !== '' && bLex === '') return -1;
+      if (aLex !== '' && bLex !== '') return aLex > bLex ? 1 : -1;
+      continue;
+    } else if (aInt > bInt) {
+      return 1;
+    } else {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Find and require a module which name starts with the provided name.
+ * If multiple modules exists, the highest semver is used. 
+ * This function can only be used for remote dependencies.
+
+ * @param {String} name - module name: `user~repo`
+ * @param {Boolean} returnPath - returns the canonical require path if true, 
+ *                               otherwise it returns the epxorted module
+ */
+require.latest = function (name, returnPath) {
+  function showError(name) {
+    throw new Error('failed to find latest module of "' + name + '"');
+  }
+  // only remotes with semvers, ignore local files conataining a '/'
+  var versionRegexp = /(.*)~(.*)@v?(\d+\.\d+\.\d+[^\/]*)$/;
+  var remoteRegexp = /(.*)~(.*)/;
+  if (!remoteRegexp.test(name)) showError(name);
+  var moduleNames = Object.keys(require.modules);
+  var semVerCandidates = [];
+  var otherCandidates = []; // for instance: name of the git branch
+  for (var i=0; i<moduleNames.length; i++) {
+    var moduleName = moduleNames[i];
+    if (new RegExp(name + '@').test(moduleName)) {
+        var version = moduleName.substr(name.length+1);
+        var semVerMatch = versionRegexp.exec(moduleName);
+        if (semVerMatch != null) {
+          semVerCandidates.push({version: version, name: moduleName});
+        } else {
+          otherCandidates.push({version: version, name: moduleName});
+        } 
+    }
+  }
+  if (semVerCandidates.concat(otherCandidates).length === 0) {
+    showError(name);
+  }
+  if (semVerCandidates.length > 0) {
+    var module = semVerCandidates.sort(require.helper.semVerSort).pop().name;
+    if (returnPath === true) {
+      return module;
+    }
+    return require(module);
+  }
+  // if the build contains more than one branch of the same module
+  // you should not use this funciton
+  var module = otherCandidates.pop().name;
+  if (returnPath === true) {
+    return module;
+  }
+  return require(module);
 }
 
 /**
@@ -46,161 +109,34 @@ function require(path, parent, orig) {
 require.modules = {};
 
 /**
- * Registered aliases.
- */
-
-require.aliases = {};
-
-/**
- * Resolve `path`.
+ * Register module at `name` with callback `definition`.
  *
- * Lookup:
- *
- *   - PATH/index.js
- *   - PATH.js
- *   - PATH
- *
- * @param {String} path
- * @return {String} path or null
- * @api private
- */
-
-require.resolve = function(path) {
-  if (path.charAt(0) === '/') path = path.slice(1);
-
-  var paths = [
-    path,
-    path + '.js',
-    path + '.json',
-    path + '/index.js',
-    path + '/index.json'
-  ];
-
-  for (var i = 0; i < paths.length; i++) {
-    var path = paths[i];
-    if (require.modules.hasOwnProperty(path)) return path;
-    if (require.aliases.hasOwnProperty(path)) return require.aliases[path];
-  }
-};
-
-/**
- * Normalize `path` relative to the current path.
- *
- * @param {String} curr
- * @param {String} path
- * @return {String}
- * @api private
- */
-
-require.normalize = function(curr, path) {
-  var segs = [];
-
-  if ('.' != path.charAt(0)) return path;
-
-  curr = curr.split('/');
-  path = path.split('/');
-
-  for (var i = 0; i < path.length; ++i) {
-    if ('..' == path[i]) {
-      curr.pop();
-    } else if ('.' != path[i] && '' != path[i]) {
-      segs.push(path[i]);
-    }
-  }
-
-  return curr.concat(segs).join('/');
-};
-
-/**
- * Register module at `path` with callback `definition`.
- *
- * @param {String} path
+ * @param {String} name
  * @param {Function} definition
  * @api private
  */
 
-require.register = function(path, definition) {
-  require.modules[path] = definition;
+require.register = function (name, definition) {
+  require.modules[name] = {
+    definition: definition
+  };
 };
 
 /**
- * Alias a module definition.
+ * Define a module's exports immediately with `exports`.
  *
- * @param {String} from
- * @param {String} to
+ * @param {String} name
+ * @param {Generic} exports
  * @api private
  */
 
-require.alias = function(from, to) {
-  if (!require.modules.hasOwnProperty(from)) {
-    throw new Error('Failed to alias "' + from + '", it does not exist');
-  }
-  require.aliases[to] = from;
-};
-
-/**
- * Return a require function relative to the `parent` path.
- *
- * @param {String} parent
- * @return {Function}
- * @api private
- */
-
-require.relative = function(parent) {
-  var p = require.normalize(parent, '..');
-
-  /**
-   * lastIndexOf helper.
-   */
-
-  function lastIndexOf(arr, obj) {
-    var i = arr.length;
-    while (i--) {
-      if (arr[i] === obj) return i;
-    }
-    return -1;
-  }
-
-  /**
-   * The relative require() itself.
-   */
-
-  function localRequire(path) {
-    var resolved = localRequire.resolve(path);
-    return require(resolved, parent, path);
-  }
-
-  /**
-   * Resolve relative to the parent.
-   */
-
-  localRequire.resolve = function(path) {
-    var c = path.charAt(0);
-    if ('/' == c) return path.slice(1);
-    if ('.' == c) return require.normalize(p, path);
-
-    // resolve deps by returning
-    // the dep in the nearest "deps"
-    // directory
-    var segs = parent.split('/');
-    var i = lastIndexOf(segs, 'deps') + 1;
-    if (!i) i = 0;
-    path = segs.slice(0, i + 1).join('/') + '/deps/' + path;
-    return path;
+require.define = function (name, exports) {
+  require.modules[name] = {
+    exports: exports
   };
-
-  /**
-   * Check if module is defined at `path`.
-   */
-
-  localRequire.exists = function(path) {
-    return require.modules.hasOwnProperty(localRequire.resolve(path));
-  };
-
-  return localRequire;
 };
-require.register("jashkenas-underscore/underscore.js", Function("exports, require, module",
-"//     Underscore.js 1.6.0\n\
+require.register("jashkenas~underscore@1.7.0", Function("exports, module",
+"//     Underscore.js 1.7.0\n\
 //     http://underscorejs.org\n\
 //     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors\n\
 //     Underscore may be freely distributed under the MIT license.\n\
@@ -243,8 +179,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // Export the Underscore object for **Node.js**, with\n\
   // backwards-compatibility for the old `require()` API. If we're in\n\
-  // the browser, add `_` as a global object via a string identifier,\n\
-  // for Closure Compiler \"advanced\" mode.\n\
+  // the browser, add `_` as a global object.\n\
   if (typeof exports !== 'undefined') {\n\
     if (typeof module !== 'undefined' && module.exports) {\n\
       exports = module.exports = _;\n\
@@ -255,9 +190,11 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   }\n\
 \n\
   // Current version.\n\
-  _.VERSION = '1.6.0';\n\
+  _.VERSION = '1.7.0';\n\
 \n\
-  // Internal function: creates a callback bound to its context if supplied\n\
+  // Internal function that returns an efficient (for current engines) version\n\
+  // of the passed-in callback, to be repeatedly applied in other Underscore\n\
+  // functions.\n\
   var createCallback = function(func, context, argCount) {\n\
     if (context === void 0) return func;\n\
     switch (argCount == null ? 3 : argCount) {\n\
@@ -279,8 +216,10 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     };\n\
   };\n\
 \n\
-  // An internal function to generate lookup iterators.\n\
-  var lookupIterator = function(value, context, argCount) {\n\
+  // A mostly-internal function to generate callbacks that can be applied\n\
+  // to each element in a collection, returning the desired result — either\n\
+  // identity, an arbitrary callback, a property matcher, or a property accessor.\n\
+  _.iteratee = function(value, context, argCount) {\n\
     if (value == null) return _.identity;\n\
     if (_.isFunction(value)) return createCallback(value, context, argCount);\n\
     if (_.isObject(value)) return _.matches(value);\n\
@@ -293,37 +232,34 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // The cornerstone, an `each` implementation, aka `forEach`.\n\
   // Handles raw objects in addition to array-likes. Treats all\n\
   // sparse array-likes as if they were dense.\n\
-  _.each = _.forEach = function(obj, iterator, context) {\n\
+  _.each = _.forEach = function(obj, iteratee, context) {\n\
     if (obj == null) return obj;\n\
-    iterator = createCallback(iterator, context);\n\
+    iteratee = createCallback(iteratee, context);\n\
     var i, length = obj.length;\n\
     if (length === +length) {\n\
       for (i = 0; i < length; i++) {\n\
-        iterator(obj[i], i, obj);\n\
+        iteratee(obj[i], i, obj);\n\
       }\n\
     } else {\n\
       var keys = _.keys(obj);\n\
       for (i = 0, length = keys.length; i < length; i++) {\n\
-        iterator(obj[keys[i]], keys[i], obj);\n\
+        iteratee(obj[keys[i]], keys[i], obj);\n\
       }\n\
     }\n\
     return obj;\n\
   };\n\
 \n\
-  // Return the results of applying the iterator to each element.\n\
-  _.map = _.collect = function(obj, iterator, context) {\n\
+  // Return the results of applying the iteratee to each element.\n\
+  _.map = _.collect = function(obj, iteratee, context) {\n\
     if (obj == null) return [];\n\
-    iterator = lookupIterator(iterator, context);\n\
-    var length = obj.length,\n\
-        currentKey, keys;\n\
-    if (length !== +length) {\n\
-      keys = _.keys(obj);\n\
-      length = keys.length;\n\
-    }\n\
-    var results = Array(length);\n\
+    iteratee = _.iteratee(iteratee, context);\n\
+    var keys = obj.length !== +obj.length && _.keys(obj),\n\
+        length = (keys || obj).length,\n\
+        results = Array(length),\n\
+        currentKey;\n\
     for (var index = 0; index < length; index++) {\n\
       currentKey = keys ? keys[index] : index;\n\
-      results[index] = iterator(obj[currentKey], currentKey, obj);\n\
+      results[index] = iteratee(obj[currentKey], currentKey, obj);\n\
     }\n\
     return results;\n\
   };\n\
@@ -332,43 +268,37 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // **Reduce** builds up a single result from a list of values, aka `inject`,\n\
   // or `foldl`.\n\
-  _.reduce = _.foldl = _.inject = function(obj, iterator, memo, context) {\n\
+  _.reduce = _.foldl = _.inject = function(obj, iteratee, memo, context) {\n\
     if (obj == null) obj = [];\n\
-    iterator = createCallback(iterator, context, 4);\n\
-    var index = 0, length = obj.length,\n\
-        currentKey, keys;\n\
-    if (length !== +length) {\n\
-      keys = _.keys(obj);\n\
-      length = keys.length;\n\
-    }\n\
+    iteratee = createCallback(iteratee, context, 4);\n\
+    var keys = obj.length !== +obj.length && _.keys(obj),\n\
+        length = (keys || obj).length,\n\
+        index = 0, currentKey;\n\
     if (arguments.length < 3) {\n\
-      if (!length) throw TypeError(reduceError);\n\
+      if (!length) throw new TypeError(reduceError);\n\
       memo = obj[keys ? keys[index++] : index++];\n\
     }\n\
     for (; index < length; index++) {\n\
       currentKey = keys ? keys[index] : index;\n\
-      memo = iterator(memo, obj[currentKey], currentKey, obj);\n\
+      memo = iteratee(memo, obj[currentKey], currentKey, obj);\n\
     }\n\
     return memo;\n\
   };\n\
 \n\
   // The right-associative version of reduce, also known as `foldr`.\n\
-  _.reduceRight = _.foldr = function(obj, iterator, memo, context) {\n\
+  _.reduceRight = _.foldr = function(obj, iteratee, memo, context) {\n\
     if (obj == null) obj = [];\n\
-    iterator = createCallback(iterator, context, 4);\n\
-    var index = obj.length,\n\
-        currentKey, keys;\n\
-    if (index !== +index) {\n\
-      keys = _.keys(obj);\n\
-      index = keys.length;\n\
-    }\n\
+    iteratee = createCallback(iteratee, context, 4);\n\
+    var keys = obj.length !== + obj.length && _.keys(obj),\n\
+        index = (keys || obj).length,\n\
+        currentKey;\n\
     if (arguments.length < 3) {\n\
-      if (!index) throw TypeError(reduceError);\n\
+      if (!index) throw new TypeError(reduceError);\n\
       memo = obj[keys ? keys[--index] : --index];\n\
     }\n\
     while (index--) {\n\
       currentKey = keys ? keys[index] : index;\n\
-      memo = iterator(memo, obj[currentKey], currentKey, obj);\n\
+      memo = iteratee(memo, obj[currentKey], currentKey, obj);\n\
     }\n\
     return memo;\n\
   };\n\
@@ -376,7 +306,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // Return the first value which passes a truth test. Aliased as `detect`.\n\
   _.find = _.detect = function(obj, predicate, context) {\n\
     var result;\n\
-    predicate = lookupIterator(predicate, context);\n\
+    predicate = _.iteratee(predicate, context);\n\
     _.some(obj, function(value, index, list) {\n\
       if (predicate(value, index, list)) {\n\
         result = value;\n\
@@ -391,7 +321,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   _.filter = _.select = function(obj, predicate, context) {\n\
     var results = [];\n\
     if (obj == null) return results;\n\
-    predicate = lookupIterator(predicate, context);\n\
+    predicate = _.iteratee(predicate, context);\n\
     _.each(obj, function(value, index, list) {\n\
       if (predicate(value, index, list)) results.push(value);\n\
     });\n\
@@ -400,20 +330,17 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // Return all the elements for which a truth test fails.\n\
   _.reject = function(obj, predicate, context) {\n\
-    return _.filter(obj, _.negate(lookupIterator(predicate)), context);\n\
+    return _.filter(obj, _.negate(_.iteratee(predicate)), context);\n\
   };\n\
 \n\
   // Determine whether all of the elements match a truth test.\n\
   // Aliased as `all`.\n\
   _.every = _.all = function(obj, predicate, context) {\n\
     if (obj == null) return true;\n\
-    predicate = lookupIterator(predicate, context);\n\
-    var length = obj.length;\n\
-    var index, currentKey, keys;\n\
-    if (length !== +length) {\n\
-      keys = _.keys(obj);\n\
-      length = keys.length;\n\
-    }\n\
+    predicate = _.iteratee(predicate, context);\n\
+    var keys = obj.length !== +obj.length && _.keys(obj),\n\
+        length = (keys || obj).length,\n\
+        index, currentKey;\n\
     for (index = 0; index < length; index++) {\n\
       currentKey = keys ? keys[index] : index;\n\
       if (!predicate(obj[currentKey], currentKey, obj)) return false;\n\
@@ -423,17 +350,12 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // Determine if at least one element in the object matches a truth test.\n\
   // Aliased as `any`.\n\
-  // Determine if at least one element in the object matches a truth test.\n\
-  // Aliased as `any`.\n\
   _.some = _.any = function(obj, predicate, context) {\n\
     if (obj == null) return false;\n\
-    predicate = lookupIterator(predicate, context);\n\
-    var length = obj.length;\n\
-    var index, currentKey, keys;\n\
-    if (length !== +length) {\n\
-      keys = _.keys(obj);\n\
-      length = keys.length;\n\
-    }\n\
+    predicate = _.iteratee(predicate, context);\n\
+    var keys = obj.length !== +obj.length && _.keys(obj),\n\
+        length = (keys || obj).length,\n\
+        index, currentKey;\n\
     for (index = 0; index < length; index++) {\n\
       currentKey = keys ? keys[index] : index;\n\
       if (predicate(obj[currentKey], currentKey, obj)) return true;\n\
@@ -476,10 +398,11 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   };\n\
 \n\
   // Return the maximum element (or element-based computation).\n\
-  _.max = function(obj, iterator, context) {\n\
+  _.max = function(obj, iteratee, context) {\n\
     var result = -Infinity, lastComputed = -Infinity,\n\
         value, computed;\n\
-    if (!iterator && _.isArray(obj)) {\n\
+    if (iteratee == null && obj != null) {\n\
+      obj = obj.length === +obj.length ? obj : _.values(obj);\n\
       for (var i = 0, length = obj.length; i < length; i++) {\n\
         value = obj[i];\n\
         if (value > result) {\n\
@@ -487,9 +410,9 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
         }\n\
       }\n\
     } else {\n\
-      iterator = lookupIterator(iterator, context);\n\
+      iteratee = _.iteratee(iteratee, context);\n\
       _.each(obj, function(value, index, list) {\n\
-        computed = iterator(value, index, list);\n\
+        computed = iteratee(value, index, list);\n\
         if (computed > lastComputed || computed === -Infinity && result === -Infinity) {\n\
           result = value;\n\
           lastComputed = computed;\n\
@@ -500,10 +423,11 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   };\n\
 \n\
   // Return the minimum element (or element-based computation).\n\
-  _.min = function(obj, iterator, context) {\n\
+  _.min = function(obj, iteratee, context) {\n\
     var result = Infinity, lastComputed = Infinity,\n\
         value, computed;\n\
-    if (!iterator && _.isArray(obj)) {\n\
+    if (iteratee == null && obj != null) {\n\
+      obj = obj.length === +obj.length ? obj : _.values(obj);\n\
       for (var i = 0, length = obj.length; i < length; i++) {\n\
         value = obj[i];\n\
         if (value < result) {\n\
@@ -511,9 +435,9 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
         }\n\
       }\n\
     } else {\n\
-      iterator = lookupIterator(iterator, context);\n\
+      iteratee = _.iteratee(iteratee, context);\n\
       _.each(obj, function(value, index, list) {\n\
-        computed = iterator(value, index, list);\n\
+        computed = iteratee(value, index, list);\n\
         if (computed < lastComputed || computed === Infinity && result === Infinity) {\n\
           result = value;\n\
           lastComputed = computed;\n\
@@ -523,17 +447,17 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     return result;\n\
   };\n\
 \n\
-  // Shuffle an array, using the modern version of the\n\
+  // Shuffle a collection, using the modern version of the\n\
   // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).\n\
   _.shuffle = function(obj) {\n\
-    var rand;\n\
-    var index = 0;\n\
-    var shuffled = [];\n\
-    _.each(obj, function(value) {\n\
-      rand = _.random(index++);\n\
-      shuffled[index - 1] = shuffled[rand];\n\
-      shuffled[rand] = value;\n\
-    });\n\
+    var set = obj && obj.length === +obj.length ? obj : _.values(obj);\n\
+    var length = set.length;\n\
+    var shuffled = Array(length);\n\
+    for (var index = 0, rand; index < length; index++) {\n\
+      rand = _.random(0, index);\n\
+      if (rand !== index) shuffled[index] = shuffled[rand];\n\
+      shuffled[rand] = set[index];\n\
+    }\n\
     return shuffled;\n\
   };\n\
 \n\
@@ -548,14 +472,14 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     return _.shuffle(obj).slice(0, Math.max(0, n));\n\
   };\n\
 \n\
-  // Sort the object's values by a criterion produced by an iterator.\n\
-  _.sortBy = function(obj, iterator, context) {\n\
-    iterator = lookupIterator(iterator, context);\n\
+  // Sort the object's values by a criterion produced by an iteratee.\n\
+  _.sortBy = function(obj, iteratee, context) {\n\
+    iteratee = _.iteratee(iteratee, context);\n\
     return _.pluck(_.map(obj, function(value, index, list) {\n\
       return {\n\
         value: value,\n\
         index: index,\n\
-        criteria: iterator(value, index, list)\n\
+        criteria: iteratee(value, index, list)\n\
       };\n\
     }).sort(function(left, right) {\n\
       var a = left.criteria;\n\
@@ -570,11 +494,11 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // An internal function used for aggregate \"group by\" operations.\n\
   var group = function(behavior) {\n\
-    return function(obj, iterator, context) {\n\
+    return function(obj, iteratee, context) {\n\
       var result = {};\n\
-      iterator = lookupIterator(iterator, context);\n\
+      iteratee = _.iteratee(iteratee, context);\n\
       _.each(obj, function(value, index) {\n\
-        var key = iterator(value, index, obj);\n\
+        var key = iteratee(value, index, obj);\n\
         behavior(result, value, key);\n\
       });\n\
       return result;\n\
@@ -602,13 +526,13 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
 \n\
   // Use a comparator function to figure out the smallest index at which\n\
   // an object should be inserted so as to maintain order. Uses binary search.\n\
-  _.sortedIndex = function(array, obj, iterator, context) {\n\
-    iterator = lookupIterator(iterator, context, 1);\n\
-    var value = iterator(obj);\n\
+  _.sortedIndex = function(array, obj, iteratee, context) {\n\
+    iteratee = _.iteratee(iteratee, context, 1);\n\
+    var value = iteratee(obj);\n\
     var low = 0, high = array.length;\n\
     while (low < high) {\n\
-      var mid = (low + high) >>> 1;\n\
-      if (iterator(array[mid]) < value) low = mid + 1; else high = mid;\n\
+      var mid = low + high >>> 1;\n\
+      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;\n\
     }\n\
     return low;\n\
   };\n\
@@ -630,7 +554,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // Split a collection into two arrays: one whose elements all satisfy the given\n\
   // predicate, and one whose elements all do not satisfy the predicate.\n\
   _.partition = function(obj, predicate, context) {\n\
-    predicate = lookupIterator(predicate, context);\n\
+    predicate = _.iteratee(predicate, context);\n\
     var pass = [], fail = [];\n\
     _.each(obj, function(value, key, obj) {\n\
       (predicate(value, key, obj) ? pass : fail).push(value);\n\
@@ -711,23 +635,29 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // Produce a duplicate-free version of the array. If the array has already\n\
   // been sorted, you have the option of using a faster algorithm.\n\
   // Aliased as `unique`.\n\
-  _.uniq = _.unique = function(array, isSorted, iterator, context) {\n\
+  _.uniq = _.unique = function(array, isSorted, iteratee, context) {\n\
     if (array == null) return [];\n\
-    if (_.isFunction(isSorted)) {\n\
-      context = iterator;\n\
-      iterator = isSorted;\n\
+    if (!_.isBoolean(isSorted)) {\n\
+      context = iteratee;\n\
+      iteratee = isSorted;\n\
       isSorted = false;\n\
     }\n\
-    if (iterator) iterator = lookupIterator(iterator, context);\n\
+    if (iteratee != null) iteratee = _.iteratee(iteratee, context);\n\
     var result = [];\n\
     var seen = [];\n\
     for (var i = 0, length = array.length; i < length; i++) {\n\
       var value = array[i];\n\
-      if (iterator) value = iterator(value, i, array);\n\
-      if (isSorted ? !i || seen !== value : !_.contains(seen, value)) {\n\
-        if (isSorted) seen = value;\n\
-        else seen.push(value);\n\
-        result.push(array[i]);\n\
+      if (isSorted) {\n\
+        if (!i || seen !== value) result.push(value);\n\
+        seen = value;\n\
+      } else if (iteratee) {\n\
+        var computed = iteratee(value, i, array);\n\
+        if (_.indexOf(seen, computed) < 0) {\n\
+          seen.push(computed);\n\
+          result.push(value);\n\
+        }\n\
+      } else if (_.indexOf(result, value) < 0) {\n\
+        result.push(value);\n\
       }\n\
     }\n\
     return result;\n\
@@ -854,7 +784,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   _.bind = function(func, context) {\n\
     var args, bound;\n\
     if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));\n\
-    if (!_.isFunction(func)) throw TypeError('Bind must be called on a function');\n\
+    if (!_.isFunction(func)) throw new TypeError('Bind must be called on a function');\n\
     args = slice.call(arguments, 2);\n\
     bound = function() {\n\
       if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));\n\
@@ -889,7 +819,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // defined on an object belong to it.\n\
   _.bindAll = function(obj) {\n\
     var i, length = arguments.length, key;\n\
-    if (length <= 1) throw Error('bindAll must be passed function names');\n\
+    if (length <= 1) throw new Error('bindAll must be passed function names');\n\
     for (i = 1; i < length; i++) {\n\
       key = arguments[i];\n\
       obj[key] = _.bind(obj[key], obj);\n\
@@ -903,7 +833,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
       var cache = memoize.cache;\n\
       var address = hasher ? hasher.apply(this, arguments) : key;\n\
       if (!_.has(cache, address)) cache[address] = func.apply(this, arguments);\n\
-      return cache[key];\n\
+      return cache[address];\n\
     };\n\
     memoize.cache = {};\n\
     return memoize;\n\
@@ -1037,8 +967,9 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     return function() {\n\
       if (--times > 0) {\n\
         memo = func.apply(this, arguments);\n\
+      } else {\n\
+        func = null;\n\
       }\n\
-      else func = null;\n\
       return memo;\n\
     };\n\
   };\n\
@@ -1109,25 +1040,27 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     for (var i = 1, length = arguments.length; i < length; i++) {\n\
       source = arguments[i];\n\
       for (prop in source) {\n\
-        obj[prop] = source[prop];\n\
+        if (hasOwnProperty.call(source, prop)) {\n\
+            obj[prop] = source[prop];\n\
+        }\n\
       }\n\
     }\n\
     return obj;\n\
   };\n\
 \n\
   // Return a copy of the object only containing the whitelisted properties.\n\
-  _.pick = function(obj, iterator, context) {\n\
+  _.pick = function(obj, iteratee, context) {\n\
     var result = {}, key;\n\
     if (obj == null) return result;\n\
-    if (_.isFunction(iterator)) {\n\
-      iterator = createCallback(iterator, context);\n\
+    if (_.isFunction(iteratee)) {\n\
+      iteratee = createCallback(iteratee, context);\n\
       for (key in obj) {\n\
         var value = obj[key];\n\
-        if (iterator(value, key, obj)) result[key] = value;\n\
+        if (iteratee(value, key, obj)) result[key] = value;\n\
       }\n\
     } else {\n\
       var keys = concat.apply([], slice.call(arguments, 1));\n\
-      obj = Object(obj);\n\
+      obj = new Object(obj);\n\
       for (var i = 0, length = keys.length; i < length; i++) {\n\
         key = keys[i];\n\
         if (key in obj) result[key] = obj[key];\n\
@@ -1137,16 +1070,16 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   };\n\
 \n\
    // Return a copy of the object without the blacklisted properties.\n\
-  _.omit = function(obj, iterator, context) {\n\
-    if (_.isFunction(iterator)) {\n\
-      iterator = _.negate(iterator);\n\
+  _.omit = function(obj, iteratee, context) {\n\
+    if (_.isFunction(iteratee)) {\n\
+      iteratee = _.negate(iteratee);\n\
     } else {\n\
       var keys = _.map(concat.apply([], slice.call(arguments, 1)), String);\n\
-      iterator = function(value, key) {\n\
+      iteratee = function(value, key) {\n\
         return !_.contains(keys, key);\n\
       };\n\
     }\n\
-    return _.pick(obj, iterator, context);\n\
+    return _.pick(obj, iteratee, context);\n\
   };\n\
 \n\
   // Fill in a given object with default properties.\n\
@@ -1311,10 +1244,10 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     };\n\
   }\n\
 \n\
-  // Optimize `isFunction` if appropriate.\n\
+  // Optimize `isFunction` if appropriate. Work around an IE 11 bug.\n\
   if (typeof /./ !== 'function') {\n\
     _.isFunction = function(obj) {\n\
-      return typeof obj === 'function';\n\
+      return typeof obj == 'function' || false;\n\
     };\n\
   }\n\
 \n\
@@ -1359,7 +1292,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     return this;\n\
   };\n\
 \n\
-  // Keep the identity function around for default iterators.\n\
+  // Keep the identity function around for default iteratees.\n\
   _.identity = function(value) {\n\
     return value;\n\
   };\n\
@@ -1383,7 +1316,7 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     var pairs = _.pairs(attrs), length = pairs.length;\n\
     return function(obj) {\n\
       if (obj == null) return !length;\n\
-      obj = Object(obj);\n\
+      obj = new Object(obj);\n\
       for (var i = 0; i < length; i++) {\n\
         var pair = pairs[i], key = pair[0];\n\
         if (pair[1] !== obj[key] || !(key in obj)) return false;\n\
@@ -1393,10 +1326,10 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   };\n\
 \n\
   // Run a function **n** times.\n\
-  _.times = function(n, iterator, context) {\n\
+  _.times = function(n, iteratee, context) {\n\
     var accum = Array(Math.max(0, n));\n\
-    iterator = createCallback(iterator, context, 1);\n\
-    for (var i = 0; i < n; i++) accum[i] = iterator(i);\n\
+    iteratee = createCallback(iteratee, context, 1);\n\
+    for (var i = 0; i < n; i++) accum[i] = iteratee(i);\n\
     return accum;\n\
   };\n\
 \n\
@@ -1414,33 +1347,33 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
     return new Date().getTime();\n\
   };\n\
 \n\
-  // List of HTML entities for escaping.\n\
-  var entityMap = {\n\
-    escape: {\n\
-      '&': '&amp;',\n\
-      '<': '&lt;',\n\
-      '>': '&gt;',\n\
-      '\"': '&quot;',\n\
-      \"'\": '&#x27;'\n\
-    }\n\
+   // List of HTML entities for escaping.\n\
+  var escapeMap = {\n\
+    '&': '&amp;',\n\
+    '<': '&lt;',\n\
+    '>': '&gt;',\n\
+    '\"': '&quot;',\n\
+    \"'\": '&#x27;',\n\
+    '`': '&#x60;'\n\
   };\n\
-  entityMap.unescape = _.invert(entityMap.escape);\n\
-\n\
-  // Regexes containing the keys and values listed immediately above.\n\
-  var entityRegexes = {\n\
-    escape:   RegExp('[' + _.keys(entityMap.escape).join('') + ']', 'g'),\n\
-    unescape: RegExp('(' + _.keys(entityMap.unescape).join('|') + ')', 'g')\n\
-  };\n\
+  var unescapeMap = _.invert(escapeMap);\n\
 \n\
   // Functions for escaping and unescaping strings to/from HTML interpolation.\n\
-  _.each(['escape', 'unescape'], function(method) {\n\
-    _[method] = function(string) {\n\
-      if (string == null) return '';\n\
-      return ('' + string).replace(entityRegexes[method], function(match) {\n\
-        return entityMap[method][match];\n\
-      });\n\
+  var createEscaper = function(map) {\n\
+    var escaper = function(match) {\n\
+      return map[match];\n\
     };\n\
-  });\n\
+    // Regexes for identifying a key that needs to be escaped\n\
+    var source = '(?:' + _.keys(map).join('|') + ')';\n\
+    var testRegexp = RegExp(source);\n\
+    var replaceRegexp = RegExp(source, 'g');\n\
+    return function(string) {\n\
+      string = string == null ? '' : '' + string;\n\
+      return testRegexp.test(string) ? string.replace(replaceRegexp, escaper) : string;\n\
+    };\n\
+  };\n\
+  _.escape = createEscaper(escapeMap);\n\
+  _.unescape = createEscaper(unescapeMap);\n\
 \n\
   // If the value of the named `property` is a function then invoke it with the\n\
   // `object` as context; otherwise, return it.\n\
@@ -1493,7 +1426,9 @@ require.register("jashkenas-underscore/underscore.js", Function("exports, requir
   // JavaScript micro-templating, similar to John Resig's implementation.\n\
   // Underscore templating handles arbitrary delimiters, preserves whitespace,\n\
   // and correctly escapes quotes within interpolated code.\n\
-  _.template = function(text, data, settings) {\n\
+  // NB: `oldSettings` only exists for backwards compatibility.\n\
+  _.template = function(text, settings, oldSettings) {\n\
+    if (!settings && oldSettings) settings = oldSettings;\n\
     settings = _.defaults({}, settings, _.templateSettings);\n\
 \n\
     // Combine delimiters into one regular expression via alternation.\n\
@@ -1542,13 +1477,12 @@ __p+='\";\n\
 ';\n\
 \n\
     try {\n\
-      var render = Function(settings.variable || 'obj', '_', source);\n\
+      var render = new Function(settings.variable || 'obj', '_', source);\n\
     } catch (e) {\n\
       e.source = source;\n\
       throw e;\n\
     }\n\
 \n\
-    if (data) return render(data, _);\n\
     var template = function(data) {\n\
       return render.call(this, data, _);\n\
     };\n\
@@ -1631,9 +1565,16 @@ __p+='\";\n\
     });\n\
   }\n\
 }.call(this));\n\
-//@ sourceURL=jashkenas-underscore/underscore.js"
+\n\
+//# sourceURL=components/jashkenas/underscore/1.7.0/underscore.js"
 ));
-require.register("jashkenas-backbone/backbone.js", Function("exports, require, module",
+
+require.modules["jashkenas-underscore"] = require.modules["jashkenas~underscore@1.7.0"];
+require.modules["jashkenas~underscore"] = require.modules["jashkenas~underscore@1.7.0"];
+require.modules["underscore"] = require.modules["jashkenas~underscore@1.7.0"];
+
+
+require.register("jashkenas~backbone@1.1.2", Function("exports, module",
 "//     Backbone.js 1.1.2\n\
 \n\
 //     (c) 2010-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors\n\
@@ -1653,7 +1594,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
   // Next for Node.js or CommonJS. jQuery may not be needed as a module.\n\
   } else if (typeof exports !== 'undefined') {\n\
-    var _ = require('underscore');\n\
+    var _ = require('jashkenas~underscore@1.7.0');\n\
     factory(root, exports, _);\n\
 \n\
   // Finally, as a browser global.\n\
@@ -1672,7 +1613,9 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
   // Create local references to array methods we'll want to use later.\n\
   var array = [];\n\
+  var push = array.push;\n\
   var slice = array.slice;\n\
+  var splice = array.splice;\n\
 \n\
   // Current version of the library. Keep in sync with `package.json`.\n\
   Backbone.VERSION = '1.1.2';\n\
@@ -1742,46 +1685,27 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // callbacks for the event. If `name` is null, removes all bound\n\
     // callbacks for all events.\n\
     off: function(name, callback, context) {\n\
+      var retain, ev, events, names, i, l, j, k;\n\
       if (!this._events || !eventsApi(this, 'off', name, [callback, context])) return this;\n\
-\n\
-      // Remove all callbacks for all events.\n\
       if (!name && !callback && !context) {\n\
         this._events = void 0;\n\
         return this;\n\
       }\n\
-\n\
-      var names = name ? [name] : _.keys(this._events);\n\
-      for (var i = 0, length = names.length; i < length; i++) {\n\
+      names = name ? [name] : _.keys(this._events);\n\
+      for (i = 0, l = names.length; i < l; i++) {\n\
         name = names[i];\n\
-\n\
-        // Bail out if there are no events stored.\n\
-        var events = this._events[name];\n\
-        if (!events) continue;\n\
-\n\
-        // Remove all callbacks for this event.\n\
-        if (!callback && !context) {\n\
-          delete this._events[name];\n\
-          continue;\n\
-        }\n\
-\n\
-        // Find any remaining events.\n\
-        var remaining = [];\n\
-        for (var j = 0, k = events.length; j < k; j++) {\n\
-          var event = events[j];\n\
-          if (\n\
-            callback && callback !== event.callback &&\n\
-            callback !== event.callback._callback ||\n\
-            context && context !== event.context\n\
-          ) {\n\
-            remaining.push(event);\n\
+        if (events = this._events[name]) {\n\
+          this._events[name] = retain = [];\n\
+          if (callback || context) {\n\
+            for (j = 0, k = events.length; j < k; j++) {\n\
+              ev = events[j];\n\
+              if ((callback && callback !== ev.callback && callback !== ev.callback._callback) ||\n\
+                  (context && context !== ev.context)) {\n\
+                retain.push(ev);\n\
+              }\n\
+            }\n\
           }\n\
-        }\n\
-\n\
-        // Replace events if there are any remaining.  Otherwise, clean up.\n\
-        if (remaining.length) {\n\
-          this._events[name] = remaining;\n\
-        } else {\n\
-          delete this._events[name];\n\
+          if (!retain.length) delete this._events[name];\n\
         }\n\
       }\n\
 \n\
@@ -1841,7 +1765,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Handle space separated event names.\n\
     if (eventSplitter.test(name)) {\n\
       var names = name.split(eventSplitter);\n\
-      for (var i = 0, length = names.length; i < length; i++) {\n\
+      for (var i = 0, l = names.length; i < l; i++) {\n\
         obj[action].apply(obj, [names[i]].concat(rest));\n\
       }\n\
       return false;\n\
@@ -2006,7 +1930,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       // Trigger all relevant attribute changes.\n\
       if (!silent) {\n\
         if (changes.length) this._pending = options;\n\
-        for (var i = 0, length = changes.length; i < length; i++) {\n\
+        for (var i = 0, l = changes.length; i < l; i++) {\n\
           this.trigger('change:' + changes[i], this, current[changes[i]], options);\n\
         }\n\
       }\n\
@@ -2227,11 +2151,10 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
   });\n\
 \n\
   // Underscore methods that we want to implement on the Model.\n\
-  var modelMethods = ['keys', 'values', 'pairs', 'invert', 'pick', 'omit', 'chain'];\n\
+  var modelMethods = ['keys', 'values', 'pairs', 'invert', 'pick', 'omit'];\n\
 \n\
   // Mix in each Underscore method as a proxy to `Model#attributes`.\n\
   _.each(modelMethods, function(method) {\n\
-    if (!_[method]) return;\n\
     Model.prototype[method] = function() {\n\
       var args = slice.call(arguments);\n\
       args.unshift(this.attributes);\n\
@@ -2243,7 +2166,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
   // -------------------\n\
 \n\
   // If models tend to represent a single row of data, a Backbone Collection is\n\
-  // more analogous to a table full of data ... or a small slice or page of that\n\
+  // more analagous to a table full of data ... or a small slice or page of that\n\
   // table, or a collection of rows that belong together for a particular reason\n\
   // -- all of the messages in this particular folder, all of the documents\n\
   // belonging to this particular author, and so on. Collections maintain\n\
@@ -2297,13 +2220,13 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       var singular = !_.isArray(models);\n\
       models = singular ? [models] : _.clone(models);\n\
       options || (options = {});\n\
-      for (var i = 0, length = models.length; i < length; i++) {\n\
-        var model = models[i] = this.get(models[i]);\n\
+      var i, l, index, model;\n\
+      for (i = 0, l = models.length; i < l; i++) {\n\
+        model = models[i] = this.get(models[i]);\n\
         if (!model) continue;\n\
-        var id = this.modelId(model.attributes);\n\
-        if (id != null) delete this._byId[id];\n\
+        delete this._byId[model.id];\n\
         delete this._byId[model.cid];\n\
-        var index = this.indexOf(model);\n\
+        index = this.indexOf(model);\n\
         this.models.splice(index, 1);\n\
         this.length--;\n\
         if (!options.silent) {\n\
@@ -2323,9 +2246,10 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       options = _.defaults({}, options, setOptions);\n\
       if (options.parse) models = this.parse(models, options);\n\
       var singular = !_.isArray(models);\n\
-      models = singular ? (models ? [models] : []) : models.slice();\n\
-      var id, model, attrs, existing, sort;\n\
+      models = singular ? (models ? [models] : []) : _.clone(models);\n\
+      var i, l, id, model, attrs, existing, sort;\n\
       var at = options.at;\n\
+      var targetModel = this.model;\n\
       var sortable = this.comparator && (at == null) && options.sort !== false;\n\
       var sortAttr = _.isString(this.comparator) ? this.comparator : null;\n\
       var toAdd = [], toRemove = [], modelMap = {};\n\
@@ -2334,15 +2258,20 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
       // Turn bare objects into model references, and prevent invalid models\n\
       // from being added.\n\
-      for (var i = 0, length = models.length; i < length; i++) {\n\
-        attrs = models[i];\n\
+      for (i = 0, l = models.length; i < l; i++) {\n\
+        attrs = models[i] || {};\n\
+        if (attrs instanceof Model) {\n\
+          id = model = attrs;\n\
+        } else {\n\
+          id = attrs[targetModel.prototype.idAttribute || 'id'];\n\
+        }\n\
 \n\
         // If a duplicate is found, prevent it from being added and\n\
         // optionally merge it into the existing model.\n\
-        if (existing = this.get(attrs)) {\n\
+        if (existing = this.get(id)) {\n\
           if (remove) modelMap[existing.cid] = true;\n\
-          if (merge && attrs !== existing) {\n\
-            attrs = this._isModel(attrs) ? attrs.attributes : attrs;\n\
+          if (merge) {\n\
+            attrs = attrs === model ? model.attributes : attrs;\n\
             if (options.parse) attrs = existing.parse(attrs, options);\n\
             existing.set(attrs, options);\n\
             if (sortable && !sort && existing.hasChanged(sortAttr)) sort = true;\n\
@@ -2359,15 +2288,13 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
         // Do not add multiple models with the same `id`.\n\
         model = existing || model;\n\
-        if (!model) continue;\n\
-        id = this.modelId(model.attributes);\n\
-        if (order && (model.isNew() || !modelMap[id])) order.push(model);\n\
-        modelMap[id] = true;\n\
+        if (order && (model.isNew() || !modelMap[model.id])) order.push(model);\n\
+        modelMap[model.id] = true;\n\
       }\n\
 \n\
       // Remove nonexistent models if appropriate.\n\
       if (remove) {\n\
-        for (var i = 0, length = this.length; i < length; i++) {\n\
+        for (i = 0, l = this.length; i < l; ++i) {\n\
           if (!modelMap[(model = this.models[i]).cid]) toRemove.push(model);\n\
         }\n\
         if (toRemove.length) this.remove(toRemove, options);\n\
@@ -2378,13 +2305,13 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
         if (sortable) sort = true;\n\
         this.length += toAdd.length;\n\
         if (at != null) {\n\
-          for (var i = 0, length = toAdd.length; i < length; i++) {\n\
+          for (i = 0, l = toAdd.length; i < l; i++) {\n\
             this.models.splice(at + i, 0, toAdd[i]);\n\
           }\n\
         } else {\n\
           if (order) this.models.length = 0;\n\
           var orderedModels = order || toAdd;\n\
-          for (var i = 0, length = orderedModels.length; i < length; i++) {\n\
+          for (i = 0, l = orderedModels.length; i < l; i++) {\n\
             this.models.push(orderedModels[i]);\n\
           }\n\
         }\n\
@@ -2395,7 +2322,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
       // Unless silenced, it's time to fire all appropriate add/sort events.\n\
       if (!options.silent) {\n\
-        for (var i = 0, length = toAdd.length; i < length; i++) {\n\
+        for (i = 0, l = toAdd.length; i < l; i++) {\n\
           (model = toAdd[i]).trigger('add', model, this, options);\n\
         }\n\
         if (sort || (order && order.length)) this.trigger('sort', this, options);\n\
@@ -2411,7 +2338,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Useful for bulk operations and optimizations.\n\
     reset: function(models, options) {\n\
       options || (options = {});\n\
-      for (var i = 0, length = this.models.length; i < length; i++) {\n\
+      for (var i = 0, l = this.models.length; i < l; i++) {\n\
         this._removeReference(this.models[i], options);\n\
       }\n\
       options.previousModels = this.models;\n\
@@ -2453,8 +2380,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Get a model from the set by id.\n\
     get: function(obj) {\n\
       if (obj == null) return void 0;\n\
-      var id = this.modelId(this._isModel(obj) ? obj.attributes : obj);\n\
-      return this._byId[obj] || this._byId[id] || this._byId[obj.cid];\n\
+      return this._byId[obj] || this._byId[obj.id] || this._byId[obj.cid];\n\
     },\n\
 \n\
     // Get the model at the given index.\n\
@@ -2546,15 +2472,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
     // Create a new collection with an identical list of models as this one.\n\
     clone: function() {\n\
-      return new this.constructor(this.models, {\n\
-        model: this.model,\n\
-        comparator: this.comparator\n\
-      });\n\
-    },\n\
-\n\
-    // Define how to uniquely identify models in the collection.\n\
-    modelId: function (attrs) {\n\
-      return attrs[this.model.prototype.idAttribute || 'id'];\n\
+      return new this.constructor(this.models);\n\
     },\n\
 \n\
     // Private method to reset all internal state. Called when the collection\n\
@@ -2568,10 +2486,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Prepare a hash of attributes (or other model) to be added to this\n\
     // collection.\n\
     _prepareModel: function(attrs, options) {\n\
-      if (this._isModel(attrs)) {\n\
-        if (!attrs.collection) attrs.collection = this;\n\
-        return attrs;\n\
-      }\n\
+      if (attrs instanceof Model) return attrs;\n\
       options = options ? _.clone(options) : {};\n\
       options.collection = this;\n\
       var model = new this.model(attrs, options);\n\
@@ -2580,17 +2495,11 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       return false;\n\
     },\n\
 \n\
-    // Method for checking whether an object should be considered a model for\n\
-    // the purposes of adding to the collection.\n\
-    _isModel: function (model) {\n\
-      return model instanceof Model;\n\
-    },\n\
-\n\
     // Internal method to create a model's ties to a collection.\n\
     _addReference: function(model, options) {\n\
       this._byId[model.cid] = model;\n\
-      var id = this.modelId(model.attributes);\n\
-      if (id != null) this._byId[id] = model;\n\
+      if (model.id != null) this._byId[model.id] = model;\n\
+      if (!model.collection) model.collection = this;\n\
       model.on('all', this._onModelEvent, this);\n\
     },\n\
 \n\
@@ -2607,13 +2516,9 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     _onModelEvent: function(event, model, collection, options) {\n\
       if ((event === 'add' || event === 'remove') && collection !== this) return;\n\
       if (event === 'destroy') this.remove(model, options);\n\
-      if (event === 'change') {\n\
-        var prevId = this.modelId(model.previousAttributes());\n\
-        var id = this.modelId(model.attributes);\n\
-        if (prevId !== id) {\n\
-          if (prevId != null) delete this._byId[prevId];\n\
-          if (id != null) this._byId[id] = model;\n\
-        }\n\
+      if (model && event === 'change:' + model.idAttribute) {\n\
+        delete this._byId[model.previous(model.idAttribute)];\n\
+        if (model.id != null) this._byId[model.id] = model;\n\
       }\n\
       this.trigger.apply(this, arguments);\n\
     }\n\
@@ -2628,11 +2533,10 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     'reject', 'every', 'all', 'some', 'any', 'include', 'contains', 'invoke',\n\
     'max', 'min', 'toArray', 'size', 'first', 'head', 'take', 'initial', 'rest',\n\
     'tail', 'drop', 'last', 'without', 'difference', 'indexOf', 'shuffle',\n\
-    'lastIndexOf', 'isEmpty', 'chain', 'sample', 'partition'];\n\
+    'lastIndexOf', 'isEmpty', 'chain', 'sample'];\n\
 \n\
   // Mix in each Underscore method as a proxy to `Collection#models`.\n\
   _.each(methods, function(method) {\n\
-    if (!_[method]) return;\n\
     Collection.prototype[method] = function() {\n\
       var args = slice.call(arguments);\n\
       args.unshift(this.models);\n\
@@ -2645,7 +2549,6 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
   // Use attributes instead of properties.\n\
   _.each(attributeMethods, function(method) {\n\
-    if (!_[method]) return;\n\
     Collection.prototype[method] = function(value, context) {\n\
       var iterator = _.isFunction(value) ? value : function(model) {\n\
         return model.get(value);\n\
@@ -2673,6 +2576,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     _.extend(this, _.pick(options, viewOptions));\n\
     this._ensureElement();\n\
     this.initialize.apply(this, arguments);\n\
+    this.delegateEvents();\n\
   };\n\
 \n\
   // Cached regex to split keys for `delegate`.\n\
@@ -2707,35 +2611,19 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Remove this view by taking the element out of the DOM, and removing any\n\
     // applicable Backbone.Events listeners.\n\
     remove: function() {\n\
-      this._removeElement();\n\
+      this.$el.remove();\n\
       this.stopListening();\n\
       return this;\n\
     },\n\
 \n\
-    // Remove this view's element from the document and all event listeners\n\
-    // attached to it. Exposed for subclasses using an alternative DOM\n\
-    // manipulation API.\n\
-    _removeElement: function() {\n\
-      this.$el.remove();\n\
-    },\n\
-\n\
-    // Change the view's element (`this.el` property) and re-delegate the\n\
-    // view's events on the new element.\n\
-    setElement: function(element) {\n\
-      this.undelegateEvents();\n\
-      this._setElement(element);\n\
-      this.delegateEvents();\n\
-      return this;\n\
-    },\n\
-\n\
-    // Creates the `this.el` and `this.$el` references for this view using the\n\
-    // given `el`. `el` can be a CSS selector or an HTML string, a jQuery\n\
-    // context or an element. Subclasses can override this to utilize an\n\
-    // alternative DOM manipulation API and are only required to set the\n\
-    // `this.el` property.\n\
-    _setElement: function(el) {\n\
-      this.$el = el instanceof Backbone.$ ? el : Backbone.$(el);\n\
+    // Change the view's element (`this.el` property), including event\n\
+    // re-delegation.\n\
+    setElement: function(element, delegate) {\n\
+      if (this.$el) this.undelegateEvents();\n\
+      this.$el = element instanceof Backbone.$ ? element : Backbone.$(element);\n\
       this.el = this.$el[0];\n\
+      if (delegate !== false) this.delegateEvents();\n\
+      return this;\n\
     },\n\
 \n\
     // Set callbacks, where `this.events` is a hash of\n\
@@ -2751,6 +2639,8 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // pairs. Callbacks will be bound to the view, with `this` set properly.\n\
     // Uses event delegation for efficiency.\n\
     // Omitting the selector binds the event to `this.el`.\n\
+    // This only works for delegate-able events: not `focus`, `blur`, and\n\
+    // not `change`, `submit`, and `reset` in Internet Explorer.\n\
     delegateEvents: function(events) {\n\
       if (!(events || (events = _.result(this, 'events')))) return this;\n\
       this.undelegateEvents();\n\
@@ -2758,37 +2648,26 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
         var method = events[key];\n\
         if (!_.isFunction(method)) method = this[events[key]];\n\
         if (!method) continue;\n\
+\n\
         var match = key.match(delegateEventSplitter);\n\
-        this.delegate(match[1], match[2], _.bind(method, this));\n\
+        var eventName = match[1], selector = match[2];\n\
+        method = _.bind(method, this);\n\
+        eventName += '.delegateEvents' + this.cid;\n\
+        if (selector === '') {\n\
+          this.$el.on(eventName, method);\n\
+        } else {\n\
+          this.$el.on(eventName, selector, method);\n\
+        }\n\
       }\n\
       return this;\n\
     },\n\
 \n\
-    // Add a single event listener to the view's element (or a child element\n\
-    // using `selector`). This only works for delegate-able events: not `focus`,\n\
-    // `blur`, and not `change`, `submit`, and `reset` in Internet Explorer.\n\
-    delegate: function(eventName, selector, listener) {\n\
-      this.$el.on(eventName + '.delegateEvents' + this.cid, selector, listener);\n\
-    },\n\
-\n\
-    // Clears all callbacks previously bound to the view by `delegateEvents`.\n\
+    // Clears all callbacks previously bound to the view with `delegateEvents`.\n\
     // You usually don't need to use this, but may wish to if you have multiple\n\
     // Backbone views attached to the same DOM element.\n\
     undelegateEvents: function() {\n\
-      if (this.$el) this.$el.off('.delegateEvents' + this.cid);\n\
+      this.$el.off('.delegateEvents' + this.cid);\n\
       return this;\n\
-    },\n\
-\n\
-    // A finer-grained `undelegateEvents` for removing a single delegated event.\n\
-    // `selector` and `listener` are both optional.\n\
-    undelegate: function(eventName, selector, listener) {\n\
-      this.$el.off(eventName + '.delegateEvents' + this.cid, selector, listener);\n\
-    },\n\
-\n\
-    // Produces a DOM element to be assigned to your view. Exposed for\n\
-    // subclasses using an alternative DOM manipulation API.\n\
-    _createElement: function(tagName) {\n\
-      return document.createElement(tagName);\n\
     },\n\
 \n\
     // Ensure that the View has a DOM element to render into.\n\
@@ -2800,17 +2679,11 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
         var attrs = _.extend({}, _.result(this, 'attributes'));\n\
         if (this.id) attrs.id = _.result(this, 'id');\n\
         if (this.className) attrs['class'] = _.result(this, 'className');\n\
-        this.setElement(this._createElement(_.result(this, 'tagName')));\n\
-        this._setAttributes(attrs);\n\
+        var $el = Backbone.$('<' + _.result(this, 'tagName') + '>').attr(attrs);\n\
+        this.setElement($el, false);\n\
       } else {\n\
-        this.setElement(_.result(this, 'el'));\n\
+        this.setElement(_.result(this, 'el'), false);\n\
       }\n\
-    },\n\
-\n\
-    // Set attributes from a hash on this view's element.  Exposed for\n\
-    // subclasses using an alternative DOM manipulation API.\n\
-    _setAttributes: function(attributes) {\n\
-      this.$el.attr(attributes);\n\
     }\n\
 \n\
   });\n\
@@ -2879,19 +2752,24 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       params.processData = false;\n\
     }\n\
 \n\
-    // Pass along `textStatus` and `errorThrown` from jQuery.\n\
-    var error = options.error;\n\
-    options.error = function(xhr, textStatus, errorThrown) {\n\
-      options.textStatus = textStatus;\n\
-      options.errorThrown = errorThrown;\n\
-      if (error) error.apply(this, arguments);\n\
-    };\n\
+    // If we're sending a `PATCH` request, and we're in an old Internet Explorer\n\
+    // that still has ActiveX enabled by default, override jQuery to use that\n\
+    // for XHR instead. Remove this line when jQuery supports `PATCH` on IE8.\n\
+    if (params.type === 'PATCH' && noXhrPatch) {\n\
+      params.xhr = function() {\n\
+        return new ActiveXObject(\"Microsoft.XMLHTTP\");\n\
+      };\n\
+    }\n\
 \n\
     // Make the request, allowing the user to override any Ajax options.\n\
     var xhr = options.xhr = Backbone.ajax(_.extend(params, options));\n\
     model.trigger('request', model, xhr, options);\n\
     return xhr;\n\
   };\n\
+\n\
+  var noXhrPatch =\n\
+    typeof window !== 'undefined' && !!window.ActiveXObject &&\n\
+      !(window.XMLHttpRequest && (new XMLHttpRequest).dispatchEvent);\n\
 \n\
   // Map from CRUD to HTTP for our default `Backbone.sync` implementation.\n\
   var methodMap = {\n\
@@ -2950,18 +2828,17 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       var router = this;\n\
       Backbone.history.route(route, function(fragment) {\n\
         var args = router._extractParameters(route, fragment);\n\
-        if (router.execute(callback, args, name) !== false) {\n\
-          router.trigger.apply(router, ['route:' + name].concat(args));\n\
-          router.trigger('route', name, args);\n\
-          Backbone.history.trigger('route', router, name, args);\n\
-        }\n\
+        router.execute(callback, args);\n\
+        router.trigger.apply(router, ['route:' + name].concat(args));\n\
+        router.trigger('route', name, args);\n\
+        Backbone.history.trigger('route', router, name, args);\n\
       });\n\
       return this;\n\
     },\n\
 \n\
     // Execute a route handler with the provided parameters.  This is an\n\
     // excellent place to do pre-route setup or post-route cleanup.\n\
-    execute: function(callback, args, name) {\n\
+    execute: function(callback, args) {\n\
       if (callback) callback.apply(this, args);\n\
     },\n\
 \n\
@@ -3034,6 +2911,12 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
   // Cached regex for stripping leading and trailing slashes.\n\
   var rootStripper = /^\\/+|\\/+$/g;\n\
 \n\
+  // Cached regex for detecting MSIE.\n\
+  var isExplorer = /msie [\\w.]+/;\n\
+\n\
+  // Cached regex for removing a trailing slash.\n\
+  var trailingSlash = /\\/$/;\n\
+\n\
   // Cached regex for stripping urls of hash.\n\
   var pathStripper = /#.*$/;\n\
 \n\
@@ -3049,8 +2932,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
     // Are we at the app root?\n\
     atRoot: function() {\n\
-      var path = this.location.pathname.replace(/[^\\/]$/, '$&/');\n\
-      return path === this.root && !this.location.search;\n\
+      return this.location.pathname.replace(/[^\\/]$/, '$&/') === this.root;\n\
     },\n\
 \n\
     // Gets the true hash value. Cannot use location.hash directly due to bug\n\
@@ -3060,19 +2942,14 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       return match ? match[1] : '';\n\
     },\n\
 \n\
-    // Get the pathname and search params, without the root.\n\
-    getPath: function() {\n\
-      var path = decodeURI(this.location.pathname + this.location.search);\n\
-      var root = this.root.slice(0, -1);\n\
-      if (!path.indexOf(root)) path = path.slice(root.length);\n\
-      return path.slice(1);\n\
-    },\n\
-\n\
-    // Get the cross-browser normalized URL fragment from the path or hash.\n\
-    getFragment: function(fragment) {\n\
+    // Get the cross-browser normalized URL fragment, either from the URL,\n\
+    // the hash, or the override.\n\
+    getFragment: function(fragment, forcePushState) {\n\
       if (fragment == null) {\n\
-        if (this._hasPushState || !this._wantsHashChange) {\n\
-          fragment = this.getPath();\n\
+        if (this._hasPushState || !this._wantsHashChange || forcePushState) {\n\
+          fragment = decodeURI(this.location.pathname + this.location.search);\n\
+          var root = this.root.replace(trailingSlash, '');\n\
+          if (!fragment.indexOf(root)) fragment = fragment.slice(root.length);\n\
         } else {\n\
           fragment = this.getHash();\n\
         }\n\
@@ -3083,7 +2960,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Start the hash change handling, returning `true` if the current URL matches\n\
     // an existing route, and `false` otherwise.\n\
     start: function(options) {\n\
-      if (History.started) throw new Error('Backbone.history has already been started');\n\
+      if (History.started) throw new Error(\"Backbone.history has already been started\");\n\
       History.started = true;\n\
 \n\
       // Figure out the initial configuration. Do we need an iframe?\n\
@@ -3091,42 +2968,35 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       this.options          = _.extend({root: '/'}, this.options, options);\n\
       this.root             = this.options.root;\n\
       this._wantsHashChange = this.options.hashChange !== false;\n\
-      this._hasHashChange   = 'onhashchange' in window;\n\
       this._wantsPushState  = !!this.options.pushState;\n\
       this._hasPushState    = !!(this.options.pushState && this.history && this.history.pushState);\n\
-      this.fragment         = this.getFragment();\n\
-\n\
-      // Add a cross-platform `addEventListener` shim for older browsers.\n\
-      var addEventListener = window.addEventListener || function (eventName, listener) {\n\
-        return attachEvent('on' + eventName, listener);\n\
-      };\n\
+      var fragment          = this.getFragment();\n\
+      var docMode           = document.documentMode;\n\
+      var oldIE             = (isExplorer.exec(navigator.userAgent.toLowerCase()) && (!docMode || docMode <= 7));\n\
 \n\
       // Normalize root to always include a leading and trailing slash.\n\
       this.root = ('/' + this.root + '/').replace(rootStripper, '/');\n\
 \n\
-      // Proxy an iframe to handle location events if the browser doesn't\n\
-      // support the `hashchange` event, HTML5 history, or the user wants\n\
-      // `hashChange` but not `pushState`.\n\
-      if (!this._hasHashChange && this._wantsHashChange && (!this._wantsPushState || !this._hasPushState)) {\n\
-        var iframe = document.createElement('iframe');\n\
-        iframe.src = 'javascript:0';\n\
-        iframe.style.display = 'none';\n\
-        iframe.tabIndex = -1;\n\
-        var body = document.body;\n\
-        // Using `appendChild` will throw on IE < 9 if the document is not ready.\n\
-        this.iframe = body.insertBefore(iframe, body.firstChild).contentWindow;\n\
-        this.navigate(this.fragment);\n\
+      if (oldIE && this._wantsHashChange) {\n\
+        var frame = Backbone.$('<iframe src=\"javascript:0\" tabindex=\"-1\">');\n\
+        this.iframe = frame.hide().appendTo('body')[0].contentWindow;\n\
+        this.navigate(fragment);\n\
       }\n\
 \n\
       // Depending on whether we're using pushState or hashes, and whether\n\
       // 'onhashchange' is supported, determine how we check the URL state.\n\
       if (this._hasPushState) {\n\
-        addEventListener('popstate', this.checkUrl, false);\n\
-      } else if (this._wantsHashChange && this._hasHashChange && !this.iframe) {\n\
-        addEventListener('hashchange', this.checkUrl, false);\n\
+        Backbone.$(window).on('popstate', this.checkUrl);\n\
+      } else if (this._wantsHashChange && ('onhashchange' in window) && !oldIE) {\n\
+        Backbone.$(window).on('hashchange', this.checkUrl);\n\
       } else if (this._wantsHashChange) {\n\
         this._checkUrlInterval = setInterval(this.checkUrl, this.interval);\n\
       }\n\
+\n\
+      // Determine if we need to change the base url, for a pushState link\n\
+      // opened by a non-pushState browser.\n\
+      this.fragment = fragment;\n\
+      var loc = this.location;\n\
 \n\
       // Transition from hashChange to pushState or vice versa if both are\n\
       // requested.\n\
@@ -3135,14 +3005,16 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
         // If we've started off with a route from a `pushState`-enabled\n\
         // browser, but we're currently in a browser that doesn't support it...\n\
         if (!this._hasPushState && !this.atRoot()) {\n\
-          this.location.replace(this.root + '#' + this.getPath());\n\
+          this.fragment = this.getFragment(null, true);\n\
+          this.location.replace(this.root + '#' + this.fragment);\n\
           // Return immediately as browser will do redirect to new url\n\
           return true;\n\
 \n\
         // Or if we've started out with a hash-based route, but we're currently\n\
         // in a browser where it could be `pushState`-based instead...\n\
-        } else if (this._hasPushState && this.atRoot()) {\n\
-          this.navigate(this.getHash(), {replace: true});\n\
+        } else if (this._hasPushState && this.atRoot() && loc.hash) {\n\
+          this.fragment = this.getHash().replace(routeStripper, '');\n\
+          this.history.replaceState({}, document.title, this.root + this.fragment);\n\
         }\n\
 \n\
       }\n\
@@ -3153,25 +3025,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     // Disable Backbone.history, perhaps temporarily. Not useful in a real app,\n\
     // but possibly useful for unit testing Routers.\n\
     stop: function() {\n\
-      // Add a cross-platform `removeEventListener` shim for older browsers.\n\
-      var removeEventListener = window.removeEventListener || function (eventName, listener) {\n\
-        return detachEvent('on' + eventName, listener);\n\
-      };\n\
-\n\
-      // Remove window listeners.\n\
-      if (this._hasPushState) {\n\
-        removeEventListener('popstate', this.checkUrl, false);\n\
-      } else if (this._wantsHashChange && this._hasHashChange && !this.iframe) {\n\
-        removeEventListener('hashchange', this.checkUrl, false);\n\
-      }\n\
-\n\
-      // Clean up the iframe if necessary.\n\
-      if (this.iframe) {\n\
-        document.body.removeChild(this.iframe.frameElement);\n\
-        this.iframe = null;\n\
-      }\n\
-\n\
-      // Some environments will throw when clearing an undefined interval.\n\
+      Backbone.$(window).off('popstate', this.checkUrl).off('hashchange', this.checkUrl);\n\
       if (this._checkUrlInterval) clearInterval(this._checkUrlInterval);\n\
       History.started = false;\n\
     },\n\
@@ -3187,7 +3041,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
     checkUrl: function(e) {\n\
       var current = this.getFragment();\n\
       if (current === this.fragment && this.iframe) {\n\
-        current = this.getHash(this.iframe);\n\
+        current = this.getFragment(this.getHash(this.iframe));\n\
       }\n\
       if (current === this.fragment) return false;\n\
       if (this.iframe) this.navigate(current);\n\
@@ -3220,8 +3074,8 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
 \n\
       var url = this.root + (fragment = this.getFragment(fragment || ''));\n\
 \n\
-      // Strip the hash and decode for matching.\n\
-      fragment = decodeURI(fragment.replace(pathStripper, ''));\n\
+      // Strip the hash for matching.\n\
+      fragment = fragment.replace(pathStripper, '');\n\
 \n\
       if (this.fragment === fragment) return;\n\
       this.fragment = fragment;\n\
@@ -3237,7 +3091,7 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
       // fragment to store history.\n\
       } else if (this._wantsHashChange) {\n\
         this._updateHash(this.location, fragment, options.replace);\n\
-        if (this.iframe && (fragment !== this.getHash(this.iframe))) {\n\
+        if (this.iframe && (fragment !== this.getFragment(this.getHash(this.iframe)))) {\n\
           // Opening and closing the iframe tricks IE7 and earlier to push a\n\
           // history entry on hash-tag change.  When replace is true, we don't\n\
           // want this.\n\
@@ -3329,27 +3183,34 @@ require.register("jashkenas-backbone/backbone.js", Function("exports, require, m
   return Backbone;\n\
 \n\
 }));\n\
-//@ sourceURL=jashkenas-backbone/backbone.js"
+\n\
+//# sourceURL=components/jashkenas/backbone/1.1.2/backbone.js"
 ));
-require.register("moment-moment/moment.js", Function("exports, require, module",
+
+require.modules["jashkenas-backbone"] = require.modules["jashkenas~backbone@1.1.2"];
+require.modules["jashkenas~backbone"] = require.modules["jashkenas~backbone@1.1.2"];
+require.modules["backbone"] = require.modules["jashkenas~backbone@1.1.2"];
+
+
+require.register("moment~moment@2.8.4", Function("exports, module",
 "//! moment.js\n\
-//! version : 2.7.0\n\
+//! version : 2.8.4\n\
 //! authors : Tim Wood, Iskren Chernev, Moment.js contributors\n\
 //! license : MIT\n\
 //! momentjs.com\n\
 \n\
 (function (undefined) {\n\
-\n\
     /************************************\n\
         Constants\n\
     ************************************/\n\
 \n\
     var moment,\n\
-        VERSION = \"2.7.0\",\n\
+        VERSION = '2.8.4',\n\
         // the global-scope this is NOT the global object in Node.js\n\
         globalScope = typeof global !== 'undefined' ? global : this,\n\
         oldGlobalMoment,\n\
         round = Math.round,\n\
+        hasOwnProperty = Object.prototype.hasOwnProperty,\n\
         i,\n\
 \n\
         YEAR = 0,\n\
@@ -3360,25 +3221,14 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         SECOND = 5,\n\
         MILLISECOND = 6,\n\
 \n\
-        // internal storage for language config files\n\
-        languages = {},\n\
+        // internal storage for locale config files\n\
+        locales = {},\n\
 \n\
-        // moment internal properties\n\
-        momentProperties = {\n\
-            _isAMomentObject: null,\n\
-            _i : null,\n\
-            _f : null,\n\
-            _l : null,\n\
-            _strict : null,\n\
-            _tzm : null,\n\
-            _isUTC : null,\n\
-            _offset : null,  // optional. Combine with _isUTC\n\
-            _pf : null,\n\
-            _lang : null  // optional\n\
-        },\n\
+        // extra moment internal properties (plugins register props here)\n\
+        momentProperties = [],\n\
 \n\
         // check for nodeJS\n\
-        hasModule = (typeof module !== 'undefined' && module.exports),\n\
+        hasModule = (typeof module !== 'undefined' && module && module.exports),\n\
 \n\
         // ASP.NET json date format regex\n\
         aspNetJsonRegex = /^\\/?Date\\((\\-?\\d+)/i,\n\
@@ -3389,8 +3239,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         isoDurationRegex = /^(-)?P(?:(?:([0-9,.]*)Y)?(?:([0-9,.]*)M)?(?:([0-9,.]*)D)?(?:T(?:([0-9,.]*)H)?(?:([0-9,.]*)M)?(?:([0-9,.]*)S)?)?|([0-9,.]*)W)$/,\n\
 \n\
         // format tokens\n\
-        formattingTokens = /(\\[[^\\[]*\\])|(\\\\)?(Mo|MM?M?M?|Do|DDDo|DD?D?D?|ddd?d?|do?|w[o|w]?|W[o|W]?|Q|YYYYYY|YYYYY|YYYY|YY|gg(ggg?)?|GG(GGG?)?|e|E|a|A|hh?|HH?|mm?|ss?|S{1,4}|X|zz?|ZZ?|.)/g,\n\
-        localFormattingTokens = /(\\[[^\\[]*\\])|(\\\\)?(LT|LL?L?L?|l{1,4})/g,\n\
+        formattingTokens = /(\\[[^\\[]*\\])|(\\\\)?(Mo|MM?M?M?|Do|DDDo|DD?D?D?|ddd?d?|do?|w[o|w]?|W[o|W]?|Q|YYYYYY|YYYYY|YYYY|YY|gg(ggg?)?|GG(GGG?)?|e|E|a|A|hh?|HH?|mm?|ss?|S{1,4}|x|X|zz?|ZZ?|.)/g,\n\
+        localFormattingTokens = /(\\[[^\\[]*\\])|(\\\\)?(LTS|LT|LL?L?L?|l{1,4})/g,\n\
 \n\
         // parsing token regexes\n\
         parseTokenOneOrTwoDigits = /\\d\\d?/, // 0 - 99\n\
@@ -3401,8 +3251,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         parseTokenWord = /[0-9]*['a-z\\u00A0-\\u05FF\\u0700-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFEF]+|[\\u0600-\\u06FF\\/]+(\\s*?[\\u0600-\\u06FF]+){1,2}/i, // any word (or two) characters or numbers including two/three word month in arabic.\n\
         parseTokenTimezone = /Z|[\\+\\-]\\d\\d:?\\d\\d/gi, // +00:00 -00:00 +0000 -0000 or Z\n\
         parseTokenT = /T/i, // T (ISO separator)\n\
+        parseTokenOffsetMs = /[\\+\\-]?\\d+/, // 1234567890123\n\
         parseTokenTimestampMs = /[\\+\\-]?\\d+(\\.\\d{1,3})?/, // 123456789 123456789.123\n\
-        parseTokenOrdinal = /\\d{1,2}/,\n\
 \n\
         //strict parsing regexes\n\
         parseTokenOneDigit = /\\d/, // 0 - 9\n\
@@ -3434,7 +3284,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             ['HH', /(T| )\\d\\d/]\n\
         ],\n\
 \n\
-        // timezone chunker \"+10:00\" > [\"10\", \"00\"] or \"-1530\" > [\"-15\", \"30\"]\n\
+        // timezone chunker '+10:00' > ['10', '00'] or '-1530' > ['-15', '30']\n\
         parseTimezoneChunker = /([\\+\\-]|\\d\\d)/gi,\n\
 \n\
         // getter and setter names\n\
@@ -3481,12 +3331,11 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         // default relative time thresholds\n\
         relativeTimeThresholds = {\n\
-          s: 45,   //seconds to minutes\n\
-          m: 45,   //minutes to hours\n\
-          h: 22,   //hours to days\n\
-          dd: 25,  //days to month (month == 1)\n\
-          dm: 45,  //days to months (months > 1)\n\
-          dy: 345  //days to year\n\
+            s: 45,  // seconds to minute\n\
+            m: 45,  // minutes to hour\n\
+            h: 22,  // hours to day\n\
+            d: 26,  // days to month\n\
+            M: 11   // months to year\n\
         },\n\
 \n\
         // tokens to ordinalize and pad\n\
@@ -3498,10 +3347,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 return this.month() + 1;\n\
             },\n\
             MMM  : function (format) {\n\
-                return this.lang().monthsShort(this, format);\n\
+                return this.localeData().monthsShort(this, format);\n\
             },\n\
             MMMM : function (format) {\n\
-                return this.lang().months(this, format);\n\
+                return this.localeData().months(this, format);\n\
             },\n\
             D    : function () {\n\
                 return this.date();\n\
@@ -3513,13 +3362,13 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 return this.day();\n\
             },\n\
             dd   : function (format) {\n\
-                return this.lang().weekdaysMin(this, format);\n\
+                return this.localeData().weekdaysMin(this, format);\n\
             },\n\
             ddd  : function (format) {\n\
-                return this.lang().weekdaysShort(this, format);\n\
+                return this.localeData().weekdaysShort(this, format);\n\
             },\n\
             dddd : function (format) {\n\
-                return this.lang().weekdays(this, format);\n\
+                return this.localeData().weekdays(this, format);\n\
             },\n\
             w    : function () {\n\
                 return this.week();\n\
@@ -3565,10 +3414,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 return this.isoWeekday();\n\
             },\n\
             a    : function () {\n\
-                return this.lang().meridiem(this.hours(), this.minutes(), true);\n\
+                return this.localeData().meridiem(this.hours(), this.minutes(), true);\n\
             },\n\
             A    : function () {\n\
-                return this.lang().meridiem(this.hours(), this.minutes(), false);\n\
+                return this.localeData().meridiem(this.hours(), this.minutes(), false);\n\
             },\n\
             H    : function () {\n\
                 return this.hours();\n\
@@ -3596,19 +3445,19 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             },\n\
             Z    : function () {\n\
                 var a = -this.zone(),\n\
-                    b = \"+\";\n\
+                    b = '+';\n\
                 if (a < 0) {\n\
                     a = -a;\n\
-                    b = \"-\";\n\
+                    b = '-';\n\
                 }\n\
-                return b + leftZeroFill(toInt(a / 60), 2) + \":\" + leftZeroFill(toInt(a) % 60, 2);\n\
+                return b + leftZeroFill(toInt(a / 60), 2) + ':' + leftZeroFill(toInt(a) % 60, 2);\n\
             },\n\
             ZZ   : function () {\n\
                 var a = -this.zone(),\n\
-                    b = \"+\";\n\
+                    b = '+';\n\
                 if (a < 0) {\n\
                     a = -a;\n\
-                    b = \"-\";\n\
+                    b = '-';\n\
                 }\n\
                 return b + leftZeroFill(toInt(a / 60), 2) + leftZeroFill(toInt(a) % 60, 2);\n\
             },\n\
@@ -3618,6 +3467,9 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             zz : function () {\n\
                 return this.zoneName();\n\
             },\n\
+            x    : function () {\n\
+                return this.valueOf();\n\
+            },\n\
             X    : function () {\n\
                 return this.unix();\n\
             },\n\
@@ -3625,6 +3477,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 return this.quarter();\n\
             }\n\
         },\n\
+\n\
+        deprecations = {},\n\
 \n\
         lists = ['months', 'monthsShort', 'weekdays', 'weekdaysShort', 'weekdaysMin'];\n\
 \n\
@@ -3634,8 +3488,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         switch (arguments.length) {\n\
             case 2: return a != null ? a : b;\n\
             case 3: return a != null ? a : b != null ? b : c;\n\
-            default: throw new Error(\"Implement me\");\n\
+            default: throw new Error('Implement me');\n\
         }\n\
+    }\n\
+\n\
+    function hasOwnProp(a, b) {\n\
+        return hasOwnProperty.call(a, b);\n\
     }\n\
 \n\
     function defaultParsingFlags() {\n\
@@ -3655,21 +3513,29 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         };\n\
     }\n\
 \n\
+    function printMsg(msg) {\n\
+        if (moment.suppressDeprecationWarnings === false &&\n\
+                typeof console !== 'undefined' && console.warn) {\n\
+            console.warn('Deprecation warning: ' + msg);\n\
+        }\n\
+    }\n\
+\n\
     function deprecate(msg, fn) {\n\
         var firstTime = true;\n\
-        function printMsg() {\n\
-            if (moment.suppressDeprecationWarnings === false &&\n\
-                    typeof console !== 'undefined' && console.warn) {\n\
-                console.warn(\"Deprecation warning: \" + msg);\n\
-            }\n\
-        }\n\
         return extend(function () {\n\
             if (firstTime) {\n\
-                printMsg();\n\
+                printMsg(msg);\n\
                 firstTime = false;\n\
             }\n\
             return fn.apply(this, arguments);\n\
         }, fn);\n\
+    }\n\
+\n\
+    function deprecateSimple(name, msg) {\n\
+        if (!deprecations[name]) {\n\
+            printMsg(msg);\n\
+            deprecations[name] = true;\n\
+        }\n\
     }\n\
 \n\
     function padToken(func, count) {\n\
@@ -3679,7 +3545,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     }\n\
     function ordinalizeToken(func, period) {\n\
         return function (a) {\n\
-            return this.lang().ordinal(func.call(this, a), period);\n\
+            return this.localeData().ordinal(func.call(this, a), period);\n\
         };\n\
     }\n\
 \n\
@@ -3698,14 +3564,16 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         Constructors\n\
     ************************************/\n\
 \n\
-    function Language() {\n\
-\n\
+    function Locale() {\n\
     }\n\
 \n\
     // Moment prototype object\n\
-    function Moment(config) {\n\
-        checkOverflow(config);\n\
-        extend(this, config);\n\
+    function Moment(config, skipOverflow) {\n\
+        if (skipOverflow !== false) {\n\
+            checkOverflow(config);\n\
+        }\n\
+        copyConfig(this, config);\n\
+        this._d = new Date(+config._d);\n\
     }\n\
 \n\
     // Duration Constructor\n\
@@ -3739,6 +3607,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         this._data = {};\n\
 \n\
+        this._locale = moment.localeData();\n\
+\n\
         this._bubble();\n\
     }\n\
 \n\
@@ -3749,31 +3619,67 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
     function extend(a, b) {\n\
         for (var i in b) {\n\
-            if (b.hasOwnProperty(i)) {\n\
+            if (hasOwnProp(b, i)) {\n\
                 a[i] = b[i];\n\
             }\n\
         }\n\
 \n\
-        if (b.hasOwnProperty(\"toString\")) {\n\
+        if (hasOwnProp(b, 'toString')) {\n\
             a.toString = b.toString;\n\
         }\n\
 \n\
-        if (b.hasOwnProperty(\"valueOf\")) {\n\
+        if (hasOwnProp(b, 'valueOf')) {\n\
             a.valueOf = b.valueOf;\n\
         }\n\
 \n\
         return a;\n\
     }\n\
 \n\
-    function cloneMoment(m) {\n\
-        var result = {}, i;\n\
-        for (i in m) {\n\
-            if (m.hasOwnProperty(i) && momentProperties.hasOwnProperty(i)) {\n\
-                result[i] = m[i];\n\
+    function copyConfig(to, from) {\n\
+        var i, prop, val;\n\
+\n\
+        if (typeof from._isAMomentObject !== 'undefined') {\n\
+            to._isAMomentObject = from._isAMomentObject;\n\
+        }\n\
+        if (typeof from._i !== 'undefined') {\n\
+            to._i = from._i;\n\
+        }\n\
+        if (typeof from._f !== 'undefined') {\n\
+            to._f = from._f;\n\
+        }\n\
+        if (typeof from._l !== 'undefined') {\n\
+            to._l = from._l;\n\
+        }\n\
+        if (typeof from._strict !== 'undefined') {\n\
+            to._strict = from._strict;\n\
+        }\n\
+        if (typeof from._tzm !== 'undefined') {\n\
+            to._tzm = from._tzm;\n\
+        }\n\
+        if (typeof from._isUTC !== 'undefined') {\n\
+            to._isUTC = from._isUTC;\n\
+        }\n\
+        if (typeof from._offset !== 'undefined') {\n\
+            to._offset = from._offset;\n\
+        }\n\
+        if (typeof from._pf !== 'undefined') {\n\
+            to._pf = from._pf;\n\
+        }\n\
+        if (typeof from._locale !== 'undefined') {\n\
+            to._locale = from._locale;\n\
+        }\n\
+\n\
+        if (momentProperties.length > 0) {\n\
+            for (i in momentProperties) {\n\
+                prop = momentProperties[i];\n\
+                val = from[prop];\n\
+                if (typeof val !== 'undefined') {\n\
+                    to[prop] = val;\n\
+                }\n\
             }\n\
         }\n\
 \n\
-        return result;\n\
+        return to;\n\
     }\n\
 \n\
     function absRound(number) {\n\
@@ -3796,7 +3702,51 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         return (sign ? (forceSign ? '+' : '') : '-') + output;\n\
     }\n\
 \n\
-    // helper function for _.addTime and _.subtractTime\n\
+    function positiveMomentsDifference(base, other) {\n\
+        var res = {milliseconds: 0, months: 0};\n\
+\n\
+        res.months = other.month() - base.month() +\n\
+            (other.year() - base.year()) * 12;\n\
+        if (base.clone().add(res.months, 'M').isAfter(other)) {\n\
+            --res.months;\n\
+        }\n\
+\n\
+        res.milliseconds = +other - +(base.clone().add(res.months, 'M'));\n\
+\n\
+        return res;\n\
+    }\n\
+\n\
+    function momentsDifference(base, other) {\n\
+        var res;\n\
+        other = makeAs(other, base);\n\
+        if (base.isBefore(other)) {\n\
+            res = positiveMomentsDifference(base, other);\n\
+        } else {\n\
+            res = positiveMomentsDifference(other, base);\n\
+            res.milliseconds = -res.milliseconds;\n\
+            res.months = -res.months;\n\
+        }\n\
+\n\
+        return res;\n\
+    }\n\
+\n\
+    // TODO: remove 'name' arg after deprecation is removed\n\
+    function createAdder(direction, name) {\n\
+        return function (val, period) {\n\
+            var dur, tmp;\n\
+            //invert the arguments, but complain about it\n\
+            if (period !== null && !isNaN(+period)) {\n\
+                deprecateSimple(name, 'moment().' + name  + '(period, number) is deprecated. Please use moment().' + name + '(number, period).');\n\
+                tmp = val; val = period; period = tmp;\n\
+            }\n\
+\n\
+            val = typeof val === 'string' ? +val : val;\n\
+            dur = moment.duration(val, period);\n\
+            addOrSubtractDurationFromMoment(this, dur, direction);\n\
+            return this;\n\
+        };\n\
+    }\n\
+\n\
     function addOrSubtractDurationFromMoment(mom, duration, isAdding, updateOffset) {\n\
         var milliseconds = duration._milliseconds,\n\
             days = duration._days,\n\
@@ -3823,8 +3773,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     }\n\
 \n\
     function isDate(input) {\n\
-        return  Object.prototype.toString.call(input) === '[object Date]' ||\n\
-                input instanceof Date;\n\
+        return Object.prototype.toString.call(input) === '[object Date]' ||\n\
+            input instanceof Date;\n\
     }\n\
 \n\
     // compare two arrays, return the number of differences\n\
@@ -3856,7 +3806,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             prop;\n\
 \n\
         for (prop in inputObject) {\n\
-            if (inputObject.hasOwnProperty(prop)) {\n\
+            if (hasOwnProp(inputObject, prop)) {\n\
                 normalizedProp = normalizeUnits(prop);\n\
                 if (normalizedProp) {\n\
                     normalizedInput[normalizedProp] = inputObject[prop];\n\
@@ -3884,7 +3834,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         moment[field] = function (format, index) {\n\
             var i, getter,\n\
-                method = moment.fn._lang[field],\n\
+                method = moment._locale[field],\n\
                 results = [];\n\
 \n\
             if (typeof format === 'number') {\n\
@@ -3894,7 +3844,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
             getter = function (i) {\n\
                 var m = moment().utc().set(setter, i);\n\
-                return method.call(moment.fn._lang, m, format || '');\n\
+                return method.call(moment._locale, m, format || '');\n\
             };\n\
 \n\
             if (index != null) {\n\
@@ -3946,7 +3896,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             overflow =\n\
                 m._a[MONTH] < 0 || m._a[MONTH] > 11 ? MONTH :\n\
                 m._a[DATE] < 1 || m._a[DATE] > daysInMonth(m._a[YEAR], m._a[MONTH]) ? DATE :\n\
-                m._a[HOUR] < 0 || m._a[HOUR] > 23 ? HOUR :\n\
+                m._a[HOUR] < 0 || m._a[HOUR] > 24 ||\n\
+                    (m._a[HOUR] === 24 && (m._a[MINUTE] !== 0 ||\n\
+                                           m._a[SECOND] !== 0 ||\n\
+                                           m._a[MILLISECOND] !== 0)) ? HOUR :\n\
                 m._a[MINUTE] < 0 || m._a[MINUTE] > 59 ? MINUTE :\n\
                 m._a[SECOND] < 0 || m._a[SECOND] > 59 ? SECOND :\n\
                 m._a[MILLISECOND] < 0 || m._a[MILLISECOND] > 999 ? MILLISECOND :\n\
@@ -3973,28 +3926,79 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             if (m._strict) {\n\
                 m._isValid = m._isValid &&\n\
                     m._pf.charsLeftOver === 0 &&\n\
-                    m._pf.unusedTokens.length === 0;\n\
+                    m._pf.unusedTokens.length === 0 &&\n\
+                    m._pf.bigHour === undefined;\n\
             }\n\
         }\n\
         return m._isValid;\n\
     }\n\
 \n\
-    function normalizeLanguage(key) {\n\
+    function normalizeLocale(key) {\n\
         return key ? key.toLowerCase().replace('_', '-') : key;\n\
+    }\n\
+\n\
+    // pick the locale from the array\n\
+    // try ['en-au', 'en-gb'] as 'en-au', 'en-gb', 'en', as in move through the list trying each\n\
+    // substring from most specific to least, but move to the next array item if it's a more specific variant than the current root\n\
+    function chooseLocale(names) {\n\
+        var i = 0, j, next, locale, split;\n\
+\n\
+        while (i < names.length) {\n\
+            split = normalizeLocale(names[i]).split('-');\n\
+            j = split.length;\n\
+            next = normalizeLocale(names[i + 1]);\n\
+            next = next ? next.split('-') : null;\n\
+            while (j > 0) {\n\
+                locale = loadLocale(split.slice(0, j).join('-'));\n\
+                if (locale) {\n\
+                    return locale;\n\
+                }\n\
+                if (next && next.length >= j && compareArrays(split, next, true) >= j - 1) {\n\
+                    //the next array item is better than a shallower substring of this one\n\
+                    break;\n\
+                }\n\
+                j--;\n\
+            }\n\
+            i++;\n\
+        }\n\
+        return null;\n\
+    }\n\
+\n\
+    function loadLocale(name) {\n\
+        var oldLocale = null;\n\
+        if (!locales[name] && hasModule) {\n\
+            try {\n\
+                oldLocale = moment.locale();\n\
+                require('./locale/' + name);\n\
+                // because defineLocale currently also sets the global locale, we want to undo that for lazy loaded locales\n\
+                moment.locale(oldLocale);\n\
+            } catch (e) { }\n\
+        }\n\
+        return locales[name];\n\
     }\n\
 \n\
     // Return a moment from input, that is local/utc/zone equivalent to model.\n\
     function makeAs(input, model) {\n\
-        return model._isUTC ? moment(input).zone(model._offset || 0) :\n\
-            moment(input).local();\n\
+        var res, diff;\n\
+        if (model._isUTC) {\n\
+            res = model.clone();\n\
+            diff = (moment.isMoment(input) || isDate(input) ?\n\
+                    +input : +moment(input)) - (+res);\n\
+            // Use low-level api, because this fn is low-level api.\n\
+            res._d.setTime(+res._d + diff);\n\
+            moment.updateOffset(res, false);\n\
+            return res;\n\
+        } else {\n\
+            return moment(input).local();\n\
+        }\n\
     }\n\
 \n\
     /************************************\n\
-        Languages\n\
+        Locale\n\
     ************************************/\n\
 \n\
 \n\
-    extend(Language.prototype, {\n\
+    extend(Locale.prototype, {\n\
 \n\
         set : function (config) {\n\
             var prop, i;\n\
@@ -4006,50 +4010,63 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                     this['_' + i] = prop;\n\
                 }\n\
             }\n\
+            // Lenient ordinal parsing accepts just a number in addition to\n\
+            // number + (possibly) stuff coming from _ordinalParseLenient.\n\
+            this._ordinalParseLenient = new RegExp(this._ordinalParse.source + '|' + /\\d{1,2}/.source);\n\
         },\n\
 \n\
-        _months : \"January_February_March_April_May_June_July_August_September_October_November_December\".split(\"_\"),\n\
+        _months : 'January_February_March_April_May_June_July_August_September_October_November_December'.split('_'),\n\
         months : function (m) {\n\
             return this._months[m.month()];\n\
         },\n\
 \n\
-        _monthsShort : \"Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec\".split(\"_\"),\n\
+        _monthsShort : 'Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec'.split('_'),\n\
         monthsShort : function (m) {\n\
             return this._monthsShort[m.month()];\n\
         },\n\
 \n\
-        monthsParse : function (monthName) {\n\
+        monthsParse : function (monthName, format, strict) {\n\
             var i, mom, regex;\n\
 \n\
             if (!this._monthsParse) {\n\
                 this._monthsParse = [];\n\
+                this._longMonthsParse = [];\n\
+                this._shortMonthsParse = [];\n\
             }\n\
 \n\
             for (i = 0; i < 12; i++) {\n\
                 // make the regex if we don't have it already\n\
-                if (!this._monthsParse[i]) {\n\
-                    mom = moment.utc([2000, i]);\n\
+                mom = moment.utc([2000, i]);\n\
+                if (strict && !this._longMonthsParse[i]) {\n\
+                    this._longMonthsParse[i] = new RegExp('^' + this.months(mom, '').replace('.', '') + '$', 'i');\n\
+                    this._shortMonthsParse[i] = new RegExp('^' + this.monthsShort(mom, '').replace('.', '') + '$', 'i');\n\
+                }\n\
+                if (!strict && !this._monthsParse[i]) {\n\
                     regex = '^' + this.months(mom, '') + '|^' + this.monthsShort(mom, '');\n\
                     this._monthsParse[i] = new RegExp(regex.replace('.', ''), 'i');\n\
                 }\n\
                 // test the regex\n\
-                if (this._monthsParse[i].test(monthName)) {\n\
+                if (strict && format === 'MMMM' && this._longMonthsParse[i].test(monthName)) {\n\
+                    return i;\n\
+                } else if (strict && format === 'MMM' && this._shortMonthsParse[i].test(monthName)) {\n\
+                    return i;\n\
+                } else if (!strict && this._monthsParse[i].test(monthName)) {\n\
                     return i;\n\
                 }\n\
             }\n\
         },\n\
 \n\
-        _weekdays : \"Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday\".split(\"_\"),\n\
+        _weekdays : 'Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday'.split('_'),\n\
         weekdays : function (m) {\n\
             return this._weekdays[m.day()];\n\
         },\n\
 \n\
-        _weekdaysShort : \"Sun_Mon_Tue_Wed_Thu_Fri_Sat\".split(\"_\"),\n\
+        _weekdaysShort : 'Sun_Mon_Tue_Wed_Thu_Fri_Sat'.split('_'),\n\
         weekdaysShort : function (m) {\n\
             return this._weekdaysShort[m.day()];\n\
         },\n\
 \n\
-        _weekdaysMin : \"Su_Mo_Tu_We_Th_Fr_Sa\".split(\"_\"),\n\
+        _weekdaysMin : 'Su_Mo_Tu_We_Th_Fr_Sa'.split('_'),\n\
         weekdaysMin : function (m) {\n\
             return this._weekdaysMin[m.day()];\n\
         },\n\
@@ -4076,11 +4093,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         _longDateFormat : {\n\
-            LT : \"h:mm A\",\n\
-            L : \"MM/DD/YYYY\",\n\
-            LL : \"MMMM D YYYY\",\n\
-            LLL : \"MMMM D YYYY LT\",\n\
-            LLLL : \"dddd, MMMM D YYYY LT\"\n\
+            LTS : 'h:mm:ss A',\n\
+            LT : 'h:mm A',\n\
+            L : 'MM/DD/YYYY',\n\
+            LL : 'MMMM D, YYYY',\n\
+            LLL : 'MMMM D, YYYY LT',\n\
+            LLLL : 'dddd, MMMM D, YYYY LT'\n\
         },\n\
         longDateFormat : function (key) {\n\
             var output = this._longDateFormat[key];\n\
@@ -4116,41 +4134,44 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             lastWeek : '[Last] dddd [at] LT',\n\
             sameElse : 'L'\n\
         },\n\
-        calendar : function (key, mom) {\n\
+        calendar : function (key, mom, now) {\n\
             var output = this._calendar[key];\n\
-            return typeof output === 'function' ? output.apply(mom) : output;\n\
+            return typeof output === 'function' ? output.apply(mom, [now]) : output;\n\
         },\n\
 \n\
         _relativeTime : {\n\
-            future : \"in %s\",\n\
-            past : \"%s ago\",\n\
-            s : \"a few seconds\",\n\
-            m : \"a minute\",\n\
-            mm : \"%d minutes\",\n\
-            h : \"an hour\",\n\
-            hh : \"%d hours\",\n\
-            d : \"a day\",\n\
-            dd : \"%d days\",\n\
-            M : \"a month\",\n\
-            MM : \"%d months\",\n\
-            y : \"a year\",\n\
-            yy : \"%d years\"\n\
+            future : 'in %s',\n\
+            past : '%s ago',\n\
+            s : 'a few seconds',\n\
+            m : 'a minute',\n\
+            mm : '%d minutes',\n\
+            h : 'an hour',\n\
+            hh : '%d hours',\n\
+            d : 'a day',\n\
+            dd : '%d days',\n\
+            M : 'a month',\n\
+            MM : '%d months',\n\
+            y : 'a year',\n\
+            yy : '%d years'\n\
         },\n\
+\n\
         relativeTime : function (number, withoutSuffix, string, isFuture) {\n\
             var output = this._relativeTime[string];\n\
             return (typeof output === 'function') ?\n\
                 output(number, withoutSuffix, string, isFuture) :\n\
                 output.replace(/%d/i, number);\n\
         },\n\
+\n\
         pastFuture : function (diff, output) {\n\
             var format = this._relativeTime[diff > 0 ? 'future' : 'past'];\n\
             return typeof format === 'function' ? format(output) : format.replace(/%s/i, output);\n\
         },\n\
 \n\
         ordinal : function (number) {\n\
-            return this._ordinal.replace(\"%d\", number);\n\
+            return this._ordinal.replace('%d', number);\n\
         },\n\
-        _ordinal : \"%d\",\n\
+        _ordinal : '%d',\n\
+        _ordinalParse : /\\d{1,2}/,\n\
 \n\
         preparse : function (string) {\n\
             return string;\n\
@@ -4175,78 +4196,6 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         }\n\
     });\n\
 \n\
-    // Loads a language definition into the `languages` cache.  The function\n\
-    // takes a key and optionally values.  If not in the browser and no values\n\
-    // are provided, it will load the language file module.  As a convenience,\n\
-    // this function also returns the language values.\n\
-    function loadLang(key, values) {\n\
-        values.abbr = key;\n\
-        if (!languages[key]) {\n\
-            languages[key] = new Language();\n\
-        }\n\
-        languages[key].set(values);\n\
-        return languages[key];\n\
-    }\n\
-\n\
-    // Remove a language from the `languages` cache. Mostly useful in tests.\n\
-    function unloadLang(key) {\n\
-        delete languages[key];\n\
-    }\n\
-\n\
-    // Determines which language definition to use and returns it.\n\
-    //\n\
-    // With no parameters, it will return the global language.  If you\n\
-    // pass in a language key, such as 'en', it will return the\n\
-    // definition for 'en', so long as 'en' has already been loaded using\n\
-    // moment.lang.\n\
-    function getLangDefinition(key) {\n\
-        var i = 0, j, lang, next, split,\n\
-            get = function (k) {\n\
-                if (!languages[k] && hasModule) {\n\
-                    try {\n\
-                        require('./lang/' + k);\n\
-                    } catch (e) { }\n\
-                }\n\
-                return languages[k];\n\
-            };\n\
-\n\
-        if (!key) {\n\
-            return moment.fn._lang;\n\
-        }\n\
-\n\
-        if (!isArray(key)) {\n\
-            //short-circuit everything else\n\
-            lang = get(key);\n\
-            if (lang) {\n\
-                return lang;\n\
-            }\n\
-            key = [key];\n\
-        }\n\
-\n\
-        //pick the language from the array\n\
-        //try ['en-au', 'en-gb'] as 'en-au', 'en-gb', 'en', as in move through the list trying each\n\
-        //substring from most specific to least, but move to the next array item if it's a more specific variant than the current root\n\
-        while (i < key.length) {\n\
-            split = normalizeLanguage(key[i]).split('-');\n\
-            j = split.length;\n\
-            next = normalizeLanguage(key[i + 1]);\n\
-            next = next ? next.split('-') : null;\n\
-            while (j > 0) {\n\
-                lang = get(split.slice(0, j).join('-'));\n\
-                if (lang) {\n\
-                    return lang;\n\
-                }\n\
-                if (next && next.length >= j && compareArrays(split, next, true) >= j - 1) {\n\
-                    //the next array item is better than a shallower substring of this one\n\
-                    break;\n\
-                }\n\
-                j--;\n\
-            }\n\
-            i++;\n\
-        }\n\
-        return moment.fn._lang;\n\
-    }\n\
-\n\
     /************************************\n\
         Formatting\n\
     ************************************/\n\
@@ -4254,9 +4203,9 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
     function removeFormattingTokens(input) {\n\
         if (input.match(/\\[[\\s\\S]/)) {\n\
-            return input.replace(/^\\[|\\]$/g, \"\");\n\
+            return input.replace(/^\\[|\\]$/g, '');\n\
         }\n\
-        return input.replace(/\\\\/g, \"\");\n\
+        return input.replace(/\\\\/g, '');\n\
     }\n\
 \n\
     function makeFormatFunction(format) {\n\
@@ -4271,7 +4220,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         }\n\
 \n\
         return function (mom) {\n\
-            var output = \"\";\n\
+            var output = '';\n\
             for (i = 0; i < length; i++) {\n\
                 output += array[i] instanceof Function ? array[i].call(mom, format) : array[i];\n\
             }\n\
@@ -4281,12 +4230,11 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
     // format date using native date object\n\
     function formatMoment(m, format) {\n\
-\n\
         if (!m.isValid()) {\n\
-            return m.lang().invalidDate();\n\
+            return m.localeData().invalidDate();\n\
         }\n\
 \n\
-        format = expandFormat(format, m.lang());\n\
+        format = expandFormat(format, m.localeData());\n\
 \n\
         if (!formatFunctions[format]) {\n\
             formatFunctions[format] = makeFormatFunction(format);\n\
@@ -4295,11 +4243,11 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         return formatFunctions[format](m);\n\
     }\n\
 \n\
-    function expandFormat(format, lang) {\n\
+    function expandFormat(format, locale) {\n\
         var i = 5;\n\
 \n\
         function replaceLongDateFormatTokens(input) {\n\
-            return lang.longDateFormat(input) || input;\n\
+            return locale.longDateFormat(input) || input;\n\
         }\n\
 \n\
         localFormattingTokens.lastIndex = 0;\n\
@@ -4340,13 +4288,19 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         case 'ggggg':\n\
             return strict ? parseTokenSixDigits : parseTokenOneToSixDigits;\n\
         case 'S':\n\
-            if (strict) { return parseTokenOneDigit; }\n\
+            if (strict) {\n\
+                return parseTokenOneDigit;\n\
+            }\n\
             /* falls through */\n\
         case 'SS':\n\
-            if (strict) { return parseTokenTwoDigits; }\n\
+            if (strict) {\n\
+                return parseTokenTwoDigits;\n\
+            }\n\
             /* falls through */\n\
         case 'SSS':\n\
-            if (strict) { return parseTokenThreeDigits; }\n\
+            if (strict) {\n\
+                return parseTokenThreeDigits;\n\
+            }\n\
             /* falls through */\n\
         case 'DDD':\n\
             return parseTokenOneToThreeDigits;\n\
@@ -4358,7 +4312,9 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             return parseTokenWord;\n\
         case 'a':\n\
         case 'A':\n\
-            return getLangDefinition(config._l)._meridiemParse;\n\
+            return config._locale._meridiemParse;\n\
+        case 'x':\n\
+            return parseTokenOffsetMs;\n\
         case 'X':\n\
             return parseTokenTimestampMs;\n\
         case 'Z':\n\
@@ -4393,15 +4349,15 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         case 'E':\n\
             return parseTokenOneOrTwoDigits;\n\
         case 'Do':\n\
-            return parseTokenOrdinal;\n\
+            return strict ? config._locale._ordinalParse : config._locale._ordinalParseLenient;\n\
         default :\n\
-            a = new RegExp(regexpEscape(unescapeFormat(token.replace('\\\\', '')), \"i\"));\n\
+            a = new RegExp(regexpEscape(unescapeFormat(token.replace('\\\\', '')), 'i'));\n\
             return a;\n\
         }\n\
     }\n\
 \n\
     function timezoneMinutesFromString(string) {\n\
-        string = string || \"\";\n\
+        string = string || '';\n\
         var possibleTzMatches = (string.match(parseTokenTimezone) || []),\n\
             tzChunk = possibleTzMatches[possibleTzMatches.length - 1] || [],\n\
             parts = (tzChunk + '').match(parseTimezoneChunker) || ['-', 0, 0],\n\
@@ -4430,7 +4386,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             break;\n\
         case 'MMM' : // fall through to MMMM\n\
         case 'MMMM' :\n\
-            a = getLangDefinition(config._l).monthsParse(input);\n\
+            a = config._locale.monthsParse(input, token, config._strict);\n\
             // if we didn't find a month name, mark the date as invalid.\n\
             if (a != null) {\n\
                 datePartArray[MONTH] = a;\n\
@@ -4447,7 +4403,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             break;\n\
         case 'Do' :\n\
             if (input != null) {\n\
-                datePartArray[DATE] = toInt(parseInt(input, 10));\n\
+                datePartArray[DATE] = toInt(parseInt(\n\
+                            input.match(/\\d{1,2}/)[0], 10));\n\
             }\n\
             break;\n\
         // DAY OF YEAR\n\
@@ -4470,13 +4427,15 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         // AM / PM\n\
         case 'a' : // fall through to A\n\
         case 'A' :\n\
-            config._isPm = getLangDefinition(config._l).isPM(input);\n\
+            config._isPm = config._locale.isPM(input);\n\
             break;\n\
-        // 24 HOUR\n\
-        case 'H' : // fall through to hh\n\
-        case 'HH' : // fall through to hh\n\
+        // HOUR\n\
         case 'h' : // fall through to hh\n\
         case 'hh' :\n\
+            config._pf.bigHour = true;\n\
+            /* falls through */\n\
+        case 'H' : // fall through to HH\n\
+        case 'HH' :\n\
             datePartArray[HOUR] = toInt(input);\n\
             break;\n\
         // MINUTE\n\
@@ -4496,6 +4455,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         case 'SSSS' :\n\
             datePartArray[MILLISECOND] = toInt(('0.' + input) * 1000);\n\
             break;\n\
+        // UNIX OFFSET (MILLISECONDS)\n\
+        case 'x':\n\
+            config._d = new Date(toInt(input));\n\
+            break;\n\
         // UNIX TIMESTAMP WITH MS\n\
         case 'X':\n\
             config._d = new Date(parseFloat(input) * 1000);\n\
@@ -4510,7 +4473,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         case 'dd':\n\
         case 'ddd':\n\
         case 'dddd':\n\
-            a = getLangDefinition(config._l).weekdaysParse(input);\n\
+            a = config._locale.weekdaysParse(input);\n\
             // if we didn't get a weekday name, mark the date as invalid\n\
             if (a != null) {\n\
                 config._w = config._w || {};\n\
@@ -4546,7 +4509,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     }\n\
 \n\
     function dayOfYearFromWeekInfo(config) {\n\
-        var w, weekYear, week, weekday, dow, doy, temp, lang;\n\
+        var w, weekYear, week, weekday, dow, doy, temp;\n\
 \n\
         w = config._w;\n\
         if (w.GG != null || w.W != null || w.E != null) {\n\
@@ -4561,9 +4524,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             week = dfl(w.W, 1);\n\
             weekday = dfl(w.E, 1);\n\
         } else {\n\
-            lang = getLangDefinition(config._l);\n\
-            dow = lang._week.dow;\n\
-            doy = lang._week.doy;\n\
+            dow = config._locale._week.dow;\n\
+            doy = config._locale._week.doy;\n\
 \n\
             weekYear = dfl(w.gg, config._a[YEAR], weekOfYear(moment(), dow, doy).year);\n\
             week = dfl(w.w, 1);\n\
@@ -4633,11 +4595,24 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             config._a[i] = input[i] = (config._a[i] == null) ? (i === 2 ? 1 : 0) : config._a[i];\n\
         }\n\
 \n\
+        // Check for 24:00:00.000\n\
+        if (config._a[HOUR] === 24 &&\n\
+                config._a[MINUTE] === 0 &&\n\
+                config._a[SECOND] === 0 &&\n\
+                config._a[MILLISECOND] === 0) {\n\
+            config._nextDay = true;\n\
+            config._a[HOUR] = 0;\n\
+        }\n\
+\n\
         config._d = (config._useUTC ? makeUTCDate : makeDate).apply(null, input);\n\
         // Apply timezone offset from input. The actual zone can be changed\n\
         // with parseZone.\n\
         if (config._tzm != null) {\n\
             config._d.setUTCMinutes(config._d.getUTCMinutes() + config._tzm);\n\
+        }\n\
+\n\
+        if (config._nextDay) {\n\
+            config._a[HOUR] = 24;\n\
         }\n\
     }\n\
 \n\
@@ -4652,7 +4627,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         config._a = [\n\
             normalizedInput.year,\n\
             normalizedInput.month,\n\
-            normalizedInput.day,\n\
+            normalizedInput.day || normalizedInput.date,\n\
             normalizedInput.hour,\n\
             normalizedInput.minute,\n\
             normalizedInput.second,\n\
@@ -4677,7 +4652,6 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
     // date from string and format string\n\
     function makeDateFromStringAndFormat(config) {\n\
-\n\
         if (config._f === moment.ISO_8601) {\n\
             parseISO(config);\n\
             return;\n\
@@ -4687,13 +4661,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         config._pf.empty = true;\n\
 \n\
         // This array is used to make a Date, either with `new Date` or `Date.UTC`\n\
-        var lang = getLangDefinition(config._l),\n\
-            string = '' + config._i,\n\
+        var string = '' + config._i,\n\
             i, parsedInput, tokens, token, skipped,\n\
             stringLength = string.length,\n\
             totalParsedInputLength = 0;\n\
 \n\
-        tokens = expandFormat(config._f, lang).match(formattingTokens) || [];\n\
+        tokens = expandFormat(config._f, config._locale).match(formattingTokens) || [];\n\
 \n\
         for (i = 0; i < tokens.length; i++) {\n\
             token = tokens[i];\n\
@@ -4727,6 +4700,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             config._pf.unusedInput.push(string);\n\
         }\n\
 \n\
+        // clear _12h flag if hour is <= 12\n\
+        if (config._pf.bigHour === true && config._a[HOUR] <= 12) {\n\
+            config._pf.bigHour = undefined;\n\
+        }\n\
         // handle am pm\n\
         if (config._isPm && config._a[HOUR] < 12) {\n\
             config._a[HOUR] += 12;\n\
@@ -4735,7 +4712,6 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         if (config._isPm === false && config._a[HOUR] === 12) {\n\
             config._a[HOUR] = 0;\n\
         }\n\
-\n\
         dateFromConfig(config);\n\
         checkOverflow(config);\n\
     }\n\
@@ -4768,7 +4744,10 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         for (i = 0; i < config._f.length; i++) {\n\
             currentScore = 0;\n\
-            tempConfig = extend({}, config);\n\
+            tempConfig = copyConfig({}, config);\n\
+            if (config._useUTC != null) {\n\
+                tempConfig._useUTC = config._useUTC;\n\
+            }\n\
             tempConfig._pf = defaultParsingFlags();\n\
             tempConfig._f = config._f[i];\n\
             makeDateFromStringAndFormat(tempConfig);\n\
@@ -4804,8 +4783,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             config._pf.iso = true;\n\
             for (i = 0, l = isoDates.length; i < l; i++) {\n\
                 if (isoDates[i][1].exec(string)) {\n\
-                    // match[5] should be \"T\" or undefined\n\
-                    config._f = isoDates[i][0] + (match[6] || \" \");\n\
+                    // match[5] should be 'T' or undefined\n\
+                    config._f = isoDates[i][0] + (match[6] || ' ');\n\
                     break;\n\
                 }\n\
             }\n\
@@ -4816,7 +4795,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 }\n\
             }\n\
             if (string.match(parseTokenTimezone)) {\n\
-                config._f += \"Z\";\n\
+                config._f += 'Z';\n\
             }\n\
             makeDateFromStringAndFormat(config);\n\
         } else {\n\
@@ -4833,21 +4812,29 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         }\n\
     }\n\
 \n\
-    function makeDateFromInput(config) {\n\
-        var input = config._i,\n\
-            matched = aspNetJsonRegex.exec(input);\n\
+    function map(arr, fn) {\n\
+        var res = [], i;\n\
+        for (i = 0; i < arr.length; ++i) {\n\
+            res.push(fn(arr[i], i));\n\
+        }\n\
+        return res;\n\
+    }\n\
 \n\
+    function makeDateFromInput(config) {\n\
+        var input = config._i, matched;\n\
         if (input === undefined) {\n\
             config._d = new Date();\n\
-        } else if (matched) {\n\
+        } else if (isDate(input)) {\n\
+            config._d = new Date(+input);\n\
+        } else if ((matched = aspNetJsonRegex.exec(input)) !== null) {\n\
             config._d = new Date(+matched[1]);\n\
         } else if (typeof input === 'string') {\n\
             makeDateFromString(config);\n\
         } else if (isArray(input)) {\n\
-            config._a = input.slice(0);\n\
+            config._a = map(input.slice(0), function (obj) {\n\
+                return parseInt(obj, 10);\n\
+            });\n\
             dateFromConfig(config);\n\
-        } else if (isDate(input)) {\n\
-            config._d = new Date(+input);\n\
         } else if (typeof(input) === 'object') {\n\
             dateFromObject(config);\n\
         } else if (typeof(input) === 'number') {\n\
@@ -4878,13 +4865,13 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         return date;\n\
     }\n\
 \n\
-    function parseWeekday(input, language) {\n\
+    function parseWeekday(input, locale) {\n\
         if (typeof input === 'string') {\n\
             if (!isNaN(input)) {\n\
                 input = parseInt(input, 10);\n\
             }\n\
             else {\n\
-                input = language.weekdaysParse(input);\n\
+                input = locale.weekdaysParse(input);\n\
                 if (typeof input !== 'number') {\n\
                     return null;\n\
                 }\n\
@@ -4899,29 +4886,33 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
 \n\
     // helper function for moment.fn.from, moment.fn.fromNow, and moment.duration.fn.humanize\n\
-    function substituteTimeAgo(string, number, withoutSuffix, isFuture, lang) {\n\
-        return lang.relativeTime(number || 1, !!withoutSuffix, string, isFuture);\n\
+    function substituteTimeAgo(string, number, withoutSuffix, isFuture, locale) {\n\
+        return locale.relativeTime(number || 1, !!withoutSuffix, string, isFuture);\n\
     }\n\
 \n\
-    function relativeTime(milliseconds, withoutSuffix, lang) {\n\
-        var seconds = round(Math.abs(milliseconds) / 1000),\n\
-            minutes = round(seconds / 60),\n\
-            hours = round(minutes / 60),\n\
-            days = round(hours / 24),\n\
-            years = round(days / 365),\n\
-            args = seconds < relativeTimeThresholds.s  && ['s', seconds] ||\n\
+    function relativeTime(posNegDuration, withoutSuffix, locale) {\n\
+        var duration = moment.duration(posNegDuration).abs(),\n\
+            seconds = round(duration.as('s')),\n\
+            minutes = round(duration.as('m')),\n\
+            hours = round(duration.as('h')),\n\
+            days = round(duration.as('d')),\n\
+            months = round(duration.as('M')),\n\
+            years = round(duration.as('y')),\n\
+\n\
+            args = seconds < relativeTimeThresholds.s && ['s', seconds] ||\n\
                 minutes === 1 && ['m'] ||\n\
                 minutes < relativeTimeThresholds.m && ['mm', minutes] ||\n\
                 hours === 1 && ['h'] ||\n\
                 hours < relativeTimeThresholds.h && ['hh', hours] ||\n\
                 days === 1 && ['d'] ||\n\
-                days <= relativeTimeThresholds.dd && ['dd', days] ||\n\
-                days <= relativeTimeThresholds.dm && ['M'] ||\n\
-                days < relativeTimeThresholds.dy && ['MM', round(days / 30)] ||\n\
+                days < relativeTimeThresholds.d && ['dd', days] ||\n\
+                months === 1 && ['M'] ||\n\
+                months < relativeTimeThresholds.M && ['MM', months] ||\n\
                 years === 1 && ['y'] || ['yy', years];\n\
+\n\
         args[2] = withoutSuffix;\n\
-        args[3] = milliseconds > 0;\n\
-        args[4] = lang;\n\
+        args[3] = +posNegDuration > 0;\n\
+        args[4] = locale;\n\
         return substituteTimeAgo.apply({}, args);\n\
     }\n\
 \n\
@@ -4952,7 +4943,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             daysToDayOfWeek += 7;\n\
         }\n\
 \n\
-        adjustedMoment = moment(mom).add('d', daysToDayOfWeek);\n\
+        adjustedMoment = moment(mom).add(daysToDayOfWeek, 'd');\n\
         return {\n\
             week: Math.ceil(adjustedMoment.dayOfYear() / 7),\n\
             year: adjustedMoment.year()\n\
@@ -4980,20 +4971,21 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
     function makeMoment(config) {\n\
         var input = config._i,\n\
-            format = config._f;\n\
+            format = config._f,\n\
+            res;\n\
+\n\
+        config._locale = config._locale || moment.localeData(config._l);\n\
 \n\
         if (input === null || (format === undefined && input === '')) {\n\
             return moment.invalid({nullInput: true});\n\
         }\n\
 \n\
         if (typeof input === 'string') {\n\
-            config._i = input = getLangDefinition().preparse(input);\n\
+            config._i = input = config._locale.preparse(input);\n\
         }\n\
 \n\
         if (moment.isMoment(input)) {\n\
-            config = cloneMoment(input);\n\
-\n\
-            config._d = new Date(+input._d);\n\
+            return new Moment(input, true);\n\
         } else if (format) {\n\
             if (isArray(format)) {\n\
                 makeDateFromStringAndArray(config);\n\
@@ -5004,15 +4996,22 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             makeDateFromInput(config);\n\
         }\n\
 \n\
-        return new Moment(config);\n\
+        res = new Moment(config);\n\
+        if (res._nextDay) {\n\
+            // Adding is smart enough around DST\n\
+            res.add(1, 'd');\n\
+            res._nextDay = undefined;\n\
+        }\n\
+\n\
+        return res;\n\
     }\n\
 \n\
-    moment = function (input, format, lang, strict) {\n\
+    moment = function (input, format, locale, strict) {\n\
         var c;\n\
 \n\
-        if (typeof(lang) === \"boolean\") {\n\
-            strict = lang;\n\
-            lang = undefined;\n\
+        if (typeof(locale) === 'boolean') {\n\
+            strict = locale;\n\
+            locale = undefined;\n\
         }\n\
         // object construction must be done this way.\n\
         // https://github.com/moment/moment/issues/1423\n\
@@ -5020,7 +5019,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         c._isAMomentObject = true;\n\
         c._i = input;\n\
         c._f = format;\n\
-        c._l = lang;\n\
+        c._l = locale;\n\
         c._strict = strict;\n\
         c._isUTC = false;\n\
         c._pf = defaultParsingFlags();\n\
@@ -5031,13 +5030,14 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     moment.suppressDeprecationWarnings = false;\n\
 \n\
     moment.createFromInputFallback = deprecate(\n\
-            \"moment construction falls back to js Date. This is \" +\n\
-            \"discouraged and will be removed in upcoming major \" +\n\
-            \"release. Please refer to \" +\n\
-            \"https://github.com/moment/moment/issues/1407 for more info.\",\n\
-            function (config) {\n\
-        config._d = new Date(config._i);\n\
-    });\n\
+        'moment construction falls back to js Date. This is ' +\n\
+        'discouraged and will be removed in upcoming major ' +\n\
+        'release. Please refer to ' +\n\
+        'https://github.com/moment/moment/issues/1407 for more info.',\n\
+        function (config) {\n\
+            config._d = new Date(config._i + (config._useUTC ? ' UTC' : ''));\n\
+        }\n\
+    );\n\
 \n\
     // Pick a moment m from moments so that m[fn](other) is true for all\n\
     // other. This relies on the function fn to be transitive.\n\
@@ -5074,12 +5074,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     };\n\
 \n\
     // creating with utc\n\
-    moment.utc = function (input, format, lang, strict) {\n\
+    moment.utc = function (input, format, locale, strict) {\n\
         var c;\n\
 \n\
-        if (typeof(lang) === \"boolean\") {\n\
-            strict = lang;\n\
-            lang = undefined;\n\
+        if (typeof(locale) === 'boolean') {\n\
+            strict = locale;\n\
+            locale = undefined;\n\
         }\n\
         // object construction must be done this way.\n\
         // https://github.com/moment/moment/issues/1423\n\
@@ -5087,7 +5087,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         c._isAMomentObject = true;\n\
         c._useUTC = true;\n\
         c._isUTC = true;\n\
-        c._l = lang;\n\
+        c._l = locale;\n\
         c._i = input;\n\
         c._f = format;\n\
         c._strict = strict;\n\
@@ -5108,7 +5108,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             match = null,\n\
             sign,\n\
             ret,\n\
-            parseIso;\n\
+            parseIso,\n\
+            diffRes;\n\
 \n\
         if (moment.isDuration(input)) {\n\
             duration = {\n\
@@ -5124,7 +5125,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 duration.milliseconds = input;\n\
             }\n\
         } else if (!!(match = aspNetTimeSpanJsonRegex.exec(input))) {\n\
-            sign = (match[1] === \"-\") ? -1 : 1;\n\
+            sign = (match[1] === '-') ? -1 : 1;\n\
             duration = {\n\
                 y: 0,\n\
                 d: toInt(match[DATE]) * sign,\n\
@@ -5134,7 +5135,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 ms: toInt(match[MILLISECOND]) * sign\n\
             };\n\
         } else if (!!(match = isoDurationRegex.exec(input))) {\n\
-            sign = (match[1] === \"-\") ? -1 : 1;\n\
+            sign = (match[1] === '-') ? -1 : 1;\n\
             parseIso = function (inp) {\n\
                 // We'd normally use ~~inp for this, but unfortunately it also\n\
                 // converts floats to ints.\n\
@@ -5152,12 +5153,19 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 s: parseIso(match[7]),\n\
                 w: parseIso(match[8])\n\
             };\n\
+        } else if (typeof duration === 'object' &&\n\
+                ('from' in duration || 'to' in duration)) {\n\
+            diffRes = momentsDifference(moment(duration.from), moment(duration.to));\n\
+\n\
+            duration = {};\n\
+            duration.ms = diffRes.milliseconds;\n\
+            duration.M = diffRes.months;\n\
         }\n\
 \n\
         ret = new Duration(duration);\n\
 \n\
-        if (moment.isDuration(input) && input.hasOwnProperty('_lang')) {\n\
-            ret._lang = input._lang;\n\
+        if (moment.isDuration(input) && hasOwnProp(input, '_locale')) {\n\
+            ret._locale = input._locale;\n\
         }\n\
 \n\
         return ret;\n\
@@ -5181,46 +5189,99 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     moment.updateOffset = function () {};\n\
 \n\
     // This function allows you to set a threshold for relative time strings\n\
-    moment.relativeTimeThreshold = function(threshold, limit) {\n\
-      if (relativeTimeThresholds[threshold] === undefined) {\n\
-        return false;\n\
-      }\n\
-      relativeTimeThresholds[threshold] = limit;\n\
-      return true;\n\
+    moment.relativeTimeThreshold = function (threshold, limit) {\n\
+        if (relativeTimeThresholds[threshold] === undefined) {\n\
+            return false;\n\
+        }\n\
+        if (limit === undefined) {\n\
+            return relativeTimeThresholds[threshold];\n\
+        }\n\
+        relativeTimeThresholds[threshold] = limit;\n\
+        return true;\n\
     };\n\
 \n\
-    // This function will load languages and then set the global language.  If\n\
+    moment.lang = deprecate(\n\
+        'moment.lang is deprecated. Use moment.locale instead.',\n\
+        function (key, value) {\n\
+            return moment.locale(key, value);\n\
+        }\n\
+    );\n\
+\n\
+    // This function will load locale and then set the global locale.  If\n\
     // no arguments are passed in, it will simply return the current global\n\
-    // language key.\n\
-    moment.lang = function (key, values) {\n\
-        var r;\n\
-        if (!key) {\n\
-            return moment.fn._lang._abbr;\n\
+    // locale key.\n\
+    moment.locale = function (key, values) {\n\
+        var data;\n\
+        if (key) {\n\
+            if (typeof(values) !== 'undefined') {\n\
+                data = moment.defineLocale(key, values);\n\
+            }\n\
+            else {\n\
+                data = moment.localeData(key);\n\
+            }\n\
+\n\
+            if (data) {\n\
+                moment.duration._locale = moment._locale = data;\n\
+            }\n\
         }\n\
-        if (values) {\n\
-            loadLang(normalizeLanguage(key), values);\n\
-        } else if (values === null) {\n\
-            unloadLang(key);\n\
-            key = 'en';\n\
-        } else if (!languages[key]) {\n\
-            getLangDefinition(key);\n\
-        }\n\
-        r = moment.duration.fn._lang = moment.fn._lang = getLangDefinition(key);\n\
-        return r._abbr;\n\
+\n\
+        return moment._locale._abbr;\n\
     };\n\
 \n\
-    // returns language data\n\
-    moment.langData = function (key) {\n\
-        if (key && key._lang && key._lang._abbr) {\n\
-            key = key._lang._abbr;\n\
+    moment.defineLocale = function (name, values) {\n\
+        if (values !== null) {\n\
+            values.abbr = name;\n\
+            if (!locales[name]) {\n\
+                locales[name] = new Locale();\n\
+            }\n\
+            locales[name].set(values);\n\
+\n\
+            // backwards compat for now: also set the locale\n\
+            moment.locale(name);\n\
+\n\
+            return locales[name];\n\
+        } else {\n\
+            // useful for testing\n\
+            delete locales[name];\n\
+            return null;\n\
         }\n\
-        return getLangDefinition(key);\n\
+    };\n\
+\n\
+    moment.langData = deprecate(\n\
+        'moment.langData is deprecated. Use moment.localeData instead.',\n\
+        function (key) {\n\
+            return moment.localeData(key);\n\
+        }\n\
+    );\n\
+\n\
+    // returns locale data\n\
+    moment.localeData = function (key) {\n\
+        var locale;\n\
+\n\
+        if (key && key._locale && key._locale._abbr) {\n\
+            key = key._locale._abbr;\n\
+        }\n\
+\n\
+        if (!key) {\n\
+            return moment._locale;\n\
+        }\n\
+\n\
+        if (!isArray(key)) {\n\
+            //short-circuit everything else\n\
+            locale = loadLocale(key);\n\
+            if (locale) {\n\
+                return locale;\n\
+            }\n\
+            key = [key];\n\
+        }\n\
+\n\
+        return chooseLocale(key);\n\
     };\n\
 \n\
     // compare moment object\n\
     moment.isMoment = function (obj) {\n\
         return obj instanceof Moment ||\n\
-            (obj != null &&  obj.hasOwnProperty('_isAMomentObject'));\n\
+            (obj != null && hasOwnProp(obj, '_isAMomentObject'));\n\
     };\n\
 \n\
     // for typechecking Duration objects\n\
@@ -5276,7 +5337,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         toString : function () {\n\
-            return this.clone().lang('en').format(\"ddd MMM DD YYYY HH:mm:ss [GMT]ZZ\");\n\
+            return this.clone().locale('en').format('ddd MMM DD YYYY HH:mm:ss [GMT]ZZ');\n\
         },\n\
 \n\
         toDate : function () {\n\
@@ -5286,7 +5347,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         toISOString : function () {\n\
             var m = moment(this).utc();\n\
             if (0 < m.year() && m.year() <= 9999) {\n\
-                return formatMoment(m, 'YYYY-MM-DD[T]HH:mm:ss.SSS[Z]');\n\
+                if ('function' === typeof Date.prototype.toISOString) {\n\
+                    // native implementation is ~50x faster, use it when we can\n\
+                    return this.toDate().toISOString();\n\
+                } else {\n\
+                    return formatMoment(m, 'YYYY-MM-DD[T]HH:mm:ss.SSS[Z]');\n\
+                }\n\
             } else {\n\
                 return formatMoment(m, 'YYYYYY-MM-DD[T]HH:mm:ss.SSS[Z]');\n\
             }\n\
@@ -5310,7 +5376,6 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         isDSTShifted : function () {\n\
-\n\
             if (this._a) {\n\
                 return this.isValid() && compareArrays(this._a, (this._isUTC ? moment.utc(this._a) : moment(this._a)).toArray()) > 0;\n\
             }\n\
@@ -5326,53 +5391,35 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             return this._pf.overflow;\n\
         },\n\
 \n\
-        utc : function () {\n\
-            return this.zone(0);\n\
+        utc : function (keepLocalTime) {\n\
+            return this.zone(0, keepLocalTime);\n\
         },\n\
 \n\
-        local : function () {\n\
-            this.zone(0);\n\
-            this._isUTC = false;\n\
+        local : function (keepLocalTime) {\n\
+            if (this._isUTC) {\n\
+                this.zone(0, keepLocalTime);\n\
+                this._isUTC = false;\n\
+\n\
+                if (keepLocalTime) {\n\
+                    this.add(this._dateTzOffset(), 'm');\n\
+                }\n\
+            }\n\
             return this;\n\
         },\n\
 \n\
         format : function (inputString) {\n\
             var output = formatMoment(this, inputString || moment.defaultFormat);\n\
-            return this.lang().postformat(output);\n\
+            return this.localeData().postformat(output);\n\
         },\n\
 \n\
-        add : function (input, val) {\n\
-            var dur;\n\
-            // switch args to support add('s', 1) and add(1, 's')\n\
-            if (typeof input === 'string' && typeof val === 'string') {\n\
-                dur = moment.duration(isNaN(+val) ? +input : +val, isNaN(+val) ? val : input);\n\
-            } else if (typeof input === 'string') {\n\
-                dur = moment.duration(+val, input);\n\
-            } else {\n\
-                dur = moment.duration(input, val);\n\
-            }\n\
-            addOrSubtractDurationFromMoment(this, dur, 1);\n\
-            return this;\n\
-        },\n\
+        add : createAdder(1, 'add'),\n\
 \n\
-        subtract : function (input, val) {\n\
-            var dur;\n\
-            // switch args to support subtract('s', 1) and subtract(1, 's')\n\
-            if (typeof input === 'string' && typeof val === 'string') {\n\
-                dur = moment.duration(isNaN(+val) ? +input : +val, isNaN(+val) ? val : input);\n\
-            } else if (typeof input === 'string') {\n\
-                dur = moment.duration(+val, input);\n\
-            } else {\n\
-                dur = moment.duration(input, val);\n\
-            }\n\
-            addOrSubtractDurationFromMoment(this, dur, -1);\n\
-            return this;\n\
-        },\n\
+        subtract : createAdder(-1, 'subtract'),\n\
 \n\
         diff : function (input, units, asFloat) {\n\
             var that = makeAs(input, this),\n\
                 zoneDiff = (this.zone() - that.zone()) * 6e4,\n\
-                diff, output;\n\
+                diff, output, daysAdjust;\n\
 \n\
             units = normalizeUnits(units);\n\
 \n\
@@ -5383,11 +5430,12 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 output = ((this.year() - that.year()) * 12) + (this.month() - that.month());\n\
                 // adjust by taking difference in days, average number of days\n\
                 // and dst in the given months.\n\
-                output += ((this - moment(this).startOf('month')) -\n\
-                        (that - moment(that).startOf('month'))) / diff;\n\
+                daysAdjust = (this - moment(this).startOf('month')) -\n\
+                    (that - moment(that).startOf('month'));\n\
                 // same as above but with zones, to negate all dst\n\
-                output -= ((this.zone() - moment(this).startOf('month').zone()) -\n\
-                        (that.zone() - moment(that).startOf('month').zone())) * 6e4 / diff;\n\
+                daysAdjust -= ((this.zone() - moment(this).startOf('month').zone()) -\n\
+                        (that.zone() - moment(that).startOf('month').zone())) * 6e4;\n\
+                output += daysAdjust / diff;\n\
                 if (units === 'year') {\n\
                     output = output / 12;\n\
                 }\n\
@@ -5404,7 +5452,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         from : function (time, withoutSuffix) {\n\
-            return moment.duration(this.diff(time)).lang(this.lang()._abbr).humanize(!withoutSuffix);\n\
+            return moment.duration({to: this, from: time}).locale(this.locale()).humanize(!withoutSuffix);\n\
         },\n\
 \n\
         fromNow : function (withoutSuffix) {\n\
@@ -5423,7 +5471,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                     diff < 1 ? 'sameDay' :\n\
                     diff < 2 ? 'nextDay' :\n\
                     diff < 7 ? 'nextWeek' : 'sameElse';\n\
-            return this.format(this.lang().calendar(format, this));\n\
+            return this.format(this.localeData().calendar(format, this, moment(now)));\n\
         },\n\
 \n\
         isLeapYear : function () {\n\
@@ -5438,8 +5486,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         day : function (input) {\n\
             var day = this._isUTC ? this._d.getUTCDay() : this._d.getDay();\n\
             if (input != null) {\n\
-                input = parseWeekday(input, this.lang());\n\
-                return this.add({ d : input - day });\n\
+                input = parseWeekday(input, this.localeData());\n\
+                return this.add(input - day, 'd');\n\
             } else {\n\
                 return day;\n\
             }\n\
@@ -5447,7 +5495,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         month : makeAccessor('Month', true),\n\
 \n\
-        startOf: function (units) {\n\
+        startOf : function (units) {\n\
             units = normalizeUnits(units);\n\
             // the following switch intentionally omits break keywords\n\
             // to utilize falling through the cases.\n\
@@ -5492,26 +5540,50 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         endOf: function (units) {\n\
             units = normalizeUnits(units);\n\
-            return this.startOf(units).add((units === 'isoWeek' ? 'week' : units), 1).subtract('ms', 1);\n\
+            if (units === undefined || units === 'millisecond') {\n\
+                return this;\n\
+            }\n\
+            return this.startOf(units).add(1, (units === 'isoWeek' ? 'week' : units)).subtract(1, 'ms');\n\
         },\n\
 \n\
         isAfter: function (input, units) {\n\
-            units = typeof units !== 'undefined' ? units : 'millisecond';\n\
-            return +this.clone().startOf(units) > +moment(input).startOf(units);\n\
+            var inputMs;\n\
+            units = normalizeUnits(typeof units !== 'undefined' ? units : 'millisecond');\n\
+            if (units === 'millisecond') {\n\
+                input = moment.isMoment(input) ? input : moment(input);\n\
+                return +this > +input;\n\
+            } else {\n\
+                inputMs = moment.isMoment(input) ? +input : +moment(input);\n\
+                return inputMs < +this.clone().startOf(units);\n\
+            }\n\
         },\n\
 \n\
         isBefore: function (input, units) {\n\
-            units = typeof units !== 'undefined' ? units : 'millisecond';\n\
-            return +this.clone().startOf(units) < +moment(input).startOf(units);\n\
+            var inputMs;\n\
+            units = normalizeUnits(typeof units !== 'undefined' ? units : 'millisecond');\n\
+            if (units === 'millisecond') {\n\
+                input = moment.isMoment(input) ? input : moment(input);\n\
+                return +this < +input;\n\
+            } else {\n\
+                inputMs = moment.isMoment(input) ? +input : +moment(input);\n\
+                return +this.clone().endOf(units) < inputMs;\n\
+            }\n\
         },\n\
 \n\
         isSame: function (input, units) {\n\
-            units = units || 'ms';\n\
-            return +this.clone().startOf(units) === +makeAs(input, this).startOf(units);\n\
+            var inputMs;\n\
+            units = normalizeUnits(units || 'millisecond');\n\
+            if (units === 'millisecond') {\n\
+                input = moment.isMoment(input) ? input : moment(input);\n\
+                return +this === +input;\n\
+            } else {\n\
+                inputMs = +moment(input);\n\
+                return +(this.clone().startOf(units)) <= inputMs && inputMs <= +(this.clone().endOf(units));\n\
+            }\n\
         },\n\
 \n\
         min: deprecate(\n\
-                 \"moment().min is deprecated, use moment.min instead. https://github.com/moment/moment/issues/1548\",\n\
+                 'moment().min is deprecated, use moment.min instead. https://github.com/moment/moment/issues/1548',\n\
                  function (other) {\n\
                      other = moment.apply(null, arguments);\n\
                      return other < this ? this : other;\n\
@@ -5519,36 +5591,43 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
          ),\n\
 \n\
         max: deprecate(\n\
-                \"moment().max is deprecated, use moment.max instead. https://github.com/moment/moment/issues/1548\",\n\
+                'moment().max is deprecated, use moment.max instead. https://github.com/moment/moment/issues/1548',\n\
                 function (other) {\n\
                     other = moment.apply(null, arguments);\n\
                     return other > this ? this : other;\n\
                 }\n\
         ),\n\
 \n\
-        // keepTime = true means only change the timezone, without affecting\n\
-        // the local hour. So 5:31:26 +0300 --[zone(2, true)]--> 5:31:26 +0200\n\
-        // It is possible that 5:31:26 doesn't exist int zone +0200, so we\n\
-        // adjust the time as needed, to be valid.\n\
+        // keepLocalTime = true means only change the timezone, without\n\
+        // affecting the local hour. So 5:31:26 +0300 --[zone(2, true)]-->\n\
+        // 5:31:26 +0200 It is possible that 5:31:26 doesn't exist int zone\n\
+        // +0200, so we adjust the time as needed, to be valid.\n\
         //\n\
         // Keeping the time actually adds/subtracts (one hour)\n\
         // from the actual represented time. That is why we call updateOffset\n\
         // a second time. In case it wants us to change the offset again\n\
         // _changeInProgress == true case, then we have to adjust, because\n\
         // there is no such time in the given timezone.\n\
-        zone : function (input, keepTime) {\n\
-            var offset = this._offset || 0;\n\
+        zone : function (input, keepLocalTime) {\n\
+            var offset = this._offset || 0,\n\
+                localAdjust;\n\
             if (input != null) {\n\
-                if (typeof input === \"string\") {\n\
+                if (typeof input === 'string') {\n\
                     input = timezoneMinutesFromString(input);\n\
                 }\n\
                 if (Math.abs(input) < 16) {\n\
                     input = input * 60;\n\
                 }\n\
+                if (!this._isUTC && keepLocalTime) {\n\
+                    localAdjust = this._dateTzOffset();\n\
+                }\n\
                 this._offset = input;\n\
                 this._isUTC = true;\n\
+                if (localAdjust != null) {\n\
+                    this.subtract(localAdjust, 'm');\n\
+                }\n\
                 if (offset !== input) {\n\
-                    if (!keepTime || this._changeInProgress) {\n\
+                    if (!keepLocalTime || this._changeInProgress) {\n\
                         addOrSubtractDurationFromMoment(this,\n\
                                 moment.duration(offset - input, 'm'), 1, false);\n\
                     } else if (!this._changeInProgress) {\n\
@@ -5558,17 +5637,17 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                     }\n\
                 }\n\
             } else {\n\
-                return this._isUTC ? offset : this._d.getTimezoneOffset();\n\
+                return this._isUTC ? offset : this._dateTzOffset();\n\
             }\n\
             return this;\n\
         },\n\
 \n\
         zoneAbbr : function () {\n\
-            return this._isUTC ? \"UTC\" : \"\";\n\
+            return this._isUTC ? 'UTC' : '';\n\
         },\n\
 \n\
         zoneName : function () {\n\
-            return this._isUTC ? \"Coordinated Universal Time\" : \"\";\n\
+            return this._isUTC ? 'Coordinated Universal Time' : '';\n\
         },\n\
 \n\
         parseZone : function () {\n\
@@ -5597,7 +5676,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         dayOfYear : function (input) {\n\
             var dayOfYear = round((moment(this).startOf('day') - moment(this).startOf('year')) / 864e5) + 1;\n\
-            return input == null ? dayOfYear : this.add(\"d\", (input - dayOfYear));\n\
+            return input == null ? dayOfYear : this.add((input - dayOfYear), 'd');\n\
         },\n\
 \n\
         quarter : function (input) {\n\
@@ -5605,28 +5684,28 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         weekYear : function (input) {\n\
-            var year = weekOfYear(this, this.lang()._week.dow, this.lang()._week.doy).year;\n\
-            return input == null ? year : this.add(\"y\", (input - year));\n\
+            var year = weekOfYear(this, this.localeData()._week.dow, this.localeData()._week.doy).year;\n\
+            return input == null ? year : this.add((input - year), 'y');\n\
         },\n\
 \n\
         isoWeekYear : function (input) {\n\
             var year = weekOfYear(this, 1, 4).year;\n\
-            return input == null ? year : this.add(\"y\", (input - year));\n\
+            return input == null ? year : this.add((input - year), 'y');\n\
         },\n\
 \n\
         week : function (input) {\n\
-            var week = this.lang().week(this);\n\
-            return input == null ? week : this.add(\"d\", (input - week) * 7);\n\
+            var week = this.localeData().week(this);\n\
+            return input == null ? week : this.add((input - week) * 7, 'd');\n\
         },\n\
 \n\
         isoWeek : function (input) {\n\
             var week = weekOfYear(this, 1, 4).week;\n\
-            return input == null ? week : this.add(\"d\", (input - week) * 7);\n\
+            return input == null ? week : this.add((input - week) * 7, 'd');\n\
         },\n\
 \n\
         weekday : function (input) {\n\
-            var weekday = (this.day() + 7 - this.lang()._week.dow) % 7;\n\
-            return input == null ? weekday : this.add(\"d\", input - weekday);\n\
+            var weekday = (this.day() + 7 - this.localeData()._week.dow) % 7;\n\
+            return input == null ? weekday : this.add(input - weekday, 'd');\n\
         },\n\
 \n\
         isoWeekday : function (input) {\n\
@@ -5641,7 +5720,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         weeksInYear : function () {\n\
-            var weekInfo = this._lang._week;\n\
+            var weekInfo = this.localeData()._week;\n\
             return weeksInYear(this.year(), weekInfo.dow, weekInfo.doy);\n\
         },\n\
 \n\
@@ -5658,16 +5737,42 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             return this;\n\
         },\n\
 \n\
-        // If passed a language key, it will set the language for this\n\
-        // instance.  Otherwise, it will return the language configuration\n\
+        // If passed a locale key, it will set the locale for this\n\
+        // instance.  Otherwise, it will return the locale configuration\n\
         // variables for this instance.\n\
-        lang : function (key) {\n\
+        locale : function (key) {\n\
+            var newLocaleData;\n\
+\n\
             if (key === undefined) {\n\
-                return this._lang;\n\
+                return this._locale._abbr;\n\
             } else {\n\
-                this._lang = getLangDefinition(key);\n\
+                newLocaleData = moment.localeData(key);\n\
+                if (newLocaleData != null) {\n\
+                    this._locale = newLocaleData;\n\
+                }\n\
                 return this;\n\
             }\n\
+        },\n\
+\n\
+        lang : deprecate(\n\
+            'moment().lang() is deprecated. Instead, use moment().localeData() to get the language configuration. Use moment().locale() to change languages.',\n\
+            function (key) {\n\
+                if (key === undefined) {\n\
+                    return this.localeData();\n\
+                } else {\n\
+                    return this.locale(key);\n\
+                }\n\
+            }\n\
+        ),\n\
+\n\
+        localeData : function () {\n\
+            return this._locale;\n\
+        },\n\
+\n\
+        _dateTzOffset : function () {\n\
+            // On Firefox.24 Date#getTimezoneOffset returns a floating point.\n\
+            // https://github.com/moment/moment/pull/1871\n\
+            return Math.round(this._d.getTimezoneOffset() / 15) * 15;\n\
         }\n\
     });\n\
 \n\
@@ -5676,7 +5781,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
 \n\
         // TODO: Move this out of here!\n\
         if (typeof value === 'string') {\n\
-            value = mom.lang().monthsParse(value);\n\
+            value = mom.localeData().monthsParse(value);\n\
             // TODO: Another silent failure?\n\
             if (typeof value !== 'number') {\n\
                 return mom;\n\
@@ -5723,9 +5828,9 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     moment.fn.hour = moment.fn.hours = makeAccessor('Hours', true);\n\
     // moment.fn.month is defined separately\n\
     moment.fn.date = makeAccessor('Date', true);\n\
-    moment.fn.dates = deprecate(\"dates accessor is deprecated. Use date instead.\", makeAccessor('Date', true));\n\
+    moment.fn.dates = deprecate('dates accessor is deprecated. Use date instead.', makeAccessor('Date', true));\n\
     moment.fn.year = makeAccessor('FullYear', true);\n\
-    moment.fn.years = deprecate(\"years accessor is deprecated. Use year instead.\", makeAccessor('FullYear', true));\n\
+    moment.fn.years = deprecate('years accessor is deprecated. Use year instead.', makeAccessor('FullYear', true));\n\
 \n\
     // add plural methods\n\
     moment.fn.days = moment.fn.day;\n\
@@ -5742,6 +5847,17 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     ************************************/\n\
 \n\
 \n\
+    function daysToYears (days) {\n\
+        // 400 years have 146097 days (taking into account leap year rules)\n\
+        return days * 400 / 146097;\n\
+    }\n\
+\n\
+    function yearsToDays (years) {\n\
+        // years * 365 + absRound(years / 4) -\n\
+        //     absRound(years / 100) + absRound(years / 400);\n\
+        return years * 146097 / 400;\n\
+    }\n\
+\n\
     extend(moment.duration.fn = Duration.prototype, {\n\
 \n\
         _bubble : function () {\n\
@@ -5749,7 +5865,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 days = this._days,\n\
                 months = this._months,\n\
                 data = this._data,\n\
-                seconds, minutes, hours, years;\n\
+                seconds, minutes, hours, years = 0;\n\
 \n\
             // The following code bubbles up values, see the tests for\n\
             // examples of what that means.\n\
@@ -5765,13 +5881,38 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
             data.hours = hours % 24;\n\
 \n\
             days += absRound(hours / 24);\n\
-            data.days = days % 30;\n\
 \n\
+            // Accurately convert days to years, assume start from year 0.\n\
+            years = absRound(daysToYears(days));\n\
+            days -= absRound(yearsToDays(years));\n\
+\n\
+            // 30 days to a month\n\
+            // TODO (iskren): Use anchor date (like 1st Jan) to compute this.\n\
             months += absRound(days / 30);\n\
-            data.months = months % 12;\n\
+            days %= 30;\n\
 \n\
-            years = absRound(months / 12);\n\
+            // 12 months -> 1 year\n\
+            years += absRound(months / 12);\n\
+            months %= 12;\n\
+\n\
+            data.days = days;\n\
+            data.months = months;\n\
             data.years = years;\n\
+        },\n\
+\n\
+        abs : function () {\n\
+            this._milliseconds = Math.abs(this._milliseconds);\n\
+            this._days = Math.abs(this._days);\n\
+            this._months = Math.abs(this._months);\n\
+\n\
+            this._data.milliseconds = Math.abs(this._data.milliseconds);\n\
+            this._data.seconds = Math.abs(this._data.seconds);\n\
+            this._data.minutes = Math.abs(this._data.minutes);\n\
+            this._data.hours = Math.abs(this._data.hours);\n\
+            this._data.months = Math.abs(this._data.months);\n\
+            this._data.years = Math.abs(this._data.years);\n\
+\n\
+            return this;\n\
         },\n\
 \n\
         weeks : function () {\n\
@@ -5786,14 +5927,13 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         humanize : function (withSuffix) {\n\
-            var difference = +this,\n\
-                output = relativeTime(difference, !withSuffix, this.lang());\n\
+            var output = relativeTime(this, !withSuffix, this.localeData());\n\
 \n\
             if (withSuffix) {\n\
-                output = this.lang().pastFuture(difference, output);\n\
+                output = this.localeData().pastFuture(+this, output);\n\
             }\n\
 \n\
-            return this.lang().postformat(output);\n\
+            return this.localeData().postformat(output);\n\
         },\n\
 \n\
         add : function (input, val) {\n\
@@ -5827,13 +5967,41 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         },\n\
 \n\
         as : function (units) {\n\
+            var days, months;\n\
             units = normalizeUnits(units);\n\
-            return this['as' + units.charAt(0).toUpperCase() + units.slice(1) + 's']();\n\
+\n\
+            if (units === 'month' || units === 'year') {\n\
+                days = this._days + this._milliseconds / 864e5;\n\
+                months = this._months + daysToYears(days) * 12;\n\
+                return units === 'month' ? months : months / 12;\n\
+            } else {\n\
+                // handle milliseconds separately because of floating point math errors (issue #1867)\n\
+                days = this._days + Math.round(yearsToDays(this._months / 12));\n\
+                switch (units) {\n\
+                    case 'week': return days / 7 + this._milliseconds / 6048e5;\n\
+                    case 'day': return days + this._milliseconds / 864e5;\n\
+                    case 'hour': return days * 24 + this._milliseconds / 36e5;\n\
+                    case 'minute': return days * 24 * 60 + this._milliseconds / 6e4;\n\
+                    case 'second': return days * 24 * 60 * 60 + this._milliseconds / 1000;\n\
+                    // Math.floor prevents floating point math errors here\n\
+                    case 'millisecond': return Math.floor(days * 24 * 60 * 60 * 1000) + this._milliseconds;\n\
+                    default: throw new Error('Unknown unit ' + units);\n\
+                }\n\
+            }\n\
         },\n\
 \n\
         lang : moment.fn.lang,\n\
+        locale : moment.fn.locale,\n\
 \n\
-        toIsoString : function () {\n\
+        toIsoString : deprecate(\n\
+            'toIsoString() is deprecated. Please use toISOString() instead ' +\n\
+            '(notice the capitals)',\n\
+            function () {\n\
+                return this.toISOString();\n\
+            }\n\
+        ),\n\
+\n\
+        toISOString : function () {\n\
             // inspired by https://github.com/dordille/moment-isoduration/blob/master/moment.isoduration.js\n\
             var years = Math.abs(this.years()),\n\
                 months = Math.abs(this.months()),\n\
@@ -5857,8 +6025,14 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
                 (hours ? hours + 'H' : '') +\n\
                 (minutes ? minutes + 'M' : '') +\n\
                 (seconds ? seconds + 'S' : '');\n\
+        },\n\
+\n\
+        localeData : function () {\n\
+            return this._locale;\n\
         }\n\
     });\n\
+\n\
+    moment.duration.fn.toString = moment.duration.fn.toISOString;\n\
 \n\
     function makeDurationGetter(name) {\n\
         moment.duration.fn[name] = function () {\n\
@@ -5866,32 +6040,45 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         };\n\
     }\n\
 \n\
-    function makeDurationAsGetter(name, factor) {\n\
-        moment.duration.fn['as' + name] = function () {\n\
-            return +this / factor;\n\
-        };\n\
-    }\n\
-\n\
     for (i in unitMillisecondFactors) {\n\
-        if (unitMillisecondFactors.hasOwnProperty(i)) {\n\
-            makeDurationAsGetter(i, unitMillisecondFactors[i]);\n\
+        if (hasOwnProp(unitMillisecondFactors, i)) {\n\
             makeDurationGetter(i.toLowerCase());\n\
         }\n\
     }\n\
 \n\
-    makeDurationAsGetter('Weeks', 6048e5);\n\
+    moment.duration.fn.asMilliseconds = function () {\n\
+        return this.as('ms');\n\
+    };\n\
+    moment.duration.fn.asSeconds = function () {\n\
+        return this.as('s');\n\
+    };\n\
+    moment.duration.fn.asMinutes = function () {\n\
+        return this.as('m');\n\
+    };\n\
+    moment.duration.fn.asHours = function () {\n\
+        return this.as('h');\n\
+    };\n\
+    moment.duration.fn.asDays = function () {\n\
+        return this.as('d');\n\
+    };\n\
+    moment.duration.fn.asWeeks = function () {\n\
+        return this.as('weeks');\n\
+    };\n\
     moment.duration.fn.asMonths = function () {\n\
-        return (+this - this.years() * 31536e6) / 2592e6 + this.years() * 12;\n\
+        return this.as('M');\n\
+    };\n\
+    moment.duration.fn.asYears = function () {\n\
+        return this.as('y');\n\
     };\n\
 \n\
-\n\
     /************************************\n\
-        Default Lang\n\
+        Default Locale\n\
     ************************************/\n\
 \n\
 \n\
-    // Set default language, other languages will inherit from English.\n\
-    moment.lang('en', {\n\
+    // Set default locale, other locale will inherit from English.\n\
+    moment.locale('en', {\n\
+        ordinalParse: /\\d{1,2}(th|st|nd|rd)/,\n\
         ordinal : function (number) {\n\
             var b = number % 10,\n\
                 output = (toInt(number % 100 / 10) === 1) ? 'th' :\n\
@@ -5902,7 +6089,7 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         }\n\
     });\n\
 \n\
-    /* EMBED_LANGUAGES */\n\
+    /* EMBED_LOCALES */\n\
 \n\
     /************************************\n\
         Exposing Moment\n\
@@ -5916,9 +6103,9 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         oldGlobalMoment = globalScope.moment;\n\
         if (shouldDeprecate) {\n\
             globalScope.moment = deprecate(\n\
-                    \"Accessing Moment through the global scope is \" +\n\
-                    \"deprecated, and will be removed in an upcoming \" +\n\
-                    \"release.\",\n\
+                    'Accessing Moment through the global scope is ' +\n\
+                    'deprecated, and will be removed in an upcoming ' +\n\
+                    'release.',\n\
                     moment);\n\
         } else {\n\
             globalScope.moment = moment;\n\
@@ -5928,8 +6115,8 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
     // CommonJS module is defined\n\
     if (hasModule) {\n\
         module.exports = moment;\n\
-    } else if (typeof define === \"function\" && define.amd) {\n\
-        define(\"moment\", function (require, exports, module) {\n\
+    } else if (typeof define === 'function' && define.amd) {\n\
+        define('moment', function (require, exports, module) {\n\
             if (module.config && module.config() && module.config().noGlobal === true) {\n\
                 // release the global variable\n\
                 globalScope.moment = oldGlobalMoment;\n\
@@ -5942,11 +6129,4526 @@ require.register("moment-moment/moment.js", Function("exports, require, module",
         makeGlobal();\n\
     }\n\
 }).call(this);\n\
-//@ sourceURL=moment-moment/moment.js"
+\n\
+//# sourceURL=components/moment/moment/2.8.4/moment.js"
 ));
-require.register("components-jquery/jquery.js", Function("exports, require, module",
+
+require.modules["moment-moment"] = require.modules["moment~moment@2.8.4"];
+require.modules["moment~moment"] = require.modules["moment~moment@2.8.4"];
+require.modules["moment"] = require.modules["moment~moment@2.8.4"];
+
+
+require.register("kpwebb~select2@3.4.8", Function("exports, module",
+"/*\n\
+Copyright 2012 Igor Vaynberg\n\
+\n\
+Version: 3.4.8 Timestamp: Thu May  1 09:50:32 EDT 2014\n\
+\n\
+This software is licensed under the Apache License, Version 2.0 (the \"Apache License\") or the GNU\n\
+General Public License version 2 (the \"GPL License\"). You may choose either license to govern your\n\
+use of this software only upon the condition that you accept all of the terms of either the Apache\n\
+License or the GPL License.\n\
+\n\
+You may obtain a copy of the Apache License and the GPL License at:\n\
+\n\
+    http://www.apache.org/licenses/LICENSE-2.0\n\
+    http://www.gnu.org/licenses/gpl-2.0.html\n\
+\n\
+Unless required by applicable law or agreed to in writing, software distributed under the\n\
+Apache License or the GPL License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR\n\
+CONDITIONS OF ANY KIND, either express or implied. See the Apache License and the GPL License for\n\
+the specific language governing permissions and limitations under the Apache License and the GPL License.\n\
+*/\n\
+(function ($) {\n\
+    if(typeof $.fn.each2 == \"undefined\") {\n\
+        $.extend($.fn, {\n\
+            /*\n\
+            * 4-10 times faster .each replacement\n\
+            * use it carefully, as it overrides jQuery context of element on each iteration\n\
+            */\n\
+            each2 : function (c) {\n\
+                var j = $([0]), i = -1, l = this.length;\n\
+                while (\n\
+                    ++i < l\n\
+                    && (j.context = j[0] = this[i])\n\
+                    && c.call(j[0], i, j) !== false //\"this\"=DOM, i=index, j=jQuery object\n\
+                );\n\
+                return this;\n\
+            }\n\
+        });\n\
+    }\n\
+})(jQuery);\n\
+\n\
+(function ($, undefined) {\n\
+    \"use strict\";\n\
+    /*global document, window, jQuery, console */\n\
+\n\
+    if (window.Select2 !== undefined) {\n\
+        return;\n\
+    }\n\
+\n\
+    var KEY, AbstractSelect2, SingleSelect2, MultiSelect2, nextUid, sizer,\n\
+        lastMousePosition={x:0,y:0}, $document, scrollBarDimensions,\n\
+\n\
+    KEY = {\n\
+        TAB: 9,\n\
+        ENTER: 13,\n\
+        ESC: 27,\n\
+        SPACE: 32,\n\
+        LEFT: 37,\n\
+        UP: 38,\n\
+        RIGHT: 39,\n\
+        DOWN: 40,\n\
+        SHIFT: 16,\n\
+        CTRL: 17,\n\
+        ALT: 18,\n\
+        PAGE_UP: 33,\n\
+        PAGE_DOWN: 34,\n\
+        HOME: 36,\n\
+        END: 35,\n\
+        BACKSPACE: 8,\n\
+        DELETE: 46,\n\
+        isArrow: function (k) {\n\
+            k = k.which ? k.which : k;\n\
+            switch (k) {\n\
+            case KEY.LEFT:\n\
+            case KEY.RIGHT:\n\
+            case KEY.UP:\n\
+            case KEY.DOWN:\n\
+                return true;\n\
+            }\n\
+            return false;\n\
+        },\n\
+        isControl: function (e) {\n\
+            var k = e.which;\n\
+            switch (k) {\n\
+            case KEY.SHIFT:\n\
+            case KEY.CTRL:\n\
+            case KEY.ALT:\n\
+                return true;\n\
+            }\n\
+\n\
+            if (e.metaKey) return true;\n\
+\n\
+            return false;\n\
+        },\n\
+        isFunctionKey: function (k) {\n\
+            k = k.which ? k.which : k;\n\
+            return k >= 112 && k <= 123;\n\
+        }\n\
+    },\n\
+    MEASURE_SCROLLBAR_TEMPLATE = \"<div class='select2-measure-scrollbar'></div>\",\n\
+\n\
+    DIACRITICS = {\"\\u24B6\":\"A\",\"\\uFF21\":\"A\",\"\\u00C0\":\"A\",\"\\u00C1\":\"A\",\"\\u00C2\":\"A\",\"\\u1EA6\":\"A\",\"\\u1EA4\":\"A\",\"\\u1EAA\":\"A\",\"\\u1EA8\":\"A\",\"\\u00C3\":\"A\",\"\\u0100\":\"A\",\"\\u0102\":\"A\",\"\\u1EB0\":\"A\",\"\\u1EAE\":\"A\",\"\\u1EB4\":\"A\",\"\\u1EB2\":\"A\",\"\\u0226\":\"A\",\"\\u01E0\":\"A\",\"\\u00C4\":\"A\",\"\\u01DE\":\"A\",\"\\u1EA2\":\"A\",\"\\u00C5\":\"A\",\"\\u01FA\":\"A\",\"\\u01CD\":\"A\",\"\\u0200\":\"A\",\"\\u0202\":\"A\",\"\\u1EA0\":\"A\",\"\\u1EAC\":\"A\",\"\\u1EB6\":\"A\",\"\\u1E00\":\"A\",\"\\u0104\":\"A\",\"\\u023A\":\"A\",\"\\u2C6F\":\"A\",\"\\uA732\":\"AA\",\"\\u00C6\":\"AE\",\"\\u01FC\":\"AE\",\"\\u01E2\":\"AE\",\"\\uA734\":\"AO\",\"\\uA736\":\"AU\",\"\\uA738\":\"AV\",\"\\uA73A\":\"AV\",\"\\uA73C\":\"AY\",\"\\u24B7\":\"B\",\"\\uFF22\":\"B\",\"\\u1E02\":\"B\",\"\\u1E04\":\"B\",\"\\u1E06\":\"B\",\"\\u0243\":\"B\",\"\\u0182\":\"B\",\"\\u0181\":\"B\",\"\\u24B8\":\"C\",\"\\uFF23\":\"C\",\"\\u0106\":\"C\",\"\\u0108\":\"C\",\"\\u010A\":\"C\",\"\\u010C\":\"C\",\"\\u00C7\":\"C\",\"\\u1E08\":\"C\",\"\\u0187\":\"C\",\"\\u023B\":\"C\",\"\\uA73E\":\"C\",\"\\u24B9\":\"D\",\"\\uFF24\":\"D\",\"\\u1E0A\":\"D\",\"\\u010E\":\"D\",\"\\u1E0C\":\"D\",\"\\u1E10\":\"D\",\"\\u1E12\":\"D\",\"\\u1E0E\":\"D\",\"\\u0110\":\"D\",\"\\u018B\":\"D\",\"\\u018A\":\"D\",\"\\u0189\":\"D\",\"\\uA779\":\"D\",\"\\u01F1\":\"DZ\",\"\\u01C4\":\"DZ\",\"\\u01F2\":\"Dz\",\"\\u01C5\":\"Dz\",\"\\u24BA\":\"E\",\"\\uFF25\":\"E\",\"\\u00C8\":\"E\",\"\\u00C9\":\"E\",\"\\u00CA\":\"E\",\"\\u1EC0\":\"E\",\"\\u1EBE\":\"E\",\"\\u1EC4\":\"E\",\"\\u1EC2\":\"E\",\"\\u1EBC\":\"E\",\"\\u0112\":\"E\",\"\\u1E14\":\"E\",\"\\u1E16\":\"E\",\"\\u0114\":\"E\",\"\\u0116\":\"E\",\"\\u00CB\":\"E\",\"\\u1EBA\":\"E\",\"\\u011A\":\"E\",\"\\u0204\":\"E\",\"\\u0206\":\"E\",\"\\u1EB8\":\"E\",\"\\u1EC6\":\"E\",\"\\u0228\":\"E\",\"\\u1E1C\":\"E\",\"\\u0118\":\"E\",\"\\u1E18\":\"E\",\"\\u1E1A\":\"E\",\"\\u0190\":\"E\",\"\\u018E\":\"E\",\"\\u24BB\":\"F\",\"\\uFF26\":\"F\",\"\\u1E1E\":\"F\",\"\\u0191\":\"F\",\"\\uA77B\":\"F\",\"\\u24BC\":\"G\",\"\\uFF27\":\"G\",\"\\u01F4\":\"G\",\"\\u011C\":\"G\",\"\\u1E20\":\"G\",\"\\u011E\":\"G\",\"\\u0120\":\"G\",\"\\u01E6\":\"G\",\"\\u0122\":\"G\",\"\\u01E4\":\"G\",\"\\u0193\":\"G\",\"\\uA7A0\":\"G\",\"\\uA77D\":\"G\",\"\\uA77E\":\"G\",\"\\u24BD\":\"H\",\"\\uFF28\":\"H\",\"\\u0124\":\"H\",\"\\u1E22\":\"H\",\"\\u1E26\":\"H\",\"\\u021E\":\"H\",\"\\u1E24\":\"H\",\"\\u1E28\":\"H\",\"\\u1E2A\":\"H\",\"\\u0126\":\"H\",\"\\u2C67\":\"H\",\"\\u2C75\":\"H\",\"\\uA78D\":\"H\",\"\\u24BE\":\"I\",\"\\uFF29\":\"I\",\"\\u00CC\":\"I\",\"\\u00CD\":\"I\",\"\\u00CE\":\"I\",\"\\u0128\":\"I\",\"\\u012A\":\"I\",\"\\u012C\":\"I\",\"\\u0130\":\"I\",\"\\u00CF\":\"I\",\"\\u1E2E\":\"I\",\"\\u1EC8\":\"I\",\"\\u01CF\":\"I\",\"\\u0208\":\"I\",\"\\u020A\":\"I\",\"\\u1ECA\":\"I\",\"\\u012E\":\"I\",\"\\u1E2C\":\"I\",\"\\u0197\":\"I\",\"\\u24BF\":\"J\",\"\\uFF2A\":\"J\",\"\\u0134\":\"J\",\"\\u0248\":\"J\",\"\\u24C0\":\"K\",\"\\uFF2B\":\"K\",\"\\u1E30\":\"K\",\"\\u01E8\":\"K\",\"\\u1E32\":\"K\",\"\\u0136\":\"K\",\"\\u1E34\":\"K\",\"\\u0198\":\"K\",\"\\u2C69\":\"K\",\"\\uA740\":\"K\",\"\\uA742\":\"K\",\"\\uA744\":\"K\",\"\\uA7A2\":\"K\",\"\\u24C1\":\"L\",\"\\uFF2C\":\"L\",\"\\u013F\":\"L\",\"\\u0139\":\"L\",\"\\u013D\":\"L\",\"\\u1E36\":\"L\",\"\\u1E38\":\"L\",\"\\u013B\":\"L\",\"\\u1E3C\":\"L\",\"\\u1E3A\":\"L\",\"\\u0141\":\"L\",\"\\u023D\":\"L\",\"\\u2C62\":\"L\",\"\\u2C60\":\"L\",\"\\uA748\":\"L\",\"\\uA746\":\"L\",\"\\uA780\":\"L\",\"\\u01C7\":\"LJ\",\"\\u01C8\":\"Lj\",\"\\u24C2\":\"M\",\"\\uFF2D\":\"M\",\"\\u1E3E\":\"M\",\"\\u1E40\":\"M\",\"\\u1E42\":\"M\",\"\\u2C6E\":\"M\",\"\\u019C\":\"M\",\"\\u24C3\":\"N\",\"\\uFF2E\":\"N\",\"\\u01F8\":\"N\",\"\\u0143\":\"N\",\"\\u00D1\":\"N\",\"\\u1E44\":\"N\",\"\\u0147\":\"N\",\"\\u1E46\":\"N\",\"\\u0145\":\"N\",\"\\u1E4A\":\"N\",\"\\u1E48\":\"N\",\"\\u0220\":\"N\",\"\\u019D\":\"N\",\"\\uA790\":\"N\",\"\\uA7A4\":\"N\",\"\\u01CA\":\"NJ\",\"\\u01CB\":\"Nj\",\"\\u24C4\":\"O\",\"\\uFF2F\":\"O\",\"\\u00D2\":\"O\",\"\\u00D3\":\"O\",\"\\u00D4\":\"O\",\"\\u1ED2\":\"O\",\"\\u1ED0\":\"O\",\"\\u1ED6\":\"O\",\"\\u1ED4\":\"O\",\"\\u00D5\":\"O\",\"\\u1E4C\":\"O\",\"\\u022C\":\"O\",\"\\u1E4E\":\"O\",\"\\u014C\":\"O\",\"\\u1E50\":\"O\",\"\\u1E52\":\"O\",\"\\u014E\":\"O\",\"\\u022E\":\"O\",\"\\u0230\":\"O\",\"\\u00D6\":\"O\",\"\\u022A\":\"O\",\"\\u1ECE\":\"O\",\"\\u0150\":\"O\",\"\\u01D1\":\"O\",\"\\u020C\":\"O\",\"\\u020E\":\"O\",\"\\u01A0\":\"O\",\"\\u1EDC\":\"O\",\"\\u1EDA\":\"O\",\"\\u1EE0\":\"O\",\"\\u1EDE\":\"O\",\"\\u1EE2\":\"O\",\"\\u1ECC\":\"O\",\"\\u1ED8\":\"O\",\"\\u01EA\":\"O\",\"\\u01EC\":\"O\",\"\\u00D8\":\"O\",\"\\u01FE\":\"O\",\"\\u0186\":\"O\",\"\\u019F\":\"O\",\"\\uA74A\":\"O\",\"\\uA74C\":\"O\",\"\\u01A2\":\"OI\",\"\\uA74E\":\"OO\",\"\\u0222\":\"OU\",\"\\u24C5\":\"P\",\"\\uFF30\":\"P\",\"\\u1E54\":\"P\",\"\\u1E56\":\"P\",\"\\u01A4\":\"P\",\"\\u2C63\":\"P\",\"\\uA750\":\"P\",\"\\uA752\":\"P\",\"\\uA754\":\"P\",\"\\u24C6\":\"Q\",\"\\uFF31\":\"Q\",\"\\uA756\":\"Q\",\"\\uA758\":\"Q\",\"\\u024A\":\"Q\",\"\\u24C7\":\"R\",\"\\uFF32\":\"R\",\"\\u0154\":\"R\",\"\\u1E58\":\"R\",\"\\u0158\":\"R\",\"\\u0210\":\"R\",\"\\u0212\":\"R\",\"\\u1E5A\":\"R\",\"\\u1E5C\":\"R\",\"\\u0156\":\"R\",\"\\u1E5E\":\"R\",\"\\u024C\":\"R\",\"\\u2C64\":\"R\",\"\\uA75A\":\"R\",\"\\uA7A6\":\"R\",\"\\uA782\":\"R\",\"\\u24C8\":\"S\",\"\\uFF33\":\"S\",\"\\u1E9E\":\"S\",\"\\u015A\":\"S\",\"\\u1E64\":\"S\",\"\\u015C\":\"S\",\"\\u1E60\":\"S\",\"\\u0160\":\"S\",\"\\u1E66\":\"S\",\"\\u1E62\":\"S\",\"\\u1E68\":\"S\",\"\\u0218\":\"S\",\"\\u015E\":\"S\",\"\\u2C7E\":\"S\",\"\\uA7A8\":\"S\",\"\\uA784\":\"S\",\"\\u24C9\":\"T\",\"\\uFF34\":\"T\",\"\\u1E6A\":\"T\",\"\\u0164\":\"T\",\"\\u1E6C\":\"T\",\"\\u021A\":\"T\",\"\\u0162\":\"T\",\"\\u1E70\":\"T\",\"\\u1E6E\":\"T\",\"\\u0166\":\"T\",\"\\u01AC\":\"T\",\"\\u01AE\":\"T\",\"\\u023E\":\"T\",\"\\uA786\":\"T\",\"\\uA728\":\"TZ\",\"\\u24CA\":\"U\",\"\\uFF35\":\"U\",\"\\u00D9\":\"U\",\"\\u00DA\":\"U\",\"\\u00DB\":\"U\",\"\\u0168\":\"U\",\"\\u1E78\":\"U\",\"\\u016A\":\"U\",\"\\u1E7A\":\"U\",\"\\u016C\":\"U\",\"\\u00DC\":\"U\",\"\\u01DB\":\"U\",\"\\u01D7\":\"U\",\"\\u01D5\":\"U\",\"\\u01D9\":\"U\",\"\\u1EE6\":\"U\",\"\\u016E\":\"U\",\"\\u0170\":\"U\",\"\\u01D3\":\"U\",\"\\u0214\":\"U\",\"\\u0216\":\"U\",\"\\u01AF\":\"U\",\"\\u1EEA\":\"U\",\"\\u1EE8\":\"U\",\"\\u1EEE\":\"U\",\"\\u1EEC\":\"U\",\"\\u1EF0\":\"U\",\"\\u1EE4\":\"U\",\"\\u1E72\":\"U\",\"\\u0172\":\"U\",\"\\u1E76\":\"U\",\"\\u1E74\":\"U\",\"\\u0244\":\"U\",\"\\u24CB\":\"V\",\"\\uFF36\":\"V\",\"\\u1E7C\":\"V\",\"\\u1E7E\":\"V\",\"\\u01B2\":\"V\",\"\\uA75E\":\"V\",\"\\u0245\":\"V\",\"\\uA760\":\"VY\",\"\\u24CC\":\"W\",\"\\uFF37\":\"W\",\"\\u1E80\":\"W\",\"\\u1E82\":\"W\",\"\\u0174\":\"W\",\"\\u1E86\":\"W\",\"\\u1E84\":\"W\",\"\\u1E88\":\"W\",\"\\u2C72\":\"W\",\"\\u24CD\":\"X\",\"\\uFF38\":\"X\",\"\\u1E8A\":\"X\",\"\\u1E8C\":\"X\",\"\\u24CE\":\"Y\",\"\\uFF39\":\"Y\",\"\\u1EF2\":\"Y\",\"\\u00DD\":\"Y\",\"\\u0176\":\"Y\",\"\\u1EF8\":\"Y\",\"\\u0232\":\"Y\",\"\\u1E8E\":\"Y\",\"\\u0178\":\"Y\",\"\\u1EF6\":\"Y\",\"\\u1EF4\":\"Y\",\"\\u01B3\":\"Y\",\"\\u024E\":\"Y\",\"\\u1EFE\":\"Y\",\"\\u24CF\":\"Z\",\"\\uFF3A\":\"Z\",\"\\u0179\":\"Z\",\"\\u1E90\":\"Z\",\"\\u017B\":\"Z\",\"\\u017D\":\"Z\",\"\\u1E92\":\"Z\",\"\\u1E94\":\"Z\",\"\\u01B5\":\"Z\",\"\\u0224\":\"Z\",\"\\u2C7F\":\"Z\",\"\\u2C6B\":\"Z\",\"\\uA762\":\"Z\",\"\\u24D0\":\"a\",\"\\uFF41\":\"a\",\"\\u1E9A\":\"a\",\"\\u00E0\":\"a\",\"\\u00E1\":\"a\",\"\\u00E2\":\"a\",\"\\u1EA7\":\"a\",\"\\u1EA5\":\"a\",\"\\u1EAB\":\"a\",\"\\u1EA9\":\"a\",\"\\u00E3\":\"a\",\"\\u0101\":\"a\",\"\\u0103\":\"a\",\"\\u1EB1\":\"a\",\"\\u1EAF\":\"a\",\"\\u1EB5\":\"a\",\"\\u1EB3\":\"a\",\"\\u0227\":\"a\",\"\\u01E1\":\"a\",\"\\u00E4\":\"a\",\"\\u01DF\":\"a\",\"\\u1EA3\":\"a\",\"\\u00E5\":\"a\",\"\\u01FB\":\"a\",\"\\u01CE\":\"a\",\"\\u0201\":\"a\",\"\\u0203\":\"a\",\"\\u1EA1\":\"a\",\"\\u1EAD\":\"a\",\"\\u1EB7\":\"a\",\"\\u1E01\":\"a\",\"\\u0105\":\"a\",\"\\u2C65\":\"a\",\"\\u0250\":\"a\",\"\\uA733\":\"aa\",\"\\u00E6\":\"ae\",\"\\u01FD\":\"ae\",\"\\u01E3\":\"ae\",\"\\uA735\":\"ao\",\"\\uA737\":\"au\",\"\\uA739\":\"av\",\"\\uA73B\":\"av\",\"\\uA73D\":\"ay\",\"\\u24D1\":\"b\",\"\\uFF42\":\"b\",\"\\u1E03\":\"b\",\"\\u1E05\":\"b\",\"\\u1E07\":\"b\",\"\\u0180\":\"b\",\"\\u0183\":\"b\",\"\\u0253\":\"b\",\"\\u24D2\":\"c\",\"\\uFF43\":\"c\",\"\\u0107\":\"c\",\"\\u0109\":\"c\",\"\\u010B\":\"c\",\"\\u010D\":\"c\",\"\\u00E7\":\"c\",\"\\u1E09\":\"c\",\"\\u0188\":\"c\",\"\\u023C\":\"c\",\"\\uA73F\":\"c\",\"\\u2184\":\"c\",\"\\u24D3\":\"d\",\"\\uFF44\":\"d\",\"\\u1E0B\":\"d\",\"\\u010F\":\"d\",\"\\u1E0D\":\"d\",\"\\u1E11\":\"d\",\"\\u1E13\":\"d\",\"\\u1E0F\":\"d\",\"\\u0111\":\"d\",\"\\u018C\":\"d\",\"\\u0256\":\"d\",\"\\u0257\":\"d\",\"\\uA77A\":\"d\",\"\\u01F3\":\"dz\",\"\\u01C6\":\"dz\",\"\\u24D4\":\"e\",\"\\uFF45\":\"e\",\"\\u00E8\":\"e\",\"\\u00E9\":\"e\",\"\\u00EA\":\"e\",\"\\u1EC1\":\"e\",\"\\u1EBF\":\"e\",\"\\u1EC5\":\"e\",\"\\u1EC3\":\"e\",\"\\u1EBD\":\"e\",\"\\u0113\":\"e\",\"\\u1E15\":\"e\",\"\\u1E17\":\"e\",\"\\u0115\":\"e\",\"\\u0117\":\"e\",\"\\u00EB\":\"e\",\"\\u1EBB\":\"e\",\"\\u011B\":\"e\",\"\\u0205\":\"e\",\"\\u0207\":\"e\",\"\\u1EB9\":\"e\",\"\\u1EC7\":\"e\",\"\\u0229\":\"e\",\"\\u1E1D\":\"e\",\"\\u0119\":\"e\",\"\\u1E19\":\"e\",\"\\u1E1B\":\"e\",\"\\u0247\":\"e\",\"\\u025B\":\"e\",\"\\u01DD\":\"e\",\"\\u24D5\":\"f\",\"\\uFF46\":\"f\",\"\\u1E1F\":\"f\",\"\\u0192\":\"f\",\"\\uA77C\":\"f\",\"\\u24D6\":\"g\",\"\\uFF47\":\"g\",\"\\u01F5\":\"g\",\"\\u011D\":\"g\",\"\\u1E21\":\"g\",\"\\u011F\":\"g\",\"\\u0121\":\"g\",\"\\u01E7\":\"g\",\"\\u0123\":\"g\",\"\\u01E5\":\"g\",\"\\u0260\":\"g\",\"\\uA7A1\":\"g\",\"\\u1D79\":\"g\",\"\\uA77F\":\"g\",\"\\u24D7\":\"h\",\"\\uFF48\":\"h\",\"\\u0125\":\"h\",\"\\u1E23\":\"h\",\"\\u1E27\":\"h\",\"\\u021F\":\"h\",\"\\u1E25\":\"h\",\"\\u1E29\":\"h\",\"\\u1E2B\":\"h\",\"\\u1E96\":\"h\",\"\\u0127\":\"h\",\"\\u2C68\":\"h\",\"\\u2C76\":\"h\",\"\\u0265\":\"h\",\"\\u0195\":\"hv\",\"\\u24D8\":\"i\",\"\\uFF49\":\"i\",\"\\u00EC\":\"i\",\"\\u00ED\":\"i\",\"\\u00EE\":\"i\",\"\\u0129\":\"i\",\"\\u012B\":\"i\",\"\\u012D\":\"i\",\"\\u00EF\":\"i\",\"\\u1E2F\":\"i\",\"\\u1EC9\":\"i\",\"\\u01D0\":\"i\",\"\\u0209\":\"i\",\"\\u020B\":\"i\",\"\\u1ECB\":\"i\",\"\\u012F\":\"i\",\"\\u1E2D\":\"i\",\"\\u0268\":\"i\",\"\\u0131\":\"i\",\"\\u24D9\":\"j\",\"\\uFF4A\":\"j\",\"\\u0135\":\"j\",\"\\u01F0\":\"j\",\"\\u0249\":\"j\",\"\\u24DA\":\"k\",\"\\uFF4B\":\"k\",\"\\u1E31\":\"k\",\"\\u01E9\":\"k\",\"\\u1E33\":\"k\",\"\\u0137\":\"k\",\"\\u1E35\":\"k\",\"\\u0199\":\"k\",\"\\u2C6A\":\"k\",\"\\uA741\":\"k\",\"\\uA743\":\"k\",\"\\uA745\":\"k\",\"\\uA7A3\":\"k\",\"\\u24DB\":\"l\",\"\\uFF4C\":\"l\",\"\\u0140\":\"l\",\"\\u013A\":\"l\",\"\\u013E\":\"l\",\"\\u1E37\":\"l\",\"\\u1E39\":\"l\",\"\\u013C\":\"l\",\"\\u1E3D\":\"l\",\"\\u1E3B\":\"l\",\"\\u017F\":\"l\",\"\\u0142\":\"l\",\"\\u019A\":\"l\",\"\\u026B\":\"l\",\"\\u2C61\":\"l\",\"\\uA749\":\"l\",\"\\uA781\":\"l\",\"\\uA747\":\"l\",\"\\u01C9\":\"lj\",\"\\u24DC\":\"m\",\"\\uFF4D\":\"m\",\"\\u1E3F\":\"m\",\"\\u1E41\":\"m\",\"\\u1E43\":\"m\",\"\\u0271\":\"m\",\"\\u026F\":\"m\",\"\\u24DD\":\"n\",\"\\uFF4E\":\"n\",\"\\u01F9\":\"n\",\"\\u0144\":\"n\",\"\\u00F1\":\"n\",\"\\u1E45\":\"n\",\"\\u0148\":\"n\",\"\\u1E47\":\"n\",\"\\u0146\":\"n\",\"\\u1E4B\":\"n\",\"\\u1E49\":\"n\",\"\\u019E\":\"n\",\"\\u0272\":\"n\",\"\\u0149\":\"n\",\"\\uA791\":\"n\",\"\\uA7A5\":\"n\",\"\\u01CC\":\"nj\",\"\\u24DE\":\"o\",\"\\uFF4F\":\"o\",\"\\u00F2\":\"o\",\"\\u00F3\":\"o\",\"\\u00F4\":\"o\",\"\\u1ED3\":\"o\",\"\\u1ED1\":\"o\",\"\\u1ED7\":\"o\",\"\\u1ED5\":\"o\",\"\\u00F5\":\"o\",\"\\u1E4D\":\"o\",\"\\u022D\":\"o\",\"\\u1E4F\":\"o\",\"\\u014D\":\"o\",\"\\u1E51\":\"o\",\"\\u1E53\":\"o\",\"\\u014F\":\"o\",\"\\u022F\":\"o\",\"\\u0231\":\"o\",\"\\u00F6\":\"o\",\"\\u022B\":\"o\",\"\\u1ECF\":\"o\",\"\\u0151\":\"o\",\"\\u01D2\":\"o\",\"\\u020D\":\"o\",\"\\u020F\":\"o\",\"\\u01A1\":\"o\",\"\\u1EDD\":\"o\",\"\\u1EDB\":\"o\",\"\\u1EE1\":\"o\",\"\\u1EDF\":\"o\",\"\\u1EE3\":\"o\",\"\\u1ECD\":\"o\",\"\\u1ED9\":\"o\",\"\\u01EB\":\"o\",\"\\u01ED\":\"o\",\"\\u00F8\":\"o\",\"\\u01FF\":\"o\",\"\\u0254\":\"o\",\"\\uA74B\":\"o\",\"\\uA74D\":\"o\",\"\\u0275\":\"o\",\"\\u01A3\":\"oi\",\"\\u0223\":\"ou\",\"\\uA74F\":\"oo\",\"\\u24DF\":\"p\",\"\\uFF50\":\"p\",\"\\u1E55\":\"p\",\"\\u1E57\":\"p\",\"\\u01A5\":\"p\",\"\\u1D7D\":\"p\",\"\\uA751\":\"p\",\"\\uA753\":\"p\",\"\\uA755\":\"p\",\"\\u24E0\":\"q\",\"\\uFF51\":\"q\",\"\\u024B\":\"q\",\"\\uA757\":\"q\",\"\\uA759\":\"q\",\"\\u24E1\":\"r\",\"\\uFF52\":\"r\",\"\\u0155\":\"r\",\"\\u1E59\":\"r\",\"\\u0159\":\"r\",\"\\u0211\":\"r\",\"\\u0213\":\"r\",\"\\u1E5B\":\"r\",\"\\u1E5D\":\"r\",\"\\u0157\":\"r\",\"\\u1E5F\":\"r\",\"\\u024D\":\"r\",\"\\u027D\":\"r\",\"\\uA75B\":\"r\",\"\\uA7A7\":\"r\",\"\\uA783\":\"r\",\"\\u24E2\":\"s\",\"\\uFF53\":\"s\",\"\\u00DF\":\"s\",\"\\u015B\":\"s\",\"\\u1E65\":\"s\",\"\\u015D\":\"s\",\"\\u1E61\":\"s\",\"\\u0161\":\"s\",\"\\u1E67\":\"s\",\"\\u1E63\":\"s\",\"\\u1E69\":\"s\",\"\\u0219\":\"s\",\"\\u015F\":\"s\",\"\\u023F\":\"s\",\"\\uA7A9\":\"s\",\"\\uA785\":\"s\",\"\\u1E9B\":\"s\",\"\\u24E3\":\"t\",\"\\uFF54\":\"t\",\"\\u1E6B\":\"t\",\"\\u1E97\":\"t\",\"\\u0165\":\"t\",\"\\u1E6D\":\"t\",\"\\u021B\":\"t\",\"\\u0163\":\"t\",\"\\u1E71\":\"t\",\"\\u1E6F\":\"t\",\"\\u0167\":\"t\",\"\\u01AD\":\"t\",\"\\u0288\":\"t\",\"\\u2C66\":\"t\",\"\\uA787\":\"t\",\"\\uA729\":\"tz\",\"\\u24E4\":\"u\",\"\\uFF55\":\"u\",\"\\u00F9\":\"u\",\"\\u00FA\":\"u\",\"\\u00FB\":\"u\",\"\\u0169\":\"u\",\"\\u1E79\":\"u\",\"\\u016B\":\"u\",\"\\u1E7B\":\"u\",\"\\u016D\":\"u\",\"\\u00FC\":\"u\",\"\\u01DC\":\"u\",\"\\u01D8\":\"u\",\"\\u01D6\":\"u\",\"\\u01DA\":\"u\",\"\\u1EE7\":\"u\",\"\\u016F\":\"u\",\"\\u0171\":\"u\",\"\\u01D4\":\"u\",\"\\u0215\":\"u\",\"\\u0217\":\"u\",\"\\u01B0\":\"u\",\"\\u1EEB\":\"u\",\"\\u1EE9\":\"u\",\"\\u1EEF\":\"u\",\"\\u1EED\":\"u\",\"\\u1EF1\":\"u\",\"\\u1EE5\":\"u\",\"\\u1E73\":\"u\",\"\\u0173\":\"u\",\"\\u1E77\":\"u\",\"\\u1E75\":\"u\",\"\\u0289\":\"u\",\"\\u24E5\":\"v\",\"\\uFF56\":\"v\",\"\\u1E7D\":\"v\",\"\\u1E7F\":\"v\",\"\\u028B\":\"v\",\"\\uA75F\":\"v\",\"\\u028C\":\"v\",\"\\uA761\":\"vy\",\"\\u24E6\":\"w\",\"\\uFF57\":\"w\",\"\\u1E81\":\"w\",\"\\u1E83\":\"w\",\"\\u0175\":\"w\",\"\\u1E87\":\"w\",\"\\u1E85\":\"w\",\"\\u1E98\":\"w\",\"\\u1E89\":\"w\",\"\\u2C73\":\"w\",\"\\u24E7\":\"x\",\"\\uFF58\":\"x\",\"\\u1E8B\":\"x\",\"\\u1E8D\":\"x\",\"\\u24E8\":\"y\",\"\\uFF59\":\"y\",\"\\u1EF3\":\"y\",\"\\u00FD\":\"y\",\"\\u0177\":\"y\",\"\\u1EF9\":\"y\",\"\\u0233\":\"y\",\"\\u1E8F\":\"y\",\"\\u00FF\":\"y\",\"\\u1EF7\":\"y\",\"\\u1E99\":\"y\",\"\\u1EF5\":\"y\",\"\\u01B4\":\"y\",\"\\u024F\":\"y\",\"\\u1EFF\":\"y\",\"\\u24E9\":\"z\",\"\\uFF5A\":\"z\",\"\\u017A\":\"z\",\"\\u1E91\":\"z\",\"\\u017C\":\"z\",\"\\u017E\":\"z\",\"\\u1E93\":\"z\",\"\\u1E95\":\"z\",\"\\u01B6\":\"z\",\"\\u0225\":\"z\",\"\\u0240\":\"z\",\"\\u2C6C\":\"z\",\"\\uA763\":\"z\"};\n\
+\n\
+    $document = $(document);\n\
+\n\
+    nextUid=(function() { var counter=1; return function() { return counter++; }; }());\n\
+\n\
+\n\
+    function reinsertElement(element) {\n\
+        var placeholder = $(document.createTextNode(''));\n\
+\n\
+        element.before(placeholder);\n\
+        placeholder.before(element);\n\
+        placeholder.remove();\n\
+    }\n\
+\n\
+    function stripDiacritics(str) {\n\
+        // Used 'uni range + named function' from http://jsperf.com/diacritics/18\n\
+        function match(a) {\n\
+            return DIACRITICS[a] || a;\n\
+        }\n\
+\n\
+        return str.replace(/[^\\u0000-\\u007E]/g, match);\n\
+    }\n\
+\n\
+    function indexOf(value, array) {\n\
+        var i = 0, l = array.length;\n\
+        for (; i < l; i = i + 1) {\n\
+            if (equal(value, array[i])) return i;\n\
+        }\n\
+        return -1;\n\
+    }\n\
+\n\
+    function measureScrollbar () {\n\
+        var $template = $( MEASURE_SCROLLBAR_TEMPLATE );\n\
+        $template.appendTo('body');\n\
+\n\
+        var dim = {\n\
+            width: $template.width() - $template[0].clientWidth,\n\
+            height: $template.height() - $template[0].clientHeight\n\
+        };\n\
+        $template.remove();\n\
+\n\
+        return dim;\n\
+    }\n\
+\n\
+    /**\n\
+     * Compares equality of a and b\n\
+     * @param a\n\
+     * @param b\n\
+     */\n\
+    function equal(a, b) {\n\
+        if (a === b) return true;\n\
+        if (a === undefined || b === undefined) return false;\n\
+        if (a === null || b === null) return false;\n\
+        // Check whether 'a' or 'b' is a string (primitive or object).\n\
+        // The concatenation of an empty string (+'') converts its argument to a string's primitive.\n\
+        if (a.constructor === String) return a+'' === b+''; // a+'' - in case 'a' is a String object\n\
+        if (b.constructor === String) return b+'' === a+''; // b+'' - in case 'b' is a String object\n\
+        return false;\n\
+    }\n\
+\n\
+    /**\n\
+     * Splits the string into an array of values, trimming each value. An empty array is returned for nulls or empty\n\
+     * strings\n\
+     * @param string\n\
+     * @param separator\n\
+     */\n\
+    function splitVal(string, separator) {\n\
+        var val, i, l;\n\
+        if (string === null || string.length < 1) return [];\n\
+        val = string.split(separator);\n\
+        for (i = 0, l = val.length; i < l; i = i + 1) val[i] = $.trim(val[i]);\n\
+        return val;\n\
+    }\n\
+\n\
+    function getSideBorderPadding(element) {\n\
+        return element.outerWidth(false) - element.width();\n\
+    }\n\
+\n\
+    function installKeyUpChangeEvent(element) {\n\
+        var key=\"keyup-change-value\";\n\
+        element.on(\"keydown\", function () {\n\
+            if ($.data(element, key) === undefined) {\n\
+                $.data(element, key, element.val());\n\
+            }\n\
+        });\n\
+        element.on(\"keyup\", function () {\n\
+            var val= $.data(element, key);\n\
+            if (val !== undefined && element.val() !== val) {\n\
+                $.removeData(element, key);\n\
+                element.trigger(\"keyup-change\");\n\
+            }\n\
+        });\n\
+    }\n\
+\n\
+    $document.on(\"mousemove\", function (e) {\n\
+        lastMousePosition.x = e.pageX;\n\
+        lastMousePosition.y = e.pageY;\n\
+    });\n\
+\n\
+    /**\n\
+     * filters mouse events so an event is fired only if the mouse moved.\n\
+     *\n\
+     * filters out mouse events that occur when mouse is stationary but\n\
+     * the elements under the pointer are scrolled.\n\
+     */\n\
+    function installFilteredMouseMove(element) {\n\
+        element.on(\"mousemove\", function (e) {\n\
+            var lastpos = lastMousePosition;\n\
+            if (lastpos === undefined || lastpos.x !== e.pageX || lastpos.y !== e.pageY) {\n\
+                $(e.target).trigger(\"mousemove-filtered\", e);\n\
+            }\n\
+        });\n\
+    }\n\
+\n\
+    /**\n\
+     * Debounces a function. Returns a function that calls the original fn function only if no invocations have been made\n\
+     * within the last quietMillis milliseconds.\n\
+     *\n\
+     * @param quietMillis number of milliseconds to wait before invoking fn\n\
+     * @param fn function to be debounced\n\
+     * @param ctx object to be used as this reference within fn\n\
+     * @return debounced version of fn\n\
+     */\n\
+    function debounce(quietMillis, fn, ctx) {\n\
+        ctx = ctx || undefined;\n\
+        var timeout;\n\
+        return function () {\n\
+            var args = arguments;\n\
+            window.clearTimeout(timeout);\n\
+            timeout = window.setTimeout(function() {\n\
+                fn.apply(ctx, args);\n\
+            }, quietMillis);\n\
+        };\n\
+    }\n\
+\n\
+    function installDebouncedScroll(threshold, element) {\n\
+        var notify = debounce(threshold, function (e) { element.trigger(\"scroll-debounced\", e);});\n\
+        element.on(\"scroll\", function (e) {\n\
+            if (indexOf(e.target, element.get()) >= 0) notify(e);\n\
+        });\n\
+    }\n\
+\n\
+    function focus($el) {\n\
+        if ($el[0] === document.activeElement) return;\n\
+\n\
+        /* set the focus in a 0 timeout - that way the focus is set after the processing\n\
+            of the current event has finished - which seems like the only reliable way\n\
+            to set focus */\n\
+        window.setTimeout(function() {\n\
+            var el=$el[0], pos=$el.val().length, range;\n\
+\n\
+            $el.focus();\n\
+\n\
+            /* make sure el received focus so we do not error out when trying to manipulate the caret.\n\
+                sometimes modals or others listeners may steal it after its set */\n\
+            var isVisible = (el.offsetWidth > 0 || el.offsetHeight > 0);\n\
+            if (isVisible && el === document.activeElement) {\n\
+\n\
+                /* after the focus is set move the caret to the end, necessary when we val()\n\
+                    just before setting focus */\n\
+                if(el.setSelectionRange)\n\
+                {\n\
+                    el.setSelectionRange(pos, pos);\n\
+                }\n\
+                else if (el.createTextRange) {\n\
+                    range = el.createTextRange();\n\
+                    range.collapse(false);\n\
+                    range.select();\n\
+                }\n\
+            }\n\
+        }, 0);\n\
+    }\n\
+\n\
+    function getCursorInfo(el) {\n\
+        el = $(el)[0];\n\
+        var offset = 0;\n\
+        var length = 0;\n\
+        if ('selectionStart' in el) {\n\
+            offset = el.selectionStart;\n\
+            length = el.selectionEnd - offset;\n\
+        } else if ('selection' in document) {\n\
+            el.focus();\n\
+            var sel = document.selection.createRange();\n\
+            length = document.selection.createRange().text.length;\n\
+            sel.moveStart('character', -el.value.length);\n\
+            offset = sel.text.length - length;\n\
+        }\n\
+        return { offset: offset, length: length };\n\
+    }\n\
+\n\
+    function killEvent(event) {\n\
+        event.preventDefault();\n\
+        event.stopPropagation();\n\
+    }\n\
+    function killEventImmediately(event) {\n\
+        event.preventDefault();\n\
+        event.stopImmediatePropagation();\n\
+    }\n\
+\n\
+    function measureTextWidth(e) {\n\
+        if (!sizer){\n\
+            var style = e[0].currentStyle || window.getComputedStyle(e[0], null);\n\
+            sizer = $(document.createElement(\"div\")).css({\n\
+                position: \"absolute\",\n\
+                left: \"-10000px\",\n\
+                top: \"-10000px\",\n\
+                display: \"none\",\n\
+                fontSize: style.fontSize,\n\
+                fontFamily: style.fontFamily,\n\
+                fontStyle: style.fontStyle,\n\
+                fontWeight: style.fontWeight,\n\
+                letterSpacing: style.letterSpacing,\n\
+                textTransform: style.textTransform,\n\
+                whiteSpace: \"nowrap\"\n\
+            });\n\
+            sizer.attr(\"class\",\"select2-sizer\");\n\
+            $(\"body\").append(sizer);\n\
+        }\n\
+        sizer.text(e.val());\n\
+        return sizer.width();\n\
+    }\n\
+\n\
+    function syncCssClasses(dest, src, adapter) {\n\
+        var classes, replacements = [], adapted;\n\
+\n\
+        classes = dest.attr(\"class\");\n\
+        if (classes) {\n\
+            classes = '' + classes; // for IE which returns object\n\
+            $(classes.split(\" \")).each2(function() {\n\
+                if (this.indexOf(\"select2-\") === 0) {\n\
+                    replacements.push(this);\n\
+                }\n\
+            });\n\
+        }\n\
+        classes = src.attr(\"class\");\n\
+        if (classes) {\n\
+            classes = '' + classes; // for IE which returns object\n\
+            $(classes.split(\" \")).each2(function() {\n\
+                if (this.indexOf(\"select2-\") !== 0) {\n\
+                    adapted = adapter(this);\n\
+                    if (adapted) {\n\
+                        replacements.push(adapted);\n\
+                    }\n\
+                }\n\
+            });\n\
+        }\n\
+        dest.attr(\"class\", replacements.join(\" \"));\n\
+    }\n\
+\n\
+\n\
+    function markMatch(text, term, markup, escapeMarkup) {\n\
+        var match=stripDiacritics(text.toUpperCase()).indexOf(stripDiacritics(term.toUpperCase())),\n\
+            tl=term.length;\n\
+\n\
+        if (match<0) {\n\
+            markup.push(escapeMarkup(text));\n\
+            return;\n\
+        }\n\
+\n\
+        markup.push(escapeMarkup(text.substring(0, match)));\n\
+        markup.push(\"<span class='select2-match'>\");\n\
+        markup.push(escapeMarkup(text.substring(match, match + tl)));\n\
+        markup.push(\"</span>\");\n\
+        markup.push(escapeMarkup(text.substring(match + tl, text.length)));\n\
+    }\n\
+\n\
+    function defaultEscapeMarkup(markup) {\n\
+        var replace_map = {\n\
+            '\\\\': '&#92;',\n\
+            '&': '&amp;',\n\
+            '<': '&lt;',\n\
+            '>': '&gt;',\n\
+            '\"': '&quot;',\n\
+            \"'\": '&#39;',\n\
+            \"/\": '&#47;'\n\
+        };\n\
+\n\
+        return String(markup).replace(/[&<>\"'\\/\\\\]/g, function (match) {\n\
+            return replace_map[match];\n\
+        });\n\
+    }\n\
+\n\
+    /**\n\
+     * Produces an ajax-based query function\n\
+     *\n\
+     * @param options object containing configuration parameters\n\
+     * @param options.params parameter map for the transport ajax call, can contain such options as cache, jsonpCallback, etc. see $.ajax\n\
+     * @param options.transport function that will be used to execute the ajax request. must be compatible with parameters supported by $.ajax\n\
+     * @param options.url url for the data\n\
+     * @param options.data a function(searchTerm, pageNumber, context) that should return an object containing query string parameters for the above url.\n\
+     * @param options.dataType request data type: ajax, jsonp, other datatypes supported by jQuery's $.ajax function or the transport function if specified\n\
+     * @param options.quietMillis (optional) milliseconds to wait before making the ajaxRequest, helps debounce the ajax function if invoked too often\n\
+     * @param options.results a function(remoteData, pageNumber) that converts data returned form the remote request to the format expected by Select2.\n\
+     *      The expected format is an object containing the following keys:\n\
+     *      results array of objects that will be used as choices\n\
+     *      more (optional) boolean indicating whether there are more results available\n\
+     *      Example: {results:[{id:1, text:'Red'},{id:2, text:'Blue'}], more:true}\n\
+     */\n\
+    function ajax(options) {\n\
+        var timeout, // current scheduled but not yet executed request\n\
+            handler = null,\n\
+            quietMillis = options.quietMillis || 100,\n\
+            ajaxUrl = options.url,\n\
+            self = this;\n\
+\n\
+        return function (query) {\n\
+            window.clearTimeout(timeout);\n\
+            timeout = window.setTimeout(function () {\n\
+                var data = options.data, // ajax data function\n\
+                    url = ajaxUrl, // ajax url string or function\n\
+                    transport = options.transport || $.fn.select2.ajaxDefaults.transport,\n\
+                    // deprecated - to be removed in 4.0  - use params instead\n\
+                    deprecated = {\n\
+                        type: options.type || 'GET', // set type of request (GET or POST)\n\
+                        cache: options.cache || false,\n\
+                        jsonpCallback: options.jsonpCallback||undefined,\n\
+                        dataType: options.dataType||\"json\"\n\
+                    },\n\
+                    params = $.extend({}, $.fn.select2.ajaxDefaults.params, deprecated);\n\
+\n\
+                data = data ? data.call(self, query.term, query.page, query.context) : null;\n\
+                url = (typeof url === 'function') ? url.call(self, query.term, query.page, query.context) : url;\n\
+\n\
+                if (handler && typeof handler.abort === \"function\") { handler.abort(); }\n\
+\n\
+                if (options.params) {\n\
+                    if ($.isFunction(options.params)) {\n\
+                        $.extend(params, options.params.call(self));\n\
+                    } else {\n\
+                        $.extend(params, options.params);\n\
+                    }\n\
+                }\n\
+\n\
+                $.extend(params, {\n\
+                    url: url,\n\
+                    dataType: options.dataType,\n\
+                    data: data,\n\
+                    success: function (data) {\n\
+                        // TODO - replace query.page with query so users have access to term, page, etc.\n\
+                        var results = options.results(data, query.page);\n\
+                        query.callback(results);\n\
+                    }\n\
+                });\n\
+                handler = transport.call(self, params);\n\
+            }, quietMillis);\n\
+        };\n\
+    }\n\
+\n\
+    /**\n\
+     * Produces a query function that works with a local array\n\
+     *\n\
+     * @param options object containing configuration parameters. The options parameter can either be an array or an\n\
+     * object.\n\
+     *\n\
+     * If the array form is used it is assumed that it contains objects with 'id' and 'text' keys.\n\
+     *\n\
+     * If the object form is used it is assumed that it contains 'data' and 'text' keys. The 'data' key should contain\n\
+     * an array of objects that will be used as choices. These objects must contain at least an 'id' key. The 'text'\n\
+     * key can either be a String in which case it is expected that each element in the 'data' array has a key with the\n\
+     * value of 'text' which will be used to match choices. Alternatively, text can be a function(item) that can extract\n\
+     * the text.\n\
+     */\n\
+    function local(options) {\n\
+        var data = options, // data elements\n\
+            dataText,\n\
+            tmp,\n\
+            text = function (item) { return \"\"+item.text; }; // function used to retrieve the text portion of a data item that is matched against the search\n\
+\n\
+         if ($.isArray(data)) {\n\
+            tmp = data;\n\
+            data = { results: tmp };\n\
+        }\n\
+\n\
+         if ($.isFunction(data) === false) {\n\
+            tmp = data;\n\
+            data = function() { return tmp; };\n\
+        }\n\
+\n\
+        var dataItem = data();\n\
+        if (dataItem.text) {\n\
+            text = dataItem.text;\n\
+            // if text is not a function we assume it to be a key name\n\
+            if (!$.isFunction(text)) {\n\
+                dataText = dataItem.text; // we need to store this in a separate variable because in the next step data gets reset and data.text is no longer available\n\
+                text = function (item) { return item[dataText]; };\n\
+            }\n\
+        }\n\
+\n\
+        return function (query) {\n\
+            var t = query.term, filtered = { results: [] }, process;\n\
+            if (t === \"\") {\n\
+                query.callback(data());\n\
+                return;\n\
+            }\n\
+\n\
+            process = function(datum, collection) {\n\
+                var group, attr;\n\
+                datum = datum[0];\n\
+                if (datum.children) {\n\
+                    group = {};\n\
+                    for (attr in datum) {\n\
+                        if (datum.hasOwnProperty(attr)) group[attr]=datum[attr];\n\
+                    }\n\
+                    group.children=[];\n\
+                    $(datum.children).each2(function(i, childDatum) { process(childDatum, group.children); });\n\
+                    if (group.children.length || query.matcher(t, text(group), datum)) {\n\
+                        collection.push(group);\n\
+                    }\n\
+                } else {\n\
+                    if (query.matcher(t, text(datum), datum)) {\n\
+                        collection.push(datum);\n\
+                    }\n\
+                }\n\
+            };\n\
+\n\
+            $(data().results).each2(function(i, datum) { process(datum, filtered.results); });\n\
+            query.callback(filtered);\n\
+        };\n\
+    }\n\
+\n\
+    // TODO javadoc\n\
+    function tags(data) {\n\
+        var isFunc = $.isFunction(data);\n\
+        return function (query) {\n\
+            var t = query.term, filtered = {results: []};\n\
+            var result = isFunc ? data(query) : data;\n\
+            if ($.isArray(result)) {\n\
+                $(result).each(function () {\n\
+                    var isObject = this.text !== undefined,\n\
+                        text = isObject ? this.text : this;\n\
+                    if (t === \"\" || query.matcher(t, text)) {\n\
+                        filtered.results.push(isObject ? this : {id: this, text: this});\n\
+                    }\n\
+                });\n\
+                query.callback(filtered);\n\
+            }\n\
+        };\n\
+    }\n\
+\n\
+    /**\n\
+     * Checks if the formatter function should be used.\n\
+     *\n\
+     * Throws an error if it is not a function. Returns true if it should be used,\n\
+     * false if no formatting should be performed.\n\
+     *\n\
+     * @param formatter\n\
+     */\n\
+    function checkFormatter(formatter, formatterName) {\n\
+        if ($.isFunction(formatter)) return true;\n\
+        if (!formatter) return false;\n\
+        if (typeof(formatter) === 'string') return true;\n\
+        throw new Error(formatterName +\" must be a string, function, or falsy value\");\n\
+    }\n\
+\n\
+    function evaluate(val) {\n\
+        if ($.isFunction(val)) {\n\
+            var args = Array.prototype.slice.call(arguments, 1);\n\
+            return val.apply(null, args);\n\
+        }\n\
+        return val;\n\
+    }\n\
+\n\
+    function countResults(results) {\n\
+        var count = 0;\n\
+        $.each(results, function(i, item) {\n\
+            if (item.children) {\n\
+                count += countResults(item.children);\n\
+            } else {\n\
+                count++;\n\
+            }\n\
+        });\n\
+        return count;\n\
+    }\n\
+\n\
+    /**\n\
+     * Default tokenizer. This function uses breaks the input on substring match of any string from the\n\
+     * opts.tokenSeparators array and uses opts.createSearchChoice to create the choice object. Both of those\n\
+     * two options have to be defined in order for the tokenizer to work.\n\
+     *\n\
+     * @param input text user has typed so far or pasted into the search field\n\
+     * @param selection currently selected choices\n\
+     * @param selectCallback function(choice) callback tho add the choice to selection\n\
+     * @param opts select2's opts\n\
+     * @return undefined/null to leave the current input unchanged, or a string to change the input to the returned value\n\
+     */\n\
+    function defaultTokenizer(input, selection, selectCallback, opts) {\n\
+        var original = input, // store the original so we can compare and know if we need to tell the search to update its text\n\
+            dupe = false, // check for whether a token we extracted represents a duplicate selected choice\n\
+            token, // token\n\
+            index, // position at which the separator was found\n\
+            i, l, // looping variables\n\
+            separator; // the matched separator\n\
+\n\
+        if (!opts.createSearchChoice || !opts.tokenSeparators || opts.tokenSeparators.length < 1) return undefined;\n\
+\n\
+        while (true) {\n\
+            index = -1;\n\
+\n\
+            for (i = 0, l = opts.tokenSeparators.length; i < l; i++) {\n\
+                separator = opts.tokenSeparators[i];\n\
+                index = input.indexOf(separator);\n\
+                if (index >= 0) break;\n\
+            }\n\
+\n\
+            if (index < 0) break; // did not find any token separator in the input string, bail\n\
+\n\
+            token = input.substring(0, index);\n\
+            input = input.substring(index + separator.length);\n\
+\n\
+            if (token.length > 0) {\n\
+                token = opts.createSearchChoice.call(this, token, selection);\n\
+                if (token !== undefined && token !== null && opts.id(token) !== undefined && opts.id(token) !== null) {\n\
+                    dupe = false;\n\
+                    for (i = 0, l = selection.length; i < l; i++) {\n\
+                        if (equal(opts.id(token), opts.id(selection[i]))) {\n\
+                            dupe = true; break;\n\
+                        }\n\
+                    }\n\
+\n\
+                    if (!dupe) selectCallback(token);\n\
+                }\n\
+            }\n\
+        }\n\
+\n\
+        if (original!==input) return input;\n\
+    }\n\
+\n\
+    function cleanupJQueryElements() {\n\
+        var self = this;\n\
+\n\
+        Array.prototype.forEach.call(arguments, function (element) {\n\
+            self[element].remove();\n\
+            self[element] = null;\n\
+        });\n\
+    }\n\
+\n\
+    /**\n\
+     * Creates a new class\n\
+     *\n\
+     * @param superClass\n\
+     * @param methods\n\
+     */\n\
+    function clazz(SuperClass, methods) {\n\
+        var constructor = function () {};\n\
+        constructor.prototype = new SuperClass;\n\
+        constructor.prototype.constructor = constructor;\n\
+        constructor.prototype.parent = SuperClass.prototype;\n\
+        constructor.prototype = $.extend(constructor.prototype, methods);\n\
+        return constructor;\n\
+    }\n\
+\n\
+    AbstractSelect2 = clazz(Object, {\n\
+\n\
+        // abstract\n\
+        bind: function (func) {\n\
+            var self = this;\n\
+            return function () {\n\
+                func.apply(self, arguments);\n\
+            };\n\
+        },\n\
+\n\
+        // abstract\n\
+        init: function (opts) {\n\
+            var results, search, resultsSelector = \".select2-results\";\n\
+\n\
+            // prepare options\n\
+            this.opts = opts = this.prepareOpts(opts);\n\
+\n\
+            this.id=opts.id;\n\
+\n\
+            // destroy if called on an existing component\n\
+            if (opts.element.data(\"select2\") !== undefined &&\n\
+                opts.element.data(\"select2\") !== null) {\n\
+                opts.element.data(\"select2\").destroy();\n\
+            }\n\
+\n\
+            this.container = this.createContainer();\n\
+\n\
+            this.liveRegion = $(\"<span>\", {\n\
+                    role: \"status\",\n\
+                    \"aria-live\": \"polite\"\n\
+                })\n\
+                .addClass(\"select2-hidden-accessible\")\n\
+                .appendTo(document.body);\n\
+\n\
+            this.containerId=\"s2id_\"+(opts.element.attr(\"id\") || \"autogen\"+nextUid());\n\
+            this.containerEventName= this.containerId\n\
+                .replace(/([.])/g, '_')\n\
+                .replace(/([;&,\\-\\.\\+\\*\\~':\"\\!\\^#$%@\\[\\]\\(\\)=>\\|])/g, '\\\\$1');\n\
+            this.container.attr(\"id\", this.containerId);\n\
+\n\
+            this.container.attr(\"title\", opts.element.attr(\"title\"));\n\
+\n\
+            this.body = $(\"body\");\n\
+\n\
+            syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);\n\
+\n\
+            this.container.attr(\"style\", opts.element.attr(\"style\"));\n\
+            this.container.css(evaluate(opts.containerCss));\n\
+            this.container.addClass(evaluate(opts.containerCssClass));\n\
+\n\
+            this.elementTabIndex = this.opts.element.attr(\"tabindex\");\n\
+\n\
+            // swap container for the element\n\
+            this.opts.element\n\
+                .data(\"select2\", this)\n\
+                .attr(\"tabindex\", \"-1\")\n\
+                .before(this.container)\n\
+                .on(\"click.select2\", killEvent); // do not leak click events\n\
+\n\
+            this.container.data(\"select2\", this);\n\
+\n\
+            this.dropdown = this.container.find(\".select2-drop\");\n\
+\n\
+            syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);\n\
+\n\
+            this.dropdown.addClass(evaluate(opts.dropdownCssClass));\n\
+            this.dropdown.data(\"select2\", this);\n\
+            this.dropdown.on(\"click\", killEvent);\n\
+\n\
+            this.results = results = this.container.find(resultsSelector);\n\
+            this.search = search = this.container.find(\"input.select2-input\");\n\
+\n\
+            this.queryCount = 0;\n\
+            this.resultsPage = 0;\n\
+            this.context = null;\n\
+\n\
+            // initialize the container\n\
+            this.initContainer();\n\
+\n\
+            this.container.on(\"click\", killEvent);\n\
+\n\
+            installFilteredMouseMove(this.results);\n\
+\n\
+            this.dropdown.on(\"mousemove-filtered\", resultsSelector, this.bind(this.highlightUnderEvent));\n\
+            this.dropdown.on(\"touchstart touchmove touchend\", resultsSelector, this.bind(function (event) {\n\
+                this._touchEvent = true;\n\
+                this.highlightUnderEvent(event);\n\
+            }));\n\
+            this.dropdown.on(\"touchmove\", resultsSelector, this.bind(this.touchMoved));\n\
+            this.dropdown.on(\"touchstart touchend\", resultsSelector, this.bind(this.clearTouchMoved));\n\
+\n\
+            // Waiting for a click event on touch devices to select option and hide dropdown\n\
+            // otherwise click will be triggered on an underlying element\n\
+            this.dropdown.on('click', this.bind(function (event) {\n\
+                if (this._touchEvent) {\n\
+                    this._touchEvent = false;\n\
+                    this.selectHighlighted();\n\
+                }\n\
+            }));\n\
+\n\
+            installDebouncedScroll(80, this.results);\n\
+            this.dropdown.on(\"scroll-debounced\", resultsSelector, this.bind(this.loadMoreIfNeeded));\n\
+\n\
+            // do not propagate change event from the search field out of the component\n\
+            $(this.container).on(\"change\", \".select2-input\", function(e) {e.stopPropagation();});\n\
+            $(this.dropdown).on(\"change\", \".select2-input\", function(e) {e.stopPropagation();});\n\
+\n\
+            // if jquery.mousewheel plugin is installed we can prevent out-of-bounds scrolling of results via mousewheel\n\
+            if ($.fn.mousewheel) {\n\
+                results.mousewheel(function (e, delta, deltaX, deltaY) {\n\
+                    var top = results.scrollTop();\n\
+                    if (deltaY > 0 && top - deltaY <= 0) {\n\
+                        results.scrollTop(0);\n\
+                        killEvent(e);\n\
+                    } else if (deltaY < 0 && results.get(0).scrollHeight - results.scrollTop() + deltaY <= results.height()) {\n\
+                        results.scrollTop(results.get(0).scrollHeight - results.height());\n\
+                        killEvent(e);\n\
+                    }\n\
+                });\n\
+            }\n\
+\n\
+            installKeyUpChangeEvent(search);\n\
+            search.on(\"keyup-change input paste\", this.bind(this.updateResults));\n\
+            search.on(\"focus\", function () { search.addClass(\"select2-focused\"); });\n\
+            search.on(\"blur\", function () { search.removeClass(\"select2-focused\");});\n\
+\n\
+            this.dropdown.on(\"mouseup\", resultsSelector, this.bind(function (e) {\n\
+                if ($(e.target).closest(\".select2-result-selectable\").length > 0) {\n\
+                    this.highlightUnderEvent(e);\n\
+                    this.selectHighlighted(e);\n\
+                }\n\
+            }));\n\
+\n\
+            // trap all mouse events from leaving the dropdown. sometimes there may be a modal that is listening\n\
+            // for mouse events outside of itself so it can close itself. since the dropdown is now outside the select2's\n\
+            // dom it will trigger the popup close, which is not what we want\n\
+            // focusin can cause focus wars between modals and select2 since the dropdown is outside the modal.\n\
+            this.dropdown.on(\"click mouseup mousedown touchstart touchend focusin\", function (e) { e.stopPropagation(); });\n\
+\n\
+            this.nextSearchTerm = undefined;\n\
+\n\
+            if ($.isFunction(this.opts.initSelection)) {\n\
+                // initialize selection based on the current value of the source element\n\
+                this.initSelection();\n\
+\n\
+                // if the user has provided a function that can set selection based on the value of the source element\n\
+                // we monitor the change event on the element and trigger it, allowing for two way synchronization\n\
+                this.monitorSource();\n\
+            }\n\
+\n\
+            if (opts.maximumInputLength !== null) {\n\
+                this.search.attr(\"maxlength\", opts.maximumInputLength);\n\
+            }\n\
+\n\
+            var disabled = opts.element.prop(\"disabled\");\n\
+            if (disabled === undefined) disabled = false;\n\
+            this.enable(!disabled);\n\
+\n\
+            var readonly = opts.element.prop(\"readonly\");\n\
+            if (readonly === undefined) readonly = false;\n\
+            this.readonly(readonly);\n\
+\n\
+            // Calculate size of scrollbar\n\
+            scrollBarDimensions = scrollBarDimensions || measureScrollbar();\n\
+\n\
+            this.autofocus = opts.element.prop(\"autofocus\");\n\
+            opts.element.prop(\"autofocus\", false);\n\
+            if (this.autofocus) this.focus();\n\
+\n\
+            this.search.attr(\"placeholder\", opts.searchInputPlaceholder);\n\
+        },\n\
+\n\
+        // abstract\n\
+        destroy: function () {\n\
+            var element=this.opts.element, select2 = element.data(\"select2\");\n\
+\n\
+            this.close();\n\
+\n\
+            if (this.propertyObserver) {\n\
+                this.propertyObserver.disconnect();\n\
+                this.propertyObserver = null;\n\
+            }\n\
+\n\
+            if (select2 !== undefined) {\n\
+                select2.container.remove();\n\
+                select2.liveRegion.remove();\n\
+                select2.dropdown.remove();\n\
+                element\n\
+                    .removeClass(\"select2-offscreen\")\n\
+                    .removeData(\"select2\")\n\
+                    .off(\".select2\")\n\
+                    .prop(\"autofocus\", this.autofocus || false);\n\
+                if (this.elementTabIndex) {\n\
+                    element.attr({tabindex: this.elementTabIndex});\n\
+                } else {\n\
+                    element.removeAttr(\"tabindex\");\n\
+                }\n\
+                element.show();\n\
+            }\n\
+\n\
+            cleanupJQueryElements.call(this,\n\
+                \"container\",\n\
+                \"liveRegion\",\n\
+                \"dropdown\",\n\
+                \"results\",\n\
+                \"search\"\n\
+            );\n\
+        },\n\
+\n\
+        // abstract\n\
+        optionToData: function(element) {\n\
+            if (element.is(\"option\")) {\n\
+                return {\n\
+                    id:element.prop(\"value\"),\n\
+                    text:element.text(),\n\
+                    element: element.get(),\n\
+                    css: element.attr(\"class\"),\n\
+                    disabled: element.prop(\"disabled\"),\n\
+                    locked: equal(element.attr(\"locked\"), \"locked\") || equal(element.data(\"locked\"), true)\n\
+                };\n\
+            } else if (element.is(\"optgroup\")) {\n\
+                return {\n\
+                    text:element.attr(\"label\"),\n\
+                    children:[],\n\
+                    element: element.get(),\n\
+                    css: element.attr(\"class\")\n\
+                };\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        prepareOpts: function (opts) {\n\
+            var element, select, idKey, ajaxUrl, self = this;\n\
+\n\
+            element = opts.element;\n\
+\n\
+            if (element.get(0).tagName.toLowerCase() === \"select\") {\n\
+                this.select = select = opts.element;\n\
+            }\n\
+\n\
+            if (select) {\n\
+                // these options are not allowed when attached to a select because they are picked up off the element itself\n\
+                $.each([\"id\", \"multiple\", \"ajax\", \"query\", \"createSearchChoice\", \"initSelection\", \"data\", \"tags\"], function () {\n\
+                    if (this in opts) {\n\
+                        throw new Error(\"Option '\" + this + \"' is not allowed for Select2 when attached to a <select> element.\");\n\
+                    }\n\
+                });\n\
+            }\n\
+\n\
+            opts = $.extend({}, {\n\
+                populateResults: function(container, results, query) {\n\
+                    var populate, id=this.opts.id, liveRegion=this.liveRegion;\n\
+\n\
+                    populate=function(results, container, depth) {\n\
+\n\
+                        var i, l, result, selectable, disabled, compound, node, label, innerContainer, formatted;\n\
+\n\
+                        results = opts.sortResults(results, container, query);\n\
+\n\
+                        for (i = 0, l = results.length; i < l; i = i + 1) {\n\
+\n\
+                            result=results[i];\n\
+\n\
+                            disabled = (result.disabled === true);\n\
+                            selectable = (!disabled) && (id(result) !== undefined);\n\
+\n\
+                            compound=result.children && result.children.length > 0;\n\
+\n\
+                            node=$(\"<li></li>\");\n\
+                            node.addClass(\"select2-results-dept-\"+depth);\n\
+                            node.addClass(\"select2-result\");\n\
+                            node.addClass(selectable ? \"select2-result-selectable\" : \"select2-result-unselectable\");\n\
+                            if (disabled) { node.addClass(\"select2-disabled\"); }\n\
+                            if (compound) { node.addClass(\"select2-result-with-children\"); }\n\
+                            node.addClass(self.opts.formatResultCssClass(result));\n\
+                            node.attr(\"role\", \"presentation\");\n\
+\n\
+                            label=$(document.createElement(\"div\"));\n\
+                            label.addClass(\"select2-result-label\");\n\
+                            label.attr(\"id\", \"select2-result-label-\" + nextUid());\n\
+                            label.attr(\"role\", \"option\");\n\
+\n\
+                            formatted=opts.formatResult(result, label, query, self.opts.escapeMarkup);\n\
+                            if (formatted!==undefined) {\n\
+                                label.html(formatted);\n\
+                                node.append(label);\n\
+                            }\n\
+\n\
+\n\
+                            if (compound) {\n\
+\n\
+                                innerContainer=$(\"<ul></ul>\");\n\
+                                innerContainer.addClass(\"select2-result-sub\");\n\
+                                populate(result.children, innerContainer, depth+1);\n\
+                                node.append(innerContainer);\n\
+                            }\n\
+\n\
+                            node.data(\"select2-data\", result);\n\
+                            container.append(node);\n\
+                        }\n\
+\n\
+                        liveRegion.text(opts.formatMatches(results.length));\n\
+                    };\n\
+\n\
+                    populate(results, container, 0);\n\
+                }\n\
+            }, $.fn.select2.defaults, opts);\n\
+\n\
+            if (typeof(opts.id) !== \"function\") {\n\
+                idKey = opts.id;\n\
+                opts.id = function (e) { return e[idKey]; };\n\
+            }\n\
+\n\
+            if ($.isArray(opts.element.data(\"select2Tags\"))) {\n\
+                if (\"tags\" in opts) {\n\
+                    throw \"tags specified as both an attribute 'data-select2-tags' and in options of Select2 \" + opts.element.attr(\"id\");\n\
+                }\n\
+                opts.tags=opts.element.data(\"select2Tags\");\n\
+            }\n\
+\n\
+            if (select) {\n\
+                opts.query = this.bind(function (query) {\n\
+                    var data = { results: [], more: false },\n\
+                        term = query.term,\n\
+                        children, placeholderOption, process;\n\
+\n\
+                    process=function(element, collection) {\n\
+                        var group;\n\
+                        if (element.is(\"option\")) {\n\
+                            if (query.matcher(term, element.text(), element)) {\n\
+                                collection.push(self.optionToData(element));\n\
+                            }\n\
+                        } else if (element.is(\"optgroup\")) {\n\
+                            group=self.optionToData(element);\n\
+                            element.children().each2(function(i, elm) { process(elm, group.children); });\n\
+                            if (group.children.length>0) {\n\
+                                collection.push(group);\n\
+                            }\n\
+                        }\n\
+                    };\n\
+\n\
+                    children=element.children();\n\
+\n\
+                    // ignore the placeholder option if there is one\n\
+                    if (this.getPlaceholder() !== undefined && children.length > 0) {\n\
+                        placeholderOption = this.getPlaceholderOption();\n\
+                        if (placeholderOption) {\n\
+                            children=children.not(placeholderOption);\n\
+                        }\n\
+                    }\n\
+\n\
+                    children.each2(function(i, elm) { process(elm, data.results); });\n\
+\n\
+                    query.callback(data);\n\
+                });\n\
+                // this is needed because inside val() we construct choices from options and there id is hardcoded\n\
+                opts.id=function(e) { return e.id; };\n\
+            } else {\n\
+                if (!(\"query\" in opts)) {\n\
+\n\
+                    if (\"ajax\" in opts) {\n\
+                        ajaxUrl = opts.element.data(\"ajax-url\");\n\
+                        if (ajaxUrl && ajaxUrl.length > 0) {\n\
+                            opts.ajax.url = ajaxUrl;\n\
+                        }\n\
+                        opts.query = ajax.call(opts.element, opts.ajax);\n\
+                    } else if (\"data\" in opts) {\n\
+                        opts.query = local(opts.data);\n\
+                    } else if (\"tags\" in opts) {\n\
+                        opts.query = tags(opts.tags);\n\
+                        if (opts.createSearchChoice === undefined) {\n\
+                            opts.createSearchChoice = function (term) { return {id: $.trim(term), text: $.trim(term)}; };\n\
+                        }\n\
+                        if (opts.initSelection === undefined) {\n\
+                            opts.initSelection = function (element, callback) {\n\
+                                var data = [];\n\
+                                $(splitVal(element.val(), opts.separator)).each(function () {\n\
+                                    var obj = { id: this, text: this },\n\
+                                        tags = opts.tags;\n\
+                                    if ($.isFunction(tags)) tags=tags();\n\
+                                    $(tags).each(function() { if (equal(this.id, obj.id)) { obj = this; return false; } });\n\
+                                    data.push(obj);\n\
+                                });\n\
+\n\
+                                callback(data);\n\
+                            };\n\
+                        }\n\
+                    }\n\
+                }\n\
+            }\n\
+            if (typeof(opts.query) !== \"function\") {\n\
+                throw \"query function not defined for Select2 \" + opts.element.attr(\"id\");\n\
+            }\n\
+\n\
+            if (opts.createSearchChoicePosition === 'top') {\n\
+                opts.createSearchChoicePosition = function(list, item) { list.unshift(item); };\n\
+            }\n\
+            else if (opts.createSearchChoicePosition === 'bottom') {\n\
+                opts.createSearchChoicePosition = function(list, item) { list.push(item); };\n\
+            }\n\
+            else if (typeof(opts.createSearchChoicePosition) !== \"function\")  {\n\
+                throw \"invalid createSearchChoicePosition option must be 'top', 'bottom' or a custom function\";\n\
+            }\n\
+\n\
+            return opts;\n\
+        },\n\
+\n\
+        /**\n\
+         * Monitor the original element for changes and update select2 accordingly\n\
+         */\n\
+        // abstract\n\
+        monitorSource: function () {\n\
+            var el = this.opts.element, sync, observer;\n\
+\n\
+            el.on(\"change.select2\", this.bind(function (e) {\n\
+                if (this.opts.element.data(\"select2-change-triggered\") !== true) {\n\
+                    this.initSelection();\n\
+                }\n\
+            }));\n\
+\n\
+            sync = this.bind(function () {\n\
+\n\
+                // sync enabled state\n\
+                var disabled = el.prop(\"disabled\");\n\
+                if (disabled === undefined) disabled = false;\n\
+                this.enable(!disabled);\n\
+\n\
+                var readonly = el.prop(\"readonly\");\n\
+                if (readonly === undefined) readonly = false;\n\
+                this.readonly(readonly);\n\
+\n\
+                syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);\n\
+                this.container.addClass(evaluate(this.opts.containerCssClass));\n\
+\n\
+                syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);\n\
+                this.dropdown.addClass(evaluate(this.opts.dropdownCssClass));\n\
+\n\
+            });\n\
+\n\
+            // IE8-10 (IE9/10 won't fire propertyChange via attachEventListener)\n\
+            if (el.length && el[0].attachEvent) {\n\
+                el.each(function() {\n\
+                    this.attachEvent(\"onpropertychange\", sync);\n\
+                });\n\
+            }\n\
+            \n\
+            // safari, chrome, firefox, IE11\n\
+            observer = window.MutationObserver || window.WebKitMutationObserver|| window.MozMutationObserver;\n\
+            if (observer !== undefined) {\n\
+                if (this.propertyObserver) { delete this.propertyObserver; this.propertyObserver = null; }\n\
+                this.propertyObserver = new observer(function (mutations) {\n\
+                    mutations.forEach(sync);\n\
+                });\n\
+                this.propertyObserver.observe(el.get(0), { attributes:true, subtree:false });\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        triggerSelect: function(data) {\n\
+            var evt = $.Event(\"select2-selecting\", { val: this.id(data), object: data });\n\
+            this.opts.element.trigger(evt);\n\
+            return !evt.isDefaultPrevented();\n\
+        },\n\
+\n\
+        /**\n\
+         * Triggers the change event on the source element\n\
+         */\n\
+        // abstract\n\
+        triggerChange: function (details) {\n\
+\n\
+            details = details || {};\n\
+            details= $.extend({}, details, { type: \"change\", val: this.val() });\n\
+            // prevents recursive triggering\n\
+            this.opts.element.data(\"select2-change-triggered\", true);\n\
+            this.opts.element.trigger(details);\n\
+            this.opts.element.data(\"select2-change-triggered\", false);\n\
+\n\
+            // some validation frameworks ignore the change event and listen instead to keyup, click for selects\n\
+            // so here we trigger the click event manually\n\
+            this.opts.element.click();\n\
+\n\
+            // ValidationEngine ignores the change event and listens instead to blur\n\
+            // so here we trigger the blur event manually if so desired\n\
+            if (this.opts.blurOnChange)\n\
+                this.opts.element.blur();\n\
+        },\n\
+\n\
+        //abstract\n\
+        isInterfaceEnabled: function()\n\
+        {\n\
+            return this.enabledInterface === true;\n\
+        },\n\
+\n\
+        // abstract\n\
+        enableInterface: function() {\n\
+            var enabled = this._enabled && !this._readonly,\n\
+                disabled = !enabled;\n\
+\n\
+            if (enabled === this.enabledInterface) return false;\n\
+\n\
+            this.container.toggleClass(\"select2-container-disabled\", disabled);\n\
+            this.close();\n\
+            this.enabledInterface = enabled;\n\
+\n\
+            return true;\n\
+        },\n\
+\n\
+        // abstract\n\
+        enable: function(enabled) {\n\
+            if (enabled === undefined) enabled = true;\n\
+            if (this._enabled === enabled) return;\n\
+            this._enabled = enabled;\n\
+\n\
+            this.opts.element.prop(\"disabled\", !enabled);\n\
+            this.enableInterface();\n\
+        },\n\
+\n\
+        // abstract\n\
+        disable: function() {\n\
+            this.enable(false);\n\
+        },\n\
+\n\
+        // abstract\n\
+        readonly: function(enabled) {\n\
+            if (enabled === undefined) enabled = false;\n\
+            if (this._readonly === enabled) return;\n\
+            this._readonly = enabled;\n\
+\n\
+            this.opts.element.prop(\"readonly\", enabled);\n\
+            this.enableInterface();\n\
+        },\n\
+\n\
+        // abstract\n\
+        opened: function () {\n\
+            return this.container.hasClass(\"select2-dropdown-open\");\n\
+        },\n\
+\n\
+        // abstract\n\
+        positionDropdown: function() {\n\
+            var $dropdown = this.dropdown,\n\
+                offset = this.container.offset(),\n\
+                height = this.container.outerHeight(false),\n\
+                width = this.container.outerWidth(false),\n\
+                dropHeight = $dropdown.outerHeight(false),\n\
+                $window = $(window),\n\
+                windowWidth = $window.width(),\n\
+                windowHeight = $window.height(),\n\
+                viewPortRight = $window.scrollLeft() + windowWidth,\n\
+                viewportBottom = $window.scrollTop() + windowHeight,\n\
+                dropTop = offset.top + height,\n\
+                dropLeft = offset.left,\n\
+                enoughRoomBelow = dropTop + dropHeight <= viewportBottom,\n\
+                enoughRoomAbove = (offset.top - dropHeight) >= $window.scrollTop(),\n\
+                dropWidth = $dropdown.outerWidth(false),\n\
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight,\n\
+                aboveNow = $dropdown.hasClass(\"select2-drop-above\"),\n\
+                bodyOffset,\n\
+                above,\n\
+                changeDirection,\n\
+                css,\n\
+                resultsListNode;\n\
+\n\
+            // always prefer the current above/below alignment, unless there is not enough room\n\
+            if (aboveNow) {\n\
+                above = true;\n\
+                if (!enoughRoomAbove && enoughRoomBelow) {\n\
+                    changeDirection = true;\n\
+                    above = false;\n\
+                }\n\
+            } else {\n\
+                above = false;\n\
+                if (!enoughRoomBelow && enoughRoomAbove) {\n\
+                    changeDirection = true;\n\
+                    above = true;\n\
+                }\n\
+            }\n\
+\n\
+            //if we are changing direction we need to get positions when dropdown is hidden;\n\
+            if (changeDirection) {\n\
+                $dropdown.hide();\n\
+                offset = this.container.offset();\n\
+                height = this.container.outerHeight(false);\n\
+                width = this.container.outerWidth(false);\n\
+                dropHeight = $dropdown.outerHeight(false);\n\
+                viewPortRight = $window.scrollLeft() + windowWidth;\n\
+                viewportBottom = $window.scrollTop() + windowHeight;\n\
+                dropTop = offset.top + height;\n\
+                dropLeft = offset.left;\n\
+                dropWidth = $dropdown.outerWidth(false);\n\
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;\n\
+                $dropdown.show();\n\
+\n\
+                // fix so the cursor does not move to the left within the search-textbox in IE\n\
+                this.focusSearch();\n\
+            }\n\
+\n\
+            if (this.opts.dropdownAutoWidth) {\n\
+                resultsListNode = $('.select2-results', $dropdown)[0];\n\
+                $dropdown.addClass('select2-drop-auto-width');\n\
+                $dropdown.css('width', '');\n\
+                // Add scrollbar width to dropdown if vertical scrollbar is present\n\
+                dropWidth = $dropdown.outerWidth(false) + (resultsListNode.scrollHeight === resultsListNode.clientHeight ? 0 : scrollBarDimensions.width);\n\
+                dropWidth > width ? width = dropWidth : dropWidth = width;\n\
+                dropHeight = $dropdown.outerHeight(false);\n\
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;\n\
+            }\n\
+            else {\n\
+                this.container.removeClass('select2-drop-auto-width');\n\
+            }\n\
+\n\
+            //console.log(\"below/ droptop:\", dropTop, \"dropHeight\", dropHeight, \"sum\", (dropTop+dropHeight)+\" viewport bottom\", viewportBottom, \"enough?\", enoughRoomBelow);\n\
+            //console.log(\"above/ offset.top\", offset.top, \"dropHeight\", dropHeight, \"top\", (offset.top-dropHeight), \"scrollTop\", this.body.scrollTop(), \"enough?\", enoughRoomAbove);\n\
+\n\
+            // fix positioning when body has an offset and is not position: static\n\
+            if (this.body.css('position') !== 'static') {\n\
+                bodyOffset = this.body.offset();\n\
+                dropTop -= bodyOffset.top;\n\
+                dropLeft -= bodyOffset.left;\n\
+            }\n\
+\n\
+            if (!enoughRoomOnRight) {\n\
+                dropLeft = offset.left + this.container.outerWidth(false) - dropWidth;\n\
+            }\n\
+\n\
+            css =  {\n\
+                left: dropLeft,\n\
+                width: width\n\
+            };\n\
+\n\
+            if (above) {\n\
+                css.top = offset.top - dropHeight;\n\
+                css.bottom = 'auto';\n\
+                this.container.addClass(\"select2-drop-above\");\n\
+                $dropdown.addClass(\"select2-drop-above\");\n\
+            }\n\
+            else {\n\
+                css.top = dropTop;\n\
+                css.bottom = 'auto';\n\
+                this.container.removeClass(\"select2-drop-above\");\n\
+                $dropdown.removeClass(\"select2-drop-above\");\n\
+            }\n\
+            css = $.extend(css, evaluate(this.opts.dropdownCss));\n\
+\n\
+            $dropdown.css(css);\n\
+        },\n\
+\n\
+        // abstract\n\
+        shouldOpen: function() {\n\
+            var event;\n\
+\n\
+            if (this.opened()) return false;\n\
+\n\
+            if (this._enabled === false || this._readonly === true) return false;\n\
+\n\
+            event = $.Event(\"select2-opening\");\n\
+            this.opts.element.trigger(event);\n\
+            return !event.isDefaultPrevented();\n\
+        },\n\
+\n\
+        // abstract\n\
+        clearDropdownAlignmentPreference: function() {\n\
+            // clear the classes used to figure out the preference of where the dropdown should be opened\n\
+            this.container.removeClass(\"select2-drop-above\");\n\
+            this.dropdown.removeClass(\"select2-drop-above\");\n\
+        },\n\
+\n\
+        /**\n\
+         * Opens the dropdown\n\
+         *\n\
+         * @return {Boolean} whether or not dropdown was opened. This method will return false if, for example,\n\
+         * the dropdown is already open, or if the 'open' event listener on the element called preventDefault().\n\
+         */\n\
+        // abstract\n\
+        open: function () {\n\
+\n\
+            if (!this.shouldOpen()) return false;\n\
+\n\
+            this.opening();\n\
+\n\
+            return true;\n\
+        },\n\
+\n\
+        /**\n\
+         * Performs the opening of the dropdown\n\
+         */\n\
+        // abstract\n\
+        opening: function() {\n\
+            var cid = this.containerEventName,\n\
+                scroll = \"scroll.\" + cid,\n\
+                resize = \"resize.\"+cid,\n\
+                orient = \"orientationchange.\"+cid,\n\
+                mask;\n\
+\n\
+            this.container.addClass(\"select2-dropdown-open\").addClass(\"select2-container-active\");\n\
+\n\
+            this.clearDropdownAlignmentPreference();\n\
+\n\
+            if(this.dropdown[0] !== this.body.children().last()[0]) {\n\
+                this.dropdown.detach().appendTo(this.body);\n\
+            }\n\
+\n\
+            // create the dropdown mask if doesn't already exist\n\
+            mask = $(\"#select2-drop-mask\");\n\
+            if (mask.length == 0) {\n\
+                mask = $(document.createElement(\"div\"));\n\
+                mask.attr(\"id\",\"select2-drop-mask\").attr(\"class\",\"select2-drop-mask\");\n\
+                mask.hide();\n\
+                mask.appendTo(this.body);\n\
+                mask.on(\"mousedown touchstart click\", function (e) {\n\
+                    // Prevent IE from generating a click event on the body\n\
+                    reinsertElement(mask);\n\
+\n\
+                    var dropdown = $(\"#select2-drop\"), self;\n\
+                    if (dropdown.length > 0) {\n\
+                        self=dropdown.data(\"select2\");\n\
+                        if (self.opts.selectOnBlur) {\n\
+                            self.selectHighlighted({noFocus: true});\n\
+                        }\n\
+                        self.close();\n\
+                        e.preventDefault();\n\
+                        e.stopPropagation();\n\
+                    }\n\
+                });\n\
+            }\n\
+\n\
+            // ensure the mask is always right before the dropdown\n\
+            if (this.dropdown.prev()[0] !== mask[0]) {\n\
+                this.dropdown.before(mask);\n\
+            }\n\
+\n\
+            // move the global id to the correct dropdown\n\
+            $(\"#select2-drop\").removeAttr(\"id\");\n\
+            this.dropdown.attr(\"id\", \"select2-drop\");\n\
+\n\
+            // show the elements\n\
+            mask.show();\n\
+\n\
+            this.positionDropdown();\n\
+            this.dropdown.show();\n\
+            this.positionDropdown();\n\
+\n\
+            this.dropdown.addClass(\"select2-drop-active\");\n\
+\n\
+            // attach listeners to events that can change the position of the container and thus require\n\
+            // the position of the dropdown to be updated as well so it does not come unglued from the container\n\
+            var that = this;\n\
+            this.container.parents().add(window).each(function () {\n\
+                $(this).on(resize+\" \"+scroll+\" \"+orient, function (e) {\n\
+                    if (that.opened()) that.positionDropdown();\n\
+                });\n\
+            });\n\
+\n\
+\n\
+        },\n\
+\n\
+        // abstract\n\
+        close: function () {\n\
+            if (!this.opened()) return;\n\
+\n\
+            var cid = this.containerEventName,\n\
+                scroll = \"scroll.\" + cid,\n\
+                resize = \"resize.\"+cid,\n\
+                orient = \"orientationchange.\"+cid;\n\
+\n\
+            // unbind event listeners\n\
+            this.container.parents().add(window).each(function () { $(this).off(scroll).off(resize).off(orient); });\n\
+\n\
+            this.clearDropdownAlignmentPreference();\n\
+\n\
+            $(\"#select2-drop-mask\").hide();\n\
+            this.dropdown.removeAttr(\"id\"); // only the active dropdown has the select2-drop id\n\
+            this.dropdown.hide();\n\
+            this.container.removeClass(\"select2-dropdown-open\").removeClass(\"select2-container-active\");\n\
+            this.results.empty();\n\
+\n\
+\n\
+            this.clearSearch();\n\
+            this.search.removeClass(\"select2-active\");\n\
+            this.opts.element.trigger($.Event(\"select2-close\"));\n\
+        },\n\
+\n\
+        /**\n\
+         * Opens control, sets input value, and updates results.\n\
+         */\n\
+        // abstract\n\
+        externalSearch: function (term) {\n\
+            this.open();\n\
+            this.search.val(term);\n\
+            this.updateResults(false);\n\
+        },\n\
+\n\
+        // abstract\n\
+        clearSearch: function () {\n\
+\n\
+        },\n\
+\n\
+        //abstract\n\
+        getMaximumSelectionSize: function() {\n\
+            return evaluate(this.opts.maximumSelectionSize);\n\
+        },\n\
+\n\
+        // abstract\n\
+        ensureHighlightVisible: function () {\n\
+            var results = this.results, children, index, child, hb, rb, y, more;\n\
+\n\
+            index = this.highlight();\n\
+\n\
+            if (index < 0) return;\n\
+\n\
+            if (index == 0) {\n\
+\n\
+                // if the first element is highlighted scroll all the way to the top,\n\
+                // that way any unselectable headers above it will also be scrolled\n\
+                // into view\n\
+\n\
+                results.scrollTop(0);\n\
+                return;\n\
+            }\n\
+\n\
+            children = this.findHighlightableChoices().find('.select2-result-label');\n\
+\n\
+            child = $(children[index]);\n\
+\n\
+            hb = child.offset().top + child.outerHeight(true);\n\
+\n\
+            // if this is the last child lets also make sure select2-more-results is visible\n\
+            if (index === children.length - 1) {\n\
+                more = results.find(\"li.select2-more-results\");\n\
+                if (more.length > 0) {\n\
+                    hb = more.offset().top + more.outerHeight(true);\n\
+                }\n\
+            }\n\
+\n\
+            rb = results.offset().top + results.outerHeight(true);\n\
+            if (hb > rb) {\n\
+                results.scrollTop(results.scrollTop() + (hb - rb));\n\
+            }\n\
+            y = child.offset().top - results.offset().top;\n\
+\n\
+            // make sure the top of the element is visible\n\
+            if (y < 0 && child.css('display') != 'none' ) {\n\
+                results.scrollTop(results.scrollTop() + y); // y is negative\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        findHighlightableChoices: function() {\n\
+            return this.results.find(\".select2-result-selectable:not(.select2-disabled):not(.select2-selected)\");\n\
+        },\n\
+\n\
+        // abstract\n\
+        moveHighlight: function (delta) {\n\
+            var choices = this.findHighlightableChoices(),\n\
+                index = this.highlight();\n\
+\n\
+            while (index > -1 && index < choices.length) {\n\
+                index += delta;\n\
+                var choice = $(choices[index]);\n\
+                if (choice.hasClass(\"select2-result-selectable\") && !choice.hasClass(\"select2-disabled\") && !choice.hasClass(\"select2-selected\")) {\n\
+                    this.highlight(index);\n\
+                    break;\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        highlight: function (index) {\n\
+            var choices = this.findHighlightableChoices(),\n\
+                choice,\n\
+                data;\n\
+\n\
+            if (arguments.length === 0) {\n\
+                return indexOf(choices.filter(\".select2-highlighted\")[0], choices.get());\n\
+            }\n\
+\n\
+            if (index >= choices.length) index = choices.length - 1;\n\
+            if (index < 0) index = 0;\n\
+\n\
+            this.removeHighlight();\n\
+\n\
+            choice = $(choices[index]);\n\
+            choice.addClass(\"select2-highlighted\");\n\
+\n\
+            // ensure assistive technology can determine the active choice\n\
+            this.search.attr(\"aria-activedescendant\", choice.find(\".select2-result-label\").attr(\"id\"));\n\
+\n\
+            this.ensureHighlightVisible();\n\
+\n\
+            this.liveRegion.text(choice.text());\n\
+\n\
+            data = choice.data(\"select2-data\");\n\
+            if (data) {\n\
+                this.opts.element.trigger({ type: \"select2-highlight\", val: this.id(data), choice: data });\n\
+            }\n\
+        },\n\
+\n\
+        removeHighlight: function() {\n\
+            this.results.find(\".select2-highlighted\").removeClass(\"select2-highlighted\");\n\
+        },\n\
+\n\
+        touchMoved: function() {\n\
+            this._touchMoved = true;\n\
+        },\n\
+\n\
+        clearTouchMoved: function() {\n\
+          this._touchMoved = false;\n\
+        },\n\
+\n\
+        // abstract\n\
+        countSelectableResults: function() {\n\
+            return this.findHighlightableChoices().length;\n\
+        },\n\
+\n\
+        // abstract\n\
+        highlightUnderEvent: function (event) {\n\
+            var el = $(event.target).closest(\".select2-result-selectable\");\n\
+            if (el.length > 0 && !el.is(\".select2-highlighted\")) {\n\
+                var choices = this.findHighlightableChoices();\n\
+                this.highlight(choices.index(el));\n\
+            } else if (el.length == 0) {\n\
+                // if we are over an unselectable item remove all highlights\n\
+                this.removeHighlight();\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        loadMoreIfNeeded: function () {\n\
+            var results = this.results,\n\
+                more = results.find(\"li.select2-more-results\"),\n\
+                below, // pixels the element is below the scroll fold, below==0 is when the element is starting to be visible\n\
+                page = this.resultsPage + 1,\n\
+                self=this,\n\
+                term=this.search.val(),\n\
+                context=this.context;\n\
+\n\
+            if (more.length === 0) return;\n\
+            below = more.offset().top - results.offset().top - results.height();\n\
+\n\
+            if (below <= this.opts.loadMorePadding) {\n\
+                more.addClass(\"select2-active\");\n\
+                this.opts.query({\n\
+                        element: this.opts.element,\n\
+                        term: term,\n\
+                        page: page,\n\
+                        context: context,\n\
+                        matcher: this.opts.matcher,\n\
+                        callback: this.bind(function (data) {\n\
+\n\
+                    // ignore a response if the select2 has been closed before it was received\n\
+                    if (!self.opened()) return;\n\
+\n\
+\n\
+                    self.opts.populateResults.call(this, results, data.results, {term: term, page: page, context:context});\n\
+                    self.postprocessResults(data, false, false);\n\
+\n\
+                    if (data.more===true) {\n\
+                        more.detach().appendTo(results).text(evaluate(self.opts.formatLoadMore, page+1));\n\
+                        window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);\n\
+                    } else {\n\
+                        more.remove();\n\
+                    }\n\
+                    self.positionDropdown();\n\
+                    self.resultsPage = page;\n\
+                    self.context = data.context;\n\
+                    this.opts.element.trigger({ type: \"select2-loaded\", items: data });\n\
+                })});\n\
+            }\n\
+        },\n\
+\n\
+        /**\n\
+         * Default tokenizer function which does nothing\n\
+         */\n\
+        tokenize: function() {\n\
+\n\
+        },\n\
+\n\
+        /**\n\
+         * @param initial whether or not this is the call to this method right after the dropdown has been opened\n\
+         */\n\
+        // abstract\n\
+        updateResults: function (initial) {\n\
+            var search = this.search,\n\
+                results = this.results,\n\
+                opts = this.opts,\n\
+                data,\n\
+                self = this,\n\
+                input,\n\
+                term = search.val(),\n\
+                lastTerm = $.data(this.container, \"select2-last-term\"),\n\
+                // sequence number used to drop out-of-order responses\n\
+                queryNumber;\n\
+\n\
+            // prevent duplicate queries against the same term\n\
+            if (initial !== true && lastTerm && equal(term, lastTerm)) return;\n\
+\n\
+            $.data(this.container, \"select2-last-term\", term);\n\
+\n\
+            // if the search is currently hidden we do not alter the results\n\
+            if (initial !== true && (this.showSearchInput === false || !this.opened())) {\n\
+                return;\n\
+            }\n\
+\n\
+            function postRender() {\n\
+                search.removeClass(\"select2-active\");\n\
+                self.positionDropdown();\n\
+                if (results.find('.select2-no-results,.select2-selection-limit,.select2-searching').length) {\n\
+                    self.liveRegion.text(results.text());\n\
+                }\n\
+                else {\n\
+                    self.liveRegion.text(self.opts.formatMatches(results.find('.select2-result-selectable').length));\n\
+                }\n\
+            }\n\
+\n\
+            function render(html) {\n\
+                results.html(html);\n\
+                postRender();\n\
+            }\n\
+\n\
+            queryNumber = ++this.queryCount;\n\
+\n\
+            var maxSelSize = this.getMaximumSelectionSize();\n\
+            if (maxSelSize >=1) {\n\
+                data = this.data();\n\
+                if ($.isArray(data) && data.length >= maxSelSize && checkFormatter(opts.formatSelectionTooBig, \"formatSelectionTooBig\")) {\n\
+                    render(\"<li class='select2-selection-limit'>\" + evaluate(opts.formatSelectionTooBig, maxSelSize) + \"</li>\");\n\
+                    return;\n\
+                }\n\
+            }\n\
+\n\
+            if (search.val().length < opts.minimumInputLength) {\n\
+                if (checkFormatter(opts.formatInputTooShort, \"formatInputTooShort\")) {\n\
+                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatInputTooShort, search.val(), opts.minimumInputLength) + \"</li>\");\n\
+                } else {\n\
+                    render(\"\");\n\
+                }\n\
+                if (initial && this.showSearch) this.showSearch(true);\n\
+                return;\n\
+            }\n\
+\n\
+            if (opts.maximumInputLength && search.val().length > opts.maximumInputLength) {\n\
+                if (checkFormatter(opts.formatInputTooLong, \"formatInputTooLong\")) {\n\
+                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatInputTooLong, search.val(), opts.maximumInputLength) + \"</li>\");\n\
+                } else {\n\
+                    render(\"\");\n\
+                }\n\
+                return;\n\
+            }\n\
+\n\
+            if (opts.formatSearching && this.findHighlightableChoices().length === 0) {\n\
+                render(\"<li class='select2-searching'>\" + evaluate(opts.formatSearching) + \"</li>\");\n\
+            }\n\
+\n\
+            search.addClass(\"select2-active\");\n\
+\n\
+            this.removeHighlight();\n\
+\n\
+            // give the tokenizer a chance to pre-process the input\n\
+            input = this.tokenize();\n\
+            if (input != undefined && input != null) {\n\
+                search.val(input);\n\
+            }\n\
+\n\
+            this.resultsPage = 1;\n\
+\n\
+            opts.query({\n\
+                element: opts.element,\n\
+                    term: search.val(),\n\
+                    page: this.resultsPage,\n\
+                    context: null,\n\
+                    matcher: opts.matcher,\n\
+                    callback: this.bind(function (data) {\n\
+                var def; // default choice\n\
+\n\
+                // ignore old responses\n\
+                if (queryNumber != this.queryCount) {\n\
+                  return;\n\
+                }\n\
+\n\
+                // ignore a response if the select2 has been closed before it was received\n\
+                if (!this.opened()) {\n\
+                    this.search.removeClass(\"select2-active\");\n\
+                    return;\n\
+                }\n\
+\n\
+                // save context, if any\n\
+                this.context = (data.context===undefined) ? null : data.context;\n\
+                // create a default choice and prepend it to the list\n\
+                if (this.opts.createSearchChoice && search.val() !== \"\") {\n\
+                    def = this.opts.createSearchChoice.call(self, search.val(), data.results);\n\
+                    if (def !== undefined && def !== null && self.id(def) !== undefined && self.id(def) !== null) {\n\
+                        if ($(data.results).filter(\n\
+                            function () {\n\
+                                return equal(self.id(this), self.id(def));\n\
+                            }).length === 0) {\n\
+                            this.opts.createSearchChoicePosition(data.results, def);\n\
+                        }\n\
+                    }\n\
+                }\n\
+\n\
+                if (data.results.length === 0 && checkFormatter(opts.formatNoMatches, \"formatNoMatches\")) {\n\
+                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatNoMatches, search.val()) + \"</li>\");\n\
+                    return;\n\
+                }\n\
+\n\
+                results.empty();\n\
+                self.opts.populateResults.call(this, results, data.results, {term: search.val(), page: this.resultsPage, context:null});\n\
+\n\
+                if (data.more === true && checkFormatter(opts.formatLoadMore, \"formatLoadMore\")) {\n\
+                    results.append(\"<li class='select2-more-results'>\" + self.opts.escapeMarkup(evaluate(opts.formatLoadMore, this.resultsPage)) + \"</li>\");\n\
+                    window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);\n\
+                }\n\
+\n\
+                this.postprocessResults(data, initial);\n\
+\n\
+                postRender();\n\
+\n\
+                this.opts.element.trigger({ type: \"select2-loaded\", items: data });\n\
+            })});\n\
+        },\n\
+\n\
+        // abstract\n\
+        cancel: function () {\n\
+            this.close();\n\
+        },\n\
+\n\
+        // abstract\n\
+        blur: function () {\n\
+            // if selectOnBlur == true, select the currently highlighted option\n\
+            if (this.opts.selectOnBlur)\n\
+                this.selectHighlighted({noFocus: true});\n\
+\n\
+            this.close();\n\
+            this.container.removeClass(\"select2-container-active\");\n\
+            // synonymous to .is(':focus'), which is available in jquery >= 1.6\n\
+            if (this.search[0] === document.activeElement) { this.search.blur(); }\n\
+            this.clearSearch();\n\
+            this.selection.find(\".select2-search-choice-focus\").removeClass(\"select2-search-choice-focus\");\n\
+        },\n\
+\n\
+        // abstract\n\
+        focusSearch: function () {\n\
+            focus(this.search);\n\
+        },\n\
+\n\
+        // abstract\n\
+        selectHighlighted: function (options) {\n\
+            if (this._touchMoved) {\n\
+              this.clearTouchMoved();\n\
+              return;\n\
+            }\n\
+            var index=this.highlight(),\n\
+                highlighted=this.results.find(\".select2-highlighted\"),\n\
+                data = highlighted.closest('.select2-result').data(\"select2-data\");\n\
+\n\
+            if (data) {\n\
+                this.highlight(index);\n\
+                this.onSelect(data, options);\n\
+            } else if (options && options.noFocus) {\n\
+                this.close();\n\
+            }\n\
+        },\n\
+\n\
+        // abstract\n\
+        getPlaceholder: function () {\n\
+            var placeholderOption;\n\
+            return this.opts.element.attr(\"placeholder\") ||\n\
+                this.opts.element.attr(\"data-placeholder\") || // jquery 1.4 compat\n\
+                this.opts.element.data(\"placeholder\") ||\n\
+                this.opts.placeholder ||\n\
+                ((placeholderOption = this.getPlaceholderOption()) !== undefined ? placeholderOption.text() : undefined);\n\
+        },\n\
+\n\
+        // abstract\n\
+        getPlaceholderOption: function() {\n\
+            if (this.select) {\n\
+                var firstOption = this.select.children('option').first();\n\
+                if (this.opts.placeholderOption !== undefined ) {\n\
+                    //Determine the placeholder option based on the specified placeholderOption setting\n\
+                    return (this.opts.placeholderOption === \"first\" && firstOption) ||\n\
+                           (typeof this.opts.placeholderOption === \"function\" && this.opts.placeholderOption(this.select));\n\
+                } else if ($.trim(firstOption.text()) === \"\" && firstOption.val() === \"\") {\n\
+                    //No explicit placeholder option specified, use the first if it's blank\n\
+                    return firstOption;\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        /**\n\
+         * Get the desired width for the container element.  This is\n\
+         * derived first from option `width` passed to select2, then\n\
+         * the inline 'style' on the original element, and finally\n\
+         * falls back to the jQuery calculated element width.\n\
+         */\n\
+        // abstract\n\
+        initContainerWidth: function () {\n\
+            function resolveContainerWidth() {\n\
+                var style, attrs, matches, i, l, attr;\n\
+\n\
+                if (this.opts.width === \"off\") {\n\
+                    return null;\n\
+                } else if (this.opts.width === \"element\"){\n\
+                    return this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px';\n\
+                } else if (this.opts.width === \"copy\" || this.opts.width === \"resolve\") {\n\
+                    // check if there is inline style on the element that contains width\n\
+                    style = this.opts.element.attr('style');\n\
+                    if (style !== undefined) {\n\
+                        attrs = style.split(';');\n\
+                        for (i = 0, l = attrs.length; i < l; i = i + 1) {\n\
+                            attr = attrs[i].replace(/\\s/g, '');\n\
+                            matches = attr.match(/^width:(([-+]?([0-9]*\\.)?[0-9]+)(px|em|ex|%|in|cm|mm|pt|pc))/i);\n\
+                            if (matches !== null && matches.length >= 1)\n\
+                                return matches[1];\n\
+                        }\n\
+                    }\n\
+\n\
+                    if (this.opts.width === \"resolve\") {\n\
+                        // next check if css('width') can resolve a width that is percent based, this is sometimes possible\n\
+                        // when attached to input type=hidden or elements hidden via css\n\
+                        style = this.opts.element.css('width');\n\
+                        if (style.indexOf(\"%\") > 0) return style;\n\
+\n\
+                        // finally, fallback on the calculated width of the element\n\
+                        return (this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px');\n\
+                    }\n\
+\n\
+                    return null;\n\
+                } else if ($.isFunction(this.opts.width)) {\n\
+                    return this.opts.width();\n\
+                } else {\n\
+                    return this.opts.width;\n\
+               }\n\
+            };\n\
+\n\
+            var width = resolveContainerWidth.call(this);\n\
+            if (width !== null) {\n\
+                this.container.css(\"width\", width);\n\
+            }\n\
+        }\n\
+    });\n\
+\n\
+    SingleSelect2 = clazz(AbstractSelect2, {\n\
+\n\
+        // single\n\
+\n\
+        createContainer: function () {\n\
+            var container = $(document.createElement(\"div\")).attr({\n\
+                \"class\": \"select2-container\"\n\
+            }).html([\n\
+                \"<a href='javascript:void(0)' class='select2-choice' tabindex='-1'>\",\n\
+                \"   <span class='select2-chosen'>&#160;</span><abbr class='select2-search-choice-close'></abbr>\",\n\
+                \"   <span class='select2-arrow' role='presentation'><b role='presentation'></b></span>\",\n\
+                \"</a>\",\n\
+                \"<label for='' class='select2-offscreen'></label>\",\n\
+                \"<input class='select2-focusser select2-offscreen' type='text' aria-haspopup='true' role='button' />\",\n\
+                \"<div class='select2-drop select2-display-none'>\",\n\
+                \"   <div class='select2-search'>\",\n\
+                \"       <label for='' class='select2-offscreen'></label>\",\n\
+                \"       <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input' role='combobox' aria-expanded='true'\",\n\
+                \"       aria-autocomplete='list' />\",\n\
+                \"   </div>\",\n\
+                \"   <ul class='select2-results' role='listbox'>\",\n\
+                \"   </ul>\",\n\
+                \"</div>\"].join(\"\"));\n\
+            return container;\n\
+        },\n\
+\n\
+        // single\n\
+        enableInterface: function() {\n\
+            if (this.parent.enableInterface.apply(this, arguments)) {\n\
+                this.focusser.prop(\"disabled\", !this.isInterfaceEnabled());\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        opening: function () {\n\
+            var el, range, len;\n\
+\n\
+            if (this.opts.minimumResultsForSearch >= 0) {\n\
+                this.showSearch(true);\n\
+            }\n\
+\n\
+            this.parent.opening.apply(this, arguments);\n\
+\n\
+            if (this.showSearchInput !== false) {\n\
+                // IE appends focusser.val() at the end of field :/ so we manually insert it at the beginning using a range\n\
+                // all other browsers handle this just fine\n\
+\n\
+                this.search.val(this.focusser.val());\n\
+            }\n\
+            if (this.opts.shouldFocusInput(this)) {\n\
+                this.search.focus();\n\
+                // move the cursor to the end after focussing, otherwise it will be at the beginning and\n\
+                // new text will appear *before* focusser.val()\n\
+                el = this.search.get(0);\n\
+                if (el.createTextRange) {\n\
+                    range = el.createTextRange();\n\
+                    range.collapse(false);\n\
+                    range.select();\n\
+                } else if (el.setSelectionRange) {\n\
+                    len = this.search.val().length;\n\
+                    el.setSelectionRange(len, len);\n\
+                }\n\
+            }\n\
+\n\
+            // initializes search's value with nextSearchTerm (if defined by user)\n\
+            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter\n\
+            if(this.search.val() === \"\") {\n\
+                if(this.nextSearchTerm != undefined){\n\
+                    this.search.val(this.nextSearchTerm);\n\
+                    this.search.select();\n\
+                }\n\
+            }\n\
+\n\
+            this.focusser.prop(\"disabled\", true).val(\"\");\n\
+            this.updateResults(true);\n\
+            this.opts.element.trigger($.Event(\"select2-open\"));\n\
+        },\n\
+\n\
+        // single\n\
+        close: function () {\n\
+            if (!this.opened()) return;\n\
+            this.parent.close.apply(this, arguments);\n\
+\n\
+            this.focusser.prop(\"disabled\", false);\n\
+\n\
+            if (this.opts.shouldFocusInput(this)) {\n\
+                this.focusser.focus();\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        focus: function () {\n\
+            if (this.opened()) {\n\
+                this.close();\n\
+            } else {\n\
+                this.focusser.prop(\"disabled\", false);\n\
+                if (this.opts.shouldFocusInput(this)) {\n\
+                    this.focusser.focus();\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        isFocused: function () {\n\
+            return this.container.hasClass(\"select2-container-active\");\n\
+        },\n\
+\n\
+        // single\n\
+        cancel: function () {\n\
+            this.parent.cancel.apply(this, arguments);\n\
+            this.focusser.prop(\"disabled\", false);\n\
+\n\
+            if (this.opts.shouldFocusInput(this)) {\n\
+                this.focusser.focus();\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        destroy: function() {\n\
+            $(\"label[for='\" + this.focusser.attr('id') + \"']\")\n\
+                .attr('for', this.opts.element.attr(\"id\"));\n\
+            this.parent.destroy.apply(this, arguments);\n\
+\n\
+            cleanupJQueryElements.call(this,\n\
+                \"selection\",\n\
+                \"focusser\"\n\
+            );\n\
+        },\n\
+\n\
+        // single\n\
+        initContainer: function () {\n\
+\n\
+            var selection,\n\
+                container = this.container,\n\
+                dropdown = this.dropdown,\n\
+                idSuffix = nextUid(),\n\
+                elementLabel;\n\
+\n\
+            if (this.opts.minimumResultsForSearch < 0) {\n\
+                this.showSearch(false);\n\
+            } else {\n\
+                this.showSearch(true);\n\
+            }\n\
+\n\
+            this.selection = selection = container.find(\".select2-choice\");\n\
+\n\
+            this.focusser = container.find(\".select2-focusser\");\n\
+\n\
+            // add aria associations\n\
+            selection.find(\".select2-chosen\").attr(\"id\", \"select2-chosen-\"+idSuffix);\n\
+            this.focusser.attr(\"aria-labelledby\", \"select2-chosen-\"+idSuffix);\n\
+            this.results.attr(\"id\", \"select2-results-\"+idSuffix);\n\
+            this.search.attr(\"aria-owns\", \"select2-results-\"+idSuffix);\n\
+\n\
+            // rewrite labels from original element to focusser\n\
+            this.focusser.attr(\"id\", \"s2id_autogen\"+idSuffix);\n\
+\n\
+            elementLabel = $(\"label[for='\" + this.opts.element.attr(\"id\") + \"']\");\n\
+\n\
+            this.focusser.prev()\n\
+                .text(elementLabel.text())\n\
+                .attr('for', this.focusser.attr('id'));\n\
+\n\
+            // Ensure the original element retains an accessible name\n\
+            var originalTitle = this.opts.element.attr(\"title\");\n\
+            this.opts.element.attr(\"title\", (originalTitle || elementLabel.text()));\n\
+\n\
+            this.focusser.attr(\"tabindex\", this.elementTabIndex);\n\
+\n\
+            // write label for search field using the label from the focusser element\n\
+            this.search.attr(\"id\", this.focusser.attr('id') + '_search');\n\
+\n\
+            this.search.prev()\n\
+                .text($(\"label[for='\" + this.focusser.attr('id') + \"']\").text())\n\
+                .attr('for', this.search.attr('id'));\n\
+\n\
+            this.search.on(\"keydown\", this.bind(function (e) {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+\n\
+                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {\n\
+                    // prevent the page from scrolling\n\
+                    killEvent(e);\n\
+                    return;\n\
+                }\n\
+\n\
+                switch (e.which) {\n\
+                    case KEY.UP:\n\
+                    case KEY.DOWN:\n\
+                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);\n\
+                        killEvent(e);\n\
+                        return;\n\
+                    case KEY.ENTER:\n\
+                        this.selectHighlighted();\n\
+                        killEvent(e);\n\
+                        return;\n\
+                    case KEY.TAB:\n\
+                        this.selectHighlighted({noFocus: true});\n\
+                        return;\n\
+                    case KEY.ESC:\n\
+                        this.cancel(e);\n\
+                        killEvent(e);\n\
+                        return;\n\
+                }\n\
+            }));\n\
+\n\
+            this.search.on(\"blur\", this.bind(function(e) {\n\
+                // a workaround for chrome to keep the search field focussed when the scroll bar is used to scroll the dropdown.\n\
+                // without this the search field loses focus which is annoying\n\
+                if (document.activeElement === this.body.get(0)) {\n\
+                    window.setTimeout(this.bind(function() {\n\
+                        if (this.opened()) {\n\
+                            this.search.focus();\n\
+                        }\n\
+                    }), 0);\n\
+                }\n\
+            }));\n\
+\n\
+            this.focusser.on(\"keydown\", this.bind(function (e) {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+\n\
+                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e) || e.which === KEY.ESC) {\n\
+                    return;\n\
+                }\n\
+\n\
+                if (this.opts.openOnEnter === false && e.which === KEY.ENTER) {\n\
+                    killEvent(e);\n\
+                    return;\n\
+                }\n\
+\n\
+                if (e.which == KEY.DOWN || e.which == KEY.UP\n\
+                    || (e.which == KEY.ENTER && this.opts.openOnEnter)) {\n\
+\n\
+                    if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;\n\
+\n\
+                    this.open();\n\
+                    killEvent(e);\n\
+                    return;\n\
+                }\n\
+\n\
+                if (e.which == KEY.DELETE || e.which == KEY.BACKSPACE) {\n\
+                    if (this.opts.allowClear) {\n\
+                        this.clear();\n\
+                    }\n\
+                    killEvent(e);\n\
+                    return;\n\
+                }\n\
+            }));\n\
+\n\
+\n\
+            installKeyUpChangeEvent(this.focusser);\n\
+            this.focusser.on(\"keyup-change input\", this.bind(function(e) {\n\
+                if (this.opts.minimumResultsForSearch >= 0) {\n\
+                    e.stopPropagation();\n\
+                    if (this.opened()) return;\n\
+                    this.open();\n\
+                }\n\
+            }));\n\
+\n\
+            selection.on(\"mousedown touchstart\", \"abbr\", this.bind(function (e) {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+                this.clear();\n\
+                killEventImmediately(e);\n\
+                this.close();\n\
+                this.selection.focus();\n\
+            }));\n\
+\n\
+            selection.on(\"mousedown touchstart\", this.bind(function (e) {\n\
+                // Prevent IE from generating a click event on the body\n\
+                reinsertElement(selection);\n\
+\n\
+                if (!this.container.hasClass(\"select2-container-active\")) {\n\
+                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
+                }\n\
+\n\
+                if (this.opened()) {\n\
+                    this.close();\n\
+                } else if (this.isInterfaceEnabled()) {\n\
+                    this.open();\n\
+                }\n\
+\n\
+                killEvent(e);\n\
+            }));\n\
+\n\
+            dropdown.on(\"mousedown touchstart\", this.bind(function() {\n\
+                if (this.opts.shouldFocusInput(this)) {\n\
+                    this.search.focus();\n\
+                }\n\
+            }));\n\
+\n\
+            selection.on(\"focus\", this.bind(function(e) {\n\
+                killEvent(e);\n\
+            }));\n\
+\n\
+            this.focusser.on(\"focus\", this.bind(function(){\n\
+                if (!this.container.hasClass(\"select2-container-active\")) {\n\
+                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
+                }\n\
+                this.container.addClass(\"select2-container-active\");\n\
+            })).on(\"blur\", this.bind(function() {\n\
+                if (!this.opened()) {\n\
+                    this.container.removeClass(\"select2-container-active\");\n\
+                    this.opts.element.trigger($.Event(\"select2-blur\"));\n\
+                }\n\
+            }));\n\
+            this.search.on(\"focus\", this.bind(function(){\n\
+                if (!this.container.hasClass(\"select2-container-active\")) {\n\
+                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
+                }\n\
+                this.container.addClass(\"select2-container-active\");\n\
+            }));\n\
+\n\
+            this.initContainerWidth();\n\
+            this.opts.element.addClass(\"select2-offscreen\");\n\
+            this.setPlaceholder();\n\
+\n\
+        },\n\
+\n\
+        // single\n\
+        clear: function(triggerChange) {\n\
+            var data=this.selection.data(\"select2-data\");\n\
+            if (data) { // guard against queued quick consecutive clicks\n\
+                var evt = $.Event(\"select2-clearing\");\n\
+                this.opts.element.trigger(evt);\n\
+                if (evt.isDefaultPrevented()) {\n\
+                    return;\n\
+                }\n\
+                var placeholderOption = this.getPlaceholderOption();\n\
+                this.opts.element.val(placeholderOption ? placeholderOption.val() : \"\");\n\
+                this.selection.find(\".select2-chosen\").empty();\n\
+                this.selection.removeData(\"select2-data\");\n\
+                this.setPlaceholder();\n\
+\n\
+                if (triggerChange !== false){\n\
+                    this.opts.element.trigger({ type: \"select2-removed\", val: this.id(data), choice: data });\n\
+                    this.triggerChange({removed:data});\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        /**\n\
+         * Sets selection based on source element's value\n\
+         */\n\
+        // single\n\
+        initSelection: function () {\n\
+            var selected;\n\
+            if (this.isPlaceholderOptionSelected()) {\n\
+                this.updateSelection(null);\n\
+                this.close();\n\
+                this.setPlaceholder();\n\
+            } else {\n\
+                var self = this;\n\
+                this.opts.initSelection.call(null, this.opts.element, function(selected){\n\
+                    if (selected !== undefined && selected !== null) {\n\
+                        self.updateSelection(selected);\n\
+                        self.close();\n\
+                        self.setPlaceholder();\n\
+                        self.nextSearchTerm = self.opts.nextSearchTerm(selected, self.search.val());\n\
+                    }\n\
+                });\n\
+            }\n\
+        },\n\
+\n\
+        isPlaceholderOptionSelected: function() {\n\
+            var placeholderOption;\n\
+            if (this.getPlaceholder() === undefined) return false; // no placeholder specified so no option should be considered\n\
+            return ((placeholderOption = this.getPlaceholderOption()) !== undefined && placeholderOption.prop(\"selected\"))\n\
+                || (this.opts.element.val() === \"\")\n\
+                || (this.opts.element.val() === undefined)\n\
+                || (this.opts.element.val() === null);\n\
+        },\n\
+\n\
+        // single\n\
+        prepareOpts: function () {\n\
+            var opts = this.parent.prepareOpts.apply(this, arguments),\n\
+                self=this;\n\
+\n\
+            if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
+                // install the selection initializer\n\
+                opts.initSelection = function (element, callback) {\n\
+                    var selected = element.find(\"option\").filter(function() { return this.selected && !this.disabled });\n\
+                    // a single select box always has a value, no need to null check 'selected'\n\
+                    callback(self.optionToData(selected));\n\
+                };\n\
+            } else if (\"data\" in opts) {\n\
+                // install default initSelection when applied to hidden input and data is local\n\
+                opts.initSelection = opts.initSelection || function (element, callback) {\n\
+                    var id = element.val();\n\
+                    //search in data by id, storing the actual matching item\n\
+                    var match = null;\n\
+                    opts.query({\n\
+                        matcher: function(term, text, el){\n\
+                            var is_match = equal(id, opts.id(el));\n\
+                            if (is_match) {\n\
+                                match = el;\n\
+                            }\n\
+                            return is_match;\n\
+                        },\n\
+                        callback: !$.isFunction(callback) ? $.noop : function() {\n\
+                            callback(match);\n\
+                        }\n\
+                    });\n\
+                };\n\
+            }\n\
+\n\
+            return opts;\n\
+        },\n\
+\n\
+        // single\n\
+        getPlaceholder: function() {\n\
+            // if a placeholder is specified on a single select without a valid placeholder option ignore it\n\
+            if (this.select) {\n\
+                if (this.getPlaceholderOption() === undefined) {\n\
+                    return undefined;\n\
+                }\n\
+            }\n\
+\n\
+            return this.parent.getPlaceholder.apply(this, arguments);\n\
+        },\n\
+\n\
+        // single\n\
+        setPlaceholder: function () {\n\
+            var placeholder = this.getPlaceholder();\n\
+\n\
+            if (this.isPlaceholderOptionSelected() && placeholder !== undefined) {\n\
+\n\
+                // check for a placeholder option if attached to a select\n\
+                if (this.select && this.getPlaceholderOption() === undefined) return;\n\
+\n\
+                this.selection.find(\".select2-chosen\").html(this.opts.escapeMarkup(placeholder));\n\
+\n\
+                this.selection.addClass(\"select2-default\");\n\
+\n\
+                this.container.removeClass(\"select2-allowclear\");\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        postprocessResults: function (data, initial, noHighlightUpdate) {\n\
+            var selected = 0, self = this, showSearchInput = true;\n\
+\n\
+            // find the selected element in the result list\n\
+\n\
+            this.findHighlightableChoices().each2(function (i, elm) {\n\
+                if (equal(self.id(elm.data(\"select2-data\")), self.opts.element.val())) {\n\
+                    selected = i;\n\
+                    return false;\n\
+                }\n\
+            });\n\
+\n\
+            // and highlight it\n\
+            if (noHighlightUpdate !== false) {\n\
+                if (initial === true && selected >= 0) {\n\
+                    this.highlight(selected);\n\
+                } else {\n\
+                    this.highlight(0);\n\
+                }\n\
+            }\n\
+\n\
+            // hide the search box if this is the first we got the results and there are enough of them for search\n\
+\n\
+            if (initial === true) {\n\
+                var min = this.opts.minimumResultsForSearch;\n\
+                if (min >= 0) {\n\
+                    this.showSearch(countResults(data.results) >= min);\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        showSearch: function(showSearchInput) {\n\
+            if (this.showSearchInput === showSearchInput) return;\n\
+\n\
+            this.showSearchInput = showSearchInput;\n\
+\n\
+            this.dropdown.find(\".select2-search\").toggleClass(\"select2-search-hidden\", !showSearchInput);\n\
+            this.dropdown.find(\".select2-search\").toggleClass(\"select2-offscreen\", !showSearchInput);\n\
+            //add \"select2-with-searchbox\" to the container if search box is shown\n\
+            $(this.dropdown, this.container).toggleClass(\"select2-with-searchbox\", showSearchInput);\n\
+        },\n\
+\n\
+        // single\n\
+        onSelect: function (data, options) {\n\
+\n\
+            if (!this.triggerSelect(data)) { return; }\n\
+\n\
+            var old = this.opts.element.val(),\n\
+                oldData = this.data();\n\
+\n\
+            this.opts.element.val(this.id(data));\n\
+            this.updateSelection(data);\n\
+\n\
+            this.opts.element.trigger({ type: \"select2-selected\", val: this.id(data), choice: data });\n\
+\n\
+            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());\n\
+            this.close();\n\
+\n\
+            if ((!options || !options.noFocus) && this.opts.shouldFocusInput(this)) {\n\
+                this.focusser.focus();\n\
+            }\n\
+\n\
+            if (!equal(old, this.id(data))) {\n\
+                this.triggerChange({ added: data, removed: oldData });\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        updateSelection: function (data) {\n\
+\n\
+            var container=this.selection.find(\".select2-chosen\"), formatted, cssClass;\n\
+\n\
+            this.selection.data(\"select2-data\", data);\n\
+\n\
+            container.empty();\n\
+            if (data !== null) {\n\
+                formatted=this.opts.formatSelection(data, container, this.opts.escapeMarkup);\n\
+            }\n\
+            if (formatted !== undefined) {\n\
+                container.append(formatted);\n\
+            }\n\
+            cssClass=this.opts.formatSelectionCssClass(data, container);\n\
+            if (cssClass !== undefined) {\n\
+                container.addClass(cssClass);\n\
+            }\n\
+\n\
+            this.selection.removeClass(\"select2-default\");\n\
+\n\
+            if (this.opts.allowClear && this.getPlaceholder() !== undefined) {\n\
+                this.container.addClass(\"select2-allowclear\");\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        val: function () {\n\
+            var val,\n\
+                triggerChange = false,\n\
+                data = null,\n\
+                self = this,\n\
+                oldData = this.data();\n\
+\n\
+            if (arguments.length === 0) {\n\
+                return this.opts.element.val();\n\
+            }\n\
+\n\
+            val = arguments[0];\n\
+\n\
+            if (arguments.length > 1) {\n\
+                triggerChange = arguments[1];\n\
+            }\n\
+\n\
+            if (this.select) {\n\
+                this.select\n\
+                    .val(val)\n\
+                    .find(\"option\").filter(function() { return this.selected }).each2(function (i, elm) {\n\
+                        data = self.optionToData(elm);\n\
+                        return false;\n\
+                    });\n\
+                this.updateSelection(data);\n\
+                this.setPlaceholder();\n\
+                if (triggerChange) {\n\
+                    this.triggerChange({added: data, removed:oldData});\n\
+                }\n\
+            } else {\n\
+                // val is an id. !val is true for [undefined,null,'',0] - 0 is legal\n\
+                if (!val && val !== 0) {\n\
+                    this.clear(triggerChange);\n\
+                    return;\n\
+                }\n\
+                if (this.opts.initSelection === undefined) {\n\
+                    throw new Error(\"cannot call val() if initSelection() is not defined\");\n\
+                }\n\
+                this.opts.element.val(val);\n\
+                this.opts.initSelection(this.opts.element, function(data){\n\
+                    self.opts.element.val(!data ? \"\" : self.id(data));\n\
+                    self.updateSelection(data);\n\
+                    self.setPlaceholder();\n\
+                    if (triggerChange) {\n\
+                        self.triggerChange({added: data, removed:oldData});\n\
+                    }\n\
+                });\n\
+            }\n\
+        },\n\
+\n\
+        // single\n\
+        clearSearch: function () {\n\
+            this.search.val(\"\");\n\
+            this.focusser.val(\"\");\n\
+        },\n\
+\n\
+        // single\n\
+        data: function(value) {\n\
+            var data,\n\
+                triggerChange = false;\n\
+\n\
+            if (arguments.length === 0) {\n\
+                data = this.selection.data(\"select2-data\");\n\
+                if (data == undefined) data = null;\n\
+                return data;\n\
+            } else {\n\
+                if (arguments.length > 1) {\n\
+                    triggerChange = arguments[1];\n\
+                }\n\
+                if (!value) {\n\
+                    this.clear(triggerChange);\n\
+                } else {\n\
+                    data = this.data();\n\
+                    this.opts.element.val(!value ? \"\" : this.id(value));\n\
+                    this.updateSelection(value);\n\
+                    if (triggerChange) {\n\
+                        this.triggerChange({added: value, removed:data});\n\
+                    }\n\
+                }\n\
+            }\n\
+        }\n\
+    });\n\
+\n\
+    MultiSelect2 = clazz(AbstractSelect2, {\n\
+\n\
+        // multi\n\
+        createContainer: function () {\n\
+            var container = $(document.createElement(\"div\")).attr({\n\
+                \"class\": \"select2-container select2-container-multi\"\n\
+            }).html([\n\
+                \"<ul class='select2-choices'>\",\n\
+                \"  <li class='select2-search-field'>\",\n\
+                \"    <label for='' class='select2-offscreen'></label>\",\n\
+                \"    <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input'>\",\n\
+                \"  </li>\",\n\
+                \"</ul>\",\n\
+                \"<div class='select2-drop select2-drop-multi select2-display-none'>\",\n\
+                \"   <ul class='select2-results'>\",\n\
+                \"   </ul>\",\n\
+                \"</div>\"].join(\"\"));\n\
+            return container;\n\
+        },\n\
+\n\
+        // multi\n\
+        prepareOpts: function () {\n\
+            var opts = this.parent.prepareOpts.apply(this, arguments),\n\
+                self=this;\n\
+\n\
+            // TODO validate placeholder is a string if specified\n\
+\n\
+            if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
+                // install the selection initializer\n\
+                opts.initSelection = function (element, callback) {\n\
+\n\
+                    var data = [];\n\
+\n\
+                    element.find(\"option\").filter(function() { return this.selected && !this.disabled }).each2(function (i, elm) {\n\
+                        data.push(self.optionToData(elm));\n\
+                    });\n\
+                    callback(data);\n\
+                };\n\
+            } else if (\"data\" in opts) {\n\
+                // install default initSelection when applied to hidden input and data is local\n\
+                opts.initSelection = opts.initSelection || function (element, callback) {\n\
+                    var ids = splitVal(element.val(), opts.separator);\n\
+                    //search in data by array of ids, storing matching items in a list\n\
+                    var matches = [];\n\
+                    opts.query({\n\
+                        matcher: function(term, text, el){\n\
+                            var is_match = $.grep(ids, function(id) {\n\
+                                return equal(id, opts.id(el));\n\
+                            }).length;\n\
+                            if (is_match) {\n\
+                                matches.push(el);\n\
+                            }\n\
+                            return is_match;\n\
+                        },\n\
+                        callback: !$.isFunction(callback) ? $.noop : function() {\n\
+                            // reorder matches based on the order they appear in the ids array because right now\n\
+                            // they are in the order in which they appear in data array\n\
+                            var ordered = [];\n\
+                            for (var i = 0; i < ids.length; i++) {\n\
+                                var id = ids[i];\n\
+                                for (var j = 0; j < matches.length; j++) {\n\
+                                    var match = matches[j];\n\
+                                    if (equal(id, opts.id(match))) {\n\
+                                        ordered.push(match);\n\
+                                        matches.splice(j, 1);\n\
+                                        break;\n\
+                                    }\n\
+                                }\n\
+                            }\n\
+                            callback(ordered);\n\
+                        }\n\
+                    });\n\
+                };\n\
+            }\n\
+\n\
+            return opts;\n\
+        },\n\
+\n\
+        // multi\n\
+        selectChoice: function (choice) {\n\
+\n\
+            var selected = this.container.find(\".select2-search-choice-focus\");\n\
+            if (selected.length && choice && choice[0] == selected[0]) {\n\
+\n\
+            } else {\n\
+                if (selected.length) {\n\
+                    this.opts.element.trigger(\"choice-deselected\", selected);\n\
+                }\n\
+                selected.removeClass(\"select2-search-choice-focus\");\n\
+                if (choice && choice.length) {\n\
+                    this.close();\n\
+                    choice.addClass(\"select2-search-choice-focus\");\n\
+                    this.opts.element.trigger(\"choice-selected\", choice);\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        destroy: function() {\n\
+            $(\"label[for='\" + this.search.attr('id') + \"']\")\n\
+                .attr('for', this.opts.element.attr(\"id\"));\n\
+            this.parent.destroy.apply(this, arguments);\n\
+\n\
+            cleanupJQueryElements.call(this,\n\
+                \"searchContainer\",\n\
+                \"selection\"\n\
+            );\n\
+        },\n\
+\n\
+        // multi\n\
+        initContainer: function () {\n\
+\n\
+            var selector = \".select2-choices\", selection;\n\
+\n\
+            this.searchContainer = this.container.find(\".select2-search-field\");\n\
+            this.selection = selection = this.container.find(selector);\n\
+\n\
+            var _this = this;\n\
+            this.selection.on(\"click\", \".select2-search-choice:not(.select2-locked)\", function (e) {\n\
+                //killEvent(e);\n\
+                _this.search[0].focus();\n\
+                _this.selectChoice($(this));\n\
+            });\n\
+\n\
+            // rewrite labels from original element to focusser\n\
+            this.search.attr(\"id\", \"s2id_autogen\"+nextUid());\n\
+\n\
+            this.search.prev()\n\
+                .text($(\"label[for='\" + this.opts.element.attr(\"id\") + \"']\").text())\n\
+                .attr('for', this.search.attr('id'));\n\
+\n\
+            this.search.on(\"input paste\", this.bind(function() {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+                if (!this.opened()) {\n\
+                    this.open();\n\
+                }\n\
+            }));\n\
+\n\
+            this.search.attr(\"tabindex\", this.elementTabIndex);\n\
+\n\
+            this.keydowns = 0;\n\
+            this.search.on(\"keydown\", this.bind(function (e) {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+\n\
+                ++this.keydowns;\n\
+                var selected = selection.find(\".select2-search-choice-focus\");\n\
+                var prev = selected.prev(\".select2-search-choice:not(.select2-locked)\");\n\
+                var next = selected.next(\".select2-search-choice:not(.select2-locked)\");\n\
+                var pos = getCursorInfo(this.search);\n\
+\n\
+                if (selected.length &&\n\
+                    (e.which == KEY.LEFT || e.which == KEY.RIGHT || e.which == KEY.BACKSPACE || e.which == KEY.DELETE || e.which == KEY.ENTER)) {\n\
+                    var selectedChoice = selected;\n\
+                    if (e.which == KEY.LEFT && prev.length) {\n\
+                        selectedChoice = prev;\n\
+                    }\n\
+                    else if (e.which == KEY.RIGHT) {\n\
+                        selectedChoice = next.length ? next : null;\n\
+                    }\n\
+                    else if (e.which === KEY.BACKSPACE) {\n\
+                        if (this.unselect(selected.first())) {\n\
+                            this.search.width(10);\n\
+                            selectedChoice = prev.length ? prev : next;\n\
+                        }\n\
+                    } else if (e.which == KEY.DELETE) {\n\
+                        if (this.unselect(selected.first())) {\n\
+                            this.search.width(10);\n\
+                            selectedChoice = next.length ? next : null;\n\
+                        }\n\
+                    } else if (e.which == KEY.ENTER) {\n\
+                        selectedChoice = null;\n\
+                    }\n\
+\n\
+                    this.selectChoice(selectedChoice);\n\
+                    killEvent(e);\n\
+                    if (!selectedChoice || !selectedChoice.length) {\n\
+                        this.open();\n\
+                    }\n\
+                    return;\n\
+                } else if (((e.which === KEY.BACKSPACE && this.keydowns == 1)\n\
+                    || e.which == KEY.LEFT) && (pos.offset == 0 && !pos.length)) {\n\
+\n\
+                    this.selectChoice(selection.find(\".select2-search-choice:not(.select2-locked)\").last());\n\
+                    killEvent(e);\n\
+                    return;\n\
+                } else {\n\
+                    this.selectChoice(null);\n\
+                }\n\
+\n\
+                if (this.opened()) {\n\
+                    switch (e.which) {\n\
+                    case KEY.UP:\n\
+                    case KEY.DOWN:\n\
+                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);\n\
+                        killEvent(e);\n\
+                        return;\n\
+                    case KEY.ENTER:\n\
+                        this.selectHighlighted();\n\
+                        killEvent(e);\n\
+                        return;\n\
+                    case KEY.TAB:\n\
+                        this.selectHighlighted({noFocus:true});\n\
+                        this.close();\n\
+                        return;\n\
+                    case KEY.ESC:\n\
+                        this.cancel(e);\n\
+                        killEvent(e);\n\
+                        return;\n\
+                    }\n\
+                }\n\
+\n\
+                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e)\n\
+                 || e.which === KEY.BACKSPACE || e.which === KEY.ESC) {\n\
+                    return;\n\
+                }\n\
+\n\
+                if (e.which === KEY.ENTER) {\n\
+                    if (this.opts.openOnEnter === false) {\n\
+                        return;\n\
+                    } else if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) {\n\
+                        return;\n\
+                    }\n\
+                }\n\
+\n\
+                this.open();\n\
+\n\
+                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {\n\
+                    // prevent the page from scrolling\n\
+                    killEvent(e);\n\
+                }\n\
+\n\
+                if (e.which === KEY.ENTER) {\n\
+                    // prevent form from being submitted\n\
+                    killEvent(e);\n\
+                }\n\
+\n\
+            }));\n\
+\n\
+            this.search.on(\"keyup\", this.bind(function (e) {\n\
+                this.keydowns = 0;\n\
+                this.resizeSearch();\n\
+            })\n\
+            );\n\
+\n\
+            this.search.on(\"blur\", this.bind(function(e) {\n\
+                this.container.removeClass(\"select2-container-active\");\n\
+                this.search.removeClass(\"select2-focused\");\n\
+                this.selectChoice(null);\n\
+                if (!this.opened()) this.clearSearch();\n\
+                e.stopImmediatePropagation();\n\
+                this.opts.element.trigger($.Event(\"select2-blur\"));\n\
+            }));\n\
+\n\
+            this.container.on(\"click\", selector, this.bind(function (e) {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+                if ($(e.target).closest(\".select2-search-choice\").length > 0) {\n\
+                    // clicked inside a select2 search choice, do not open\n\
+                    return;\n\
+                }\n\
+                this.selectChoice(null);\n\
+                this.clearPlaceholder();\n\
+                if (!this.container.hasClass(\"select2-container-active\")) {\n\
+                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
+                }\n\
+                this.open();\n\
+                this.focusSearch();\n\
+                e.preventDefault();\n\
+            }));\n\
+\n\
+            this.container.on(\"focus\", selector, this.bind(function () {\n\
+                if (!this.isInterfaceEnabled()) return;\n\
+                if (!this.container.hasClass(\"select2-container-active\")) {\n\
+                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
+                }\n\
+                this.container.addClass(\"select2-container-active\");\n\
+                this.dropdown.addClass(\"select2-drop-active\");\n\
+                this.clearPlaceholder();\n\
+            }));\n\
+\n\
+            this.initContainerWidth();\n\
+            this.opts.element.addClass(\"select2-offscreen\");\n\
+\n\
+            // set the placeholder if necessary\n\
+            this.clearSearch();\n\
+        },\n\
+\n\
+        // multi\n\
+        enableInterface: function() {\n\
+            if (this.parent.enableInterface.apply(this, arguments)) {\n\
+                this.search.prop(\"disabled\", !this.isInterfaceEnabled());\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        initSelection: function () {\n\
+            var data;\n\
+            if (this.opts.element.val() === \"\" && this.opts.element.text() === \"\") {\n\
+                this.updateSelection([]);\n\
+                this.close();\n\
+                // set the placeholder if necessary\n\
+                this.clearSearch();\n\
+            }\n\
+            if (this.select || this.opts.element.val() !== \"\") {\n\
+                var self = this;\n\
+                this.opts.initSelection.call(null, this.opts.element, function(data){\n\
+                    if (data !== undefined && data !== null) {\n\
+                        self.updateSelection(data);\n\
+                        self.close();\n\
+                        // set the placeholder if necessary\n\
+                        self.clearSearch();\n\
+                    }\n\
+                });\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        clearSearch: function () {\n\
+            var placeholder = this.getPlaceholder(),\n\
+                maxWidth = this.getMaxSearchWidth();\n\
+\n\
+            if (placeholder !== undefined  && this.getVal().length === 0 && this.search.hasClass(\"select2-focused\") === false) {\n\
+                this.search.val(placeholder).addClass(\"select2-default\");\n\
+                // stretch the search box to full width of the container so as much of the placeholder is visible as possible\n\
+                // we could call this.resizeSearch(), but we do not because that requires a sizer and we do not want to create one so early because of a firefox bug, see #944\n\
+                this.search.width(maxWidth > 0 ? maxWidth : this.container.css(\"width\"));\n\
+            } else {\n\
+                this.search.val(\"\").width(10);\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        clearPlaceholder: function () {\n\
+            if (this.search.hasClass(\"select2-default\")) {\n\
+                this.search.val(\"\").removeClass(\"select2-default\");\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        opening: function () {\n\
+            this.clearPlaceholder(); // should be done before super so placeholder is not used to search\n\
+            this.resizeSearch();\n\
+\n\
+            this.parent.opening.apply(this, arguments);\n\
+\n\
+            this.focusSearch();\n\
+\n\
+            // initializes search's value with nextSearchTerm (if defined by user)\n\
+            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter\n\
+            if(this.search.val() === \"\") {\n\
+                if(this.nextSearchTerm != undefined){\n\
+                    this.search.val(this.nextSearchTerm);\n\
+                    this.search.select();\n\
+                }\n\
+            }\n\
+\n\
+            this.updateResults(true);\n\
+            if (this.opts.shouldFocusInput(this)) {\n\
+                this.search.focus();\n\
+            }\n\
+            this.opts.element.trigger($.Event(\"select2-open\"));\n\
+        },\n\
+\n\
+        // multi\n\
+        close: function () {\n\
+            if (!this.opened()) return;\n\
+            this.parent.close.apply(this, arguments);\n\
+        },\n\
+\n\
+        // multi\n\
+        focus: function () {\n\
+            this.close();\n\
+            this.search.focus();\n\
+        },\n\
+\n\
+        // multi\n\
+        isFocused: function () {\n\
+            return this.search.hasClass(\"select2-focused\");\n\
+        },\n\
+\n\
+        // multi\n\
+        updateSelection: function (data) {\n\
+            var ids = [], filtered = [], self = this;\n\
+\n\
+            // filter out duplicates\n\
+            $(data).each(function () {\n\
+                if (indexOf(self.id(this), ids) < 0) {\n\
+                    ids.push(self.id(this));\n\
+                    filtered.push(this);\n\
+                }\n\
+            });\n\
+            data = filtered;\n\
+\n\
+            this.selection.find(\".select2-search-choice\").remove();\n\
+            $(data).each(function () {\n\
+                self.addSelectedChoice(this);\n\
+            });\n\
+            self.postprocessResults();\n\
+        },\n\
+\n\
+        // multi\n\
+        tokenize: function() {\n\
+            var input = this.search.val();\n\
+            input = this.opts.tokenizer.call(this, input, this.data(), this.bind(this.onSelect), this.opts);\n\
+            if (input != null && input != undefined) {\n\
+                this.search.val(input);\n\
+                if (input.length > 0) {\n\
+                    this.open();\n\
+                }\n\
+            }\n\
+\n\
+        },\n\
+\n\
+        // multi\n\
+        onSelect: function (data, options) {\n\
+\n\
+            if (!this.triggerSelect(data)) { return; }\n\
+\n\
+            this.addSelectedChoice(data);\n\
+\n\
+            this.opts.element.trigger({ type: \"selected\", val: this.id(data), choice: data });\n\
+\n\
+            // keep track of the search's value before it gets cleared\n\
+            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());\n\
+\n\
+            this.clearSearch();\n\
+            this.updateResults();\n\
+\n\
+            if (this.select || !this.opts.closeOnSelect) this.postprocessResults(data, false, this.opts.closeOnSelect===true);\n\
+\n\
+            if (this.opts.closeOnSelect) {\n\
+                this.close();\n\
+                this.search.width(10);\n\
+            } else {\n\
+                if (this.countSelectableResults()>0) {\n\
+                    this.search.width(10);\n\
+                    this.resizeSearch();\n\
+                    if (this.getMaximumSelectionSize() > 0 && this.val().length >= this.getMaximumSelectionSize()) {\n\
+                        // if we reached max selection size repaint the results so choices\n\
+                        // are replaced with the max selection reached message\n\
+                        this.updateResults(true);\n\
+                    } else {\n\
+                        // initializes search's value with nextSearchTerm and update search result\n\
+                        if(this.nextSearchTerm != undefined){\n\
+                            this.search.val(this.nextSearchTerm);\n\
+                            this.updateResults();\n\
+                            this.search.select();\n\
+                        }\n\
+                    }\n\
+                    this.positionDropdown();\n\
+                } else {\n\
+                    // if nothing left to select close\n\
+                    this.close();\n\
+                    this.search.width(10);\n\
+                }\n\
+            }\n\
+\n\
+            // since its not possible to select an element that has already been\n\
+            // added we do not need to check if this is a new element before firing change\n\
+            this.triggerChange({ added: data });\n\
+\n\
+            if (!options || !options.noFocus)\n\
+                this.focusSearch();\n\
+        },\n\
+\n\
+        // multi\n\
+        cancel: function () {\n\
+            this.close();\n\
+            this.focusSearch();\n\
+        },\n\
+\n\
+        addSelectedChoice: function (data) {\n\
+            var enableChoice = !data.locked,\n\
+                enabledItem = $(\n\
+                    \"<li class='select2-search-choice'>\" +\n\
+                    \"    <div></div>\" +\n\
+                    \"    <a href='#' class='select2-search-choice-close' tabindex='-1'></a>\" +\n\
+                    \"</li>\"),\n\
+                disabledItem = $(\n\
+                    \"<li class='select2-search-choice select2-locked'>\" +\n\
+                    \"<div></div>\" +\n\
+                    \"</li>\");\n\
+            var choice = enableChoice ? enabledItem : disabledItem,\n\
+                id = this.id(data),\n\
+                val = this.getVal(),\n\
+                formatted,\n\
+                cssClass;\n\
+\n\
+            formatted=this.opts.formatSelection(data, choice.find(\"div\"), this.opts.escapeMarkup);\n\
+            if (formatted != undefined) {\n\
+                choice.find(\"div\").replaceWith(\"<div>\"+formatted+\"</div>\");\n\
+            }\n\
+            cssClass=this.opts.formatSelectionCssClass(data, choice.find(\"div\"));\n\
+            if (cssClass != undefined) {\n\
+                choice.addClass(cssClass);\n\
+            }\n\
+\n\
+            if(enableChoice){\n\
+              choice.find(\".select2-search-choice-close\")\n\
+                  .on(\"mousedown\", killEvent)\n\
+                  .on(\"click dblclick\", this.bind(function (e) {\n\
+                  if (!this.isInterfaceEnabled()) return;\n\
+\n\
+                  this.unselect($(e.target));\n\
+                  this.selection.find(\".select2-search-choice-focus\").removeClass(\"select2-search-choice-focus\");\n\
+                  killEvent(e);\n\
+                  this.close();\n\
+                  this.focusSearch();\n\
+              })).on(\"focus\", this.bind(function () {\n\
+                  if (!this.isInterfaceEnabled()) return;\n\
+                  this.container.addClass(\"select2-container-active\");\n\
+                  this.dropdown.addClass(\"select2-drop-active\");\n\
+              }));\n\
+            }\n\
+\n\
+            choice.data(\"select2-data\", data);\n\
+            choice.insertBefore(this.searchContainer);\n\
+\n\
+            val.push(id);\n\
+            this.setVal(val);\n\
+        },\n\
+\n\
+        // multi\n\
+        unselect: function (selected) {\n\
+            var val = this.getVal(),\n\
+                data,\n\
+                index;\n\
+            selected = selected.closest(\".select2-search-choice\");\n\
+\n\
+            if (selected.length === 0) {\n\
+                throw \"Invalid argument: \" + selected + \". Must be .select2-search-choice\";\n\
+            }\n\
+\n\
+            data = selected.data(\"select2-data\");\n\
+\n\
+            if (!data) {\n\
+                // prevent a race condition when the 'x' is clicked really fast repeatedly the event can be queued\n\
+                // and invoked on an element already removed\n\
+                return;\n\
+            }\n\
+\n\
+            var evt = $.Event(\"select2-removing\");\n\
+            evt.val = this.id(data);\n\
+            evt.choice = data;\n\
+            this.opts.element.trigger(evt);\n\
+\n\
+            if (evt.isDefaultPrevented()) {\n\
+                return false;\n\
+            }\n\
+\n\
+            while((index = indexOf(this.id(data), val)) >= 0) {\n\
+                val.splice(index, 1);\n\
+                this.setVal(val);\n\
+                if (this.select) this.postprocessResults();\n\
+            }\n\
+\n\
+            selected.remove();\n\
+\n\
+            this.opts.element.trigger({ type: \"select2-removed\", val: this.id(data), choice: data });\n\
+            this.triggerChange({ removed: data });\n\
+\n\
+            return true;\n\
+        },\n\
+\n\
+        // multi\n\
+        postprocessResults: function (data, initial, noHighlightUpdate) {\n\
+            var val = this.getVal(),\n\
+                choices = this.results.find(\".select2-result\"),\n\
+                compound = this.results.find(\".select2-result-with-children\"),\n\
+                self = this;\n\
+\n\
+            choices.each2(function (i, choice) {\n\
+                var id = self.id(choice.data(\"select2-data\"));\n\
+                if (indexOf(id, val) >= 0) {\n\
+                    choice.addClass(\"select2-selected\");\n\
+                    // mark all children of the selected parent as selected\n\
+                    choice.find(\".select2-result-selectable\").addClass(\"select2-selected\");\n\
+                }\n\
+            });\n\
+\n\
+            compound.each2(function(i, choice) {\n\
+                // hide an optgroup if it doesn't have any selectable children\n\
+                if (!choice.is('.select2-result-selectable')\n\
+                    && choice.find(\".select2-result-selectable:not(.select2-selected)\").length === 0) {\n\
+                    choice.addClass(\"select2-selected\");\n\
+                }\n\
+            });\n\
+\n\
+            if (this.highlight() == -1 && noHighlightUpdate !== false){\n\
+                self.highlight(0);\n\
+            }\n\
+\n\
+            //If all results are chosen render formatNoMatches\n\
+            if(!this.opts.createSearchChoice && !choices.filter('.select2-result:not(.select2-selected)').length > 0){\n\
+                if(!data || data && !data.more && this.results.find(\".select2-no-results\").length === 0) {\n\
+                    if (checkFormatter(self.opts.formatNoMatches, \"formatNoMatches\")) {\n\
+                        this.results.append(\"<li class='select2-no-results'>\" + evaluate(self.opts.formatNoMatches, self.search.val()) + \"</li>\");\n\
+                    }\n\
+                }\n\
+            }\n\
+\n\
+        },\n\
+\n\
+        // multi\n\
+        getMaxSearchWidth: function() {\n\
+            return this.selection.width() - getSideBorderPadding(this.search);\n\
+        },\n\
+\n\
+        // multi\n\
+        resizeSearch: function () {\n\
+            var minimumWidth, left, maxWidth, containerLeft, searchWidth,\n\
+                sideBorderPadding = getSideBorderPadding(this.search);\n\
+\n\
+            minimumWidth = measureTextWidth(this.search) + 10;\n\
+\n\
+            left = this.search.offset().left;\n\
+\n\
+            maxWidth = this.selection.width();\n\
+            containerLeft = this.selection.offset().left;\n\
+\n\
+            searchWidth = maxWidth - (left - containerLeft) - sideBorderPadding;\n\
+\n\
+            if (searchWidth < minimumWidth) {\n\
+                searchWidth = maxWidth - sideBorderPadding;\n\
+            }\n\
+\n\
+            if (searchWidth < 40) {\n\
+                searchWidth = maxWidth - sideBorderPadding;\n\
+            }\n\
+\n\
+            if (searchWidth <= 0) {\n\
+              searchWidth = minimumWidth;\n\
+            }\n\
+\n\
+            this.search.width(Math.floor(searchWidth));\n\
+        },\n\
+\n\
+        // multi\n\
+        getVal: function () {\n\
+            var val;\n\
+            if (this.select) {\n\
+                val = this.select.val();\n\
+                return val === null ? [] : val;\n\
+            } else {\n\
+                val = this.opts.element.val();\n\
+                return splitVal(val, this.opts.separator);\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        setVal: function (val) {\n\
+            var unique;\n\
+            if (this.select) {\n\
+                this.select.val(val);\n\
+            } else {\n\
+                unique = [];\n\
+                // filter out duplicates\n\
+                $(val).each(function () {\n\
+                    if (indexOf(this, unique) < 0) unique.push(this);\n\
+                });\n\
+                this.opts.element.val(unique.length === 0 ? \"\" : unique.join(this.opts.separator));\n\
+            }\n\
+        },\n\
+\n\
+        // multi\n\
+        buildChangeDetails: function (old, current) {\n\
+            var current = current.slice(0),\n\
+                old = old.slice(0);\n\
+\n\
+            // remove intersection from each array\n\
+            for (var i = 0; i < current.length; i++) {\n\
+                for (var j = 0; j < old.length; j++) {\n\
+                    if (equal(this.opts.id(current[i]), this.opts.id(old[j]))) {\n\
+                        current.splice(i, 1);\n\
+                        if(i>0){\n\
+                        \ti--;\n\
+                        }\n\
+                        old.splice(j, 1);\n\
+                        j--;\n\
+                    }\n\
+                }\n\
+            }\n\
+\n\
+            return {added: current, removed: old};\n\
+        },\n\
+\n\
+\n\
+        // multi\n\
+        val: function (val, triggerChange) {\n\
+            var oldData, self=this;\n\
+\n\
+            if (arguments.length === 0) {\n\
+                return this.getVal();\n\
+            }\n\
+\n\
+            oldData=this.data();\n\
+            if (!oldData.length) oldData=[];\n\
+\n\
+            // val is an id. !val is true for [undefined,null,'',0] - 0 is legal\n\
+            if (!val && val !== 0) {\n\
+                this.opts.element.val(\"\");\n\
+                this.updateSelection([]);\n\
+                this.clearSearch();\n\
+                if (triggerChange) {\n\
+                    this.triggerChange({added: this.data(), removed: oldData});\n\
+                }\n\
+                return;\n\
+            }\n\
+\n\
+            // val is a list of ids\n\
+            this.setVal(val);\n\
+\n\
+            if (this.select) {\n\
+                this.opts.initSelection(this.select, this.bind(this.updateSelection));\n\
+                if (triggerChange) {\n\
+                    this.triggerChange(this.buildChangeDetails(oldData, this.data()));\n\
+                }\n\
+            } else {\n\
+                if (this.opts.initSelection === undefined) {\n\
+                    throw new Error(\"val() cannot be called if initSelection() is not defined\");\n\
+                }\n\
+\n\
+                this.opts.initSelection(this.opts.element, function(data){\n\
+                    var ids=$.map(data, self.id);\n\
+                    self.setVal(ids);\n\
+                    self.updateSelection(data);\n\
+                    self.clearSearch();\n\
+                    if (triggerChange) {\n\
+                        self.triggerChange(self.buildChangeDetails(oldData, self.data()));\n\
+                    }\n\
+                });\n\
+            }\n\
+            this.clearSearch();\n\
+        },\n\
+\n\
+        // multi\n\
+        onSortStart: function() {\n\
+            if (this.select) {\n\
+                throw new Error(\"Sorting of elements is not supported when attached to <select>. Attach to <input type='hidden'/> instead.\");\n\
+            }\n\
+\n\
+            // collapse search field into 0 width so its container can be collapsed as well\n\
+            this.search.width(0);\n\
+            // hide the container\n\
+            this.searchContainer.hide();\n\
+        },\n\
+\n\
+        // multi\n\
+        onSortEnd:function() {\n\
+\n\
+            var val=[], self=this;\n\
+\n\
+            // show search and move it to the end of the list\n\
+            this.searchContainer.show();\n\
+            // make sure the search container is the last item in the list\n\
+            this.searchContainer.appendTo(this.searchContainer.parent());\n\
+            // since we collapsed the width in dragStarted, we resize it here\n\
+            this.resizeSearch();\n\
+\n\
+            // update selection\n\
+            this.selection.find(\".select2-search-choice\").each(function() {\n\
+                val.push(self.opts.id($(this).data(\"select2-data\")));\n\
+            });\n\
+            this.setVal(val);\n\
+            this.triggerChange();\n\
+        },\n\
+\n\
+        // multi\n\
+        data: function(values, triggerChange) {\n\
+            var self=this, ids, old;\n\
+            if (arguments.length === 0) {\n\
+                 return this.selection\n\
+                     .children(\".select2-search-choice\")\n\
+                     .map(function() { return $(this).data(\"select2-data\"); })\n\
+                     .get();\n\
+            } else {\n\
+                old = this.data();\n\
+                if (!values) { values = []; }\n\
+                ids = $.map(values, function(e) { return self.opts.id(e); });\n\
+                this.setVal(ids);\n\
+                this.updateSelection(values);\n\
+                this.clearSearch();\n\
+                if (triggerChange) {\n\
+                    this.triggerChange(this.buildChangeDetails(old, this.data()));\n\
+                }\n\
+            }\n\
+        }\n\
+    });\n\
+\n\
+    $.fn.select2 = function () {\n\
+\n\
+        var args = Array.prototype.slice.call(arguments, 0),\n\
+            opts,\n\
+            select2,\n\
+            method, value, multiple,\n\
+            allowedMethods = [\"val\", \"destroy\", \"opened\", \"open\", \"close\", \"focus\", \"isFocused\", \"container\", \"dropdown\", \"onSortStart\", \"onSortEnd\", \"enable\", \"disable\", \"readonly\", \"positionDropdown\", \"data\", \"search\"],\n\
+            valueMethods = [\"opened\", \"isFocused\", \"container\", \"dropdown\"],\n\
+            propertyMethods = [\"val\", \"data\"],\n\
+            methodsMap = { search: \"externalSearch\" };\n\
+\n\
+        this.each(function () {\n\
+            if (args.length === 0 || typeof(args[0]) === \"object\") {\n\
+                opts = args.length === 0 ? {} : $.extend({}, args[0]);\n\
+                opts.element = $(this);\n\
+\n\
+                if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
+                    multiple = opts.element.prop(\"multiple\");\n\
+                } else {\n\
+                    multiple = opts.multiple || false;\n\
+                    if (\"tags\" in opts) {opts.multiple = multiple = true;}\n\
+                }\n\
+\n\
+                select2 = multiple ? new window.Select2[\"class\"].multi() : new window.Select2[\"class\"].single();\n\
+                select2.init(opts);\n\
+            } else if (typeof(args[0]) === \"string\") {\n\
+\n\
+                if (indexOf(args[0], allowedMethods) < 0) {\n\
+                    throw \"Unknown method: \" + args[0];\n\
+                }\n\
+\n\
+                value = undefined;\n\
+                select2 = $(this).data(\"select2\");\n\
+                if (select2 === undefined) return;\n\
+\n\
+                method=args[0];\n\
+\n\
+                if (method === \"container\") {\n\
+                    value = select2.container;\n\
+                } else if (method === \"dropdown\") {\n\
+                    value = select2.dropdown;\n\
+                } else {\n\
+                    if (methodsMap[method]) method = methodsMap[method];\n\
+\n\
+                    value = select2[method].apply(select2, args.slice(1));\n\
+                }\n\
+                if (indexOf(args[0], valueMethods) >= 0\n\
+                    || (indexOf(args[0], propertyMethods) >= 0 && args.length == 1)) {\n\
+                    return false; // abort the iteration, ready to return first matched value\n\
+                }\n\
+            } else {\n\
+                throw \"Invalid arguments to select2 plugin: \" + args;\n\
+            }\n\
+        });\n\
+        return (value === undefined) ? this : value;\n\
+    };\n\
+\n\
+    // plugin defaults, accessible to users\n\
+    $.fn.select2.defaults = {\n\
+        width: \"copy\",\n\
+        loadMorePadding: 0,\n\
+        closeOnSelect: true,\n\
+        openOnEnter: true,\n\
+        containerCss: {},\n\
+        dropdownCss: {},\n\
+        containerCssClass: \"\",\n\
+        dropdownCssClass: \"\",\n\
+        formatResult: function(result, container, query, escapeMarkup) {\n\
+            var markup=[];\n\
+            markMatch(result.text, query.term, markup, escapeMarkup);\n\
+            return markup.join(\"\");\n\
+        },\n\
+        formatSelection: function (data, container, escapeMarkup) {\n\
+            return data ? escapeMarkup(data.text) : undefined;\n\
+        },\n\
+        sortResults: function (results, container, query) {\n\
+            return results;\n\
+        },\n\
+        formatResultCssClass: function(data) {return data.css;},\n\
+        formatSelectionCssClass: function(data, container) {return undefined;},\n\
+        formatMatches: function (matches) { return matches + \" results are available, use up and down arrow keys to navigate.\"; },\n\
+        formatNoMatches: function () { return \"No matches found\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Please enter \" + n + \" or more character\" + (n == 1? \"\" : \"s\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Please delete \" + n + \" character\" + (n == 1? \"\" : \"s\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"You can only select \" + limit + \" item\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Loading more results…\"; },\n\
+        formatSearching: function () { return \"Searching…\"; },\n\
+        minimumResultsForSearch: 0,\n\
+        minimumInputLength: 0,\n\
+        maximumInputLength: null,\n\
+        maximumSelectionSize: 0,\n\
+        id: function (e) { return e == undefined ? null : e.id; },\n\
+        matcher: function(term, text) {\n\
+            return stripDiacritics(''+text).toUpperCase().indexOf(stripDiacritics(''+term).toUpperCase()) >= 0;\n\
+        },\n\
+        separator: \",\",\n\
+        tokenSeparators: [],\n\
+        tokenizer: defaultTokenizer,\n\
+        escapeMarkup: defaultEscapeMarkup,\n\
+        blurOnChange: false,\n\
+        selectOnBlur: false,\n\
+        adaptContainerCssClass: function(c) { return c; },\n\
+        adaptDropdownCssClass: function(c) { return null; },\n\
+        nextSearchTerm: function(selectedObject, currentSearchTerm) { return undefined; },\n\
+        searchInputPlaceholder: '',\n\
+        createSearchChoicePosition: 'top',\n\
+        shouldFocusInput: function (instance) {\n\
+            // Attempt to detect touch devices\n\
+            var supportsTouchEvents = (('ontouchstart' in window) ||\n\
+                                       (navigator.msMaxTouchPoints > 0));\n\
+\n\
+            // Only devices which support touch events should be special cased\n\
+            if (!supportsTouchEvents) {\n\
+                return true;\n\
+            }\n\
+\n\
+            // Never focus the input if search is disabled\n\
+            if (instance.opts.minimumResultsForSearch < 0) {\n\
+                return false;\n\
+            }\n\
+\n\
+            return true;\n\
+        }\n\
+    };\n\
+\n\
+    $.fn.select2.ajaxDefaults = {\n\
+        transport: $.ajax,\n\
+        params: {\n\
+            type: \"GET\",\n\
+            cache: false,\n\
+            dataType: \"json\"\n\
+        }\n\
+    };\n\
+\n\
+    // exports\n\
+    window.Select2 = {\n\
+        query: {\n\
+            ajax: ajax,\n\
+            local: local,\n\
+            tags: tags\n\
+        }, util: {\n\
+            debounce: debounce,\n\
+            markMatch: markMatch,\n\
+            escapeMarkup: defaultEscapeMarkup,\n\
+            stripDiacritics: stripDiacritics\n\
+        }, \"class\": {\n\
+            \"abstract\": AbstractSelect2,\n\
+            \"single\": SingleSelect2,\n\
+            \"multi\": MultiSelect2\n\
+        }\n\
+    };\n\
+\n\
+}(jQuery));\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ar.js", Function("exports, module",
+"﻿/**\n\
+ * Select2 Arabic translation.\n\
+ *\n\
+ * Author: Adel KEDJOUR <adel@kedjour.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"لم يتم العثور على مطابقات\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; if (n == 1){ return \"الرجاء إدخال حرف واحد على الأكثر\"; } return n == 2 ? \"الرجاء إدخال حرفين على الأكثر\" : \"الرجاء إدخال \" + n + \" على الأكثر\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; if (n == 1){ return \"الرجاء إدخال حرف واحد على الأقل\"; } return n == 2 ? \"الرجاء إدخال حرفين على الأقل\" : \"الرجاء إدخال \" + n + \" على الأقل \"; },\n\
+        formatSelectionTooBig: function (limit) { if (n == 1){ return \"يمكنك أن تختار إختيار واحد فقط\"; } return n == 2 ? \"يمكنك أن تختار إختيارين فقط\" : \"يمكنك أن تختار \" + n + \" إختيارات فقط\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"تحميل المزيد من النتائج…\"; },\n\
+        formatSearching: function () { return \"البحث…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ar.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_bg.js", Function("exports, module",
+"/**\n\
+ * Select2 Bulgarian translation.\n\
+ * \n\
+ * @author  Lubomir Vikev <lubomirvikev@gmail.com>\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Няма намерени съвпадения\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Моля въведете още \" + n + \" символ\" + (n > 1 ? \"а\" : \"\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Моля въведете с \" + n + \" по-малко символ\" + (n > 1 ? \"а\" : \"\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Можете да направите до \" + limit + (limit > 1 ? \" избора\" : \" избор\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Зареждат се още…\"; },\n\
+        formatSearching: function () { return \"Търсене…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_bg.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ca.js", Function("exports, module",
+"/**\n\
+ * Select2 Catalan translation.\n\
+ * \n\
+ * Author: David Planella <david.planella@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"No s'ha trobat cap coincidència\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Introduïu \" + n + \" caràcter\" + (n == 1 ? \"\" : \"s\") + \" més\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Introduïu \" + n + \" caràcter\" + (n == 1? \"\" : \"s\") + \"menys\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Només podeu seleccionar \" + limit + \" element\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"S'estan carregant més resultats…\"; },\n\
+        formatSearching: function () { return \"S'està cercant…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ca.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_cs.js", Function("exports, module",
+"/**\n\
+ * Select2 Czech translation.\n\
+ * \n\
+ * Author: Michal Marek <ahoj@michal-marek.cz>\n\
+ * Author - sklonovani: David Vallner <david@vallner.net>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+    // use text for the numbers 2 through 4\n\
+    var smallNumbers = {\n\
+        2: function(masc) { return (masc ? \"dva\" : \"dvě\"); },\n\
+        3: function() { return \"tři\"; },\n\
+        4: function() { return \"čtyři\"; }\n\
+    }\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nenalezeny žádné položky\"; },\n\
+        formatInputTooShort: function (input, min) {\n\
+            var n = min - input.length;\n\
+            if (n == 1) {\n\
+                return \"Prosím zadejte ještě jeden znak\";\n\
+            } else if (n <= 4) {\n\
+                return \"Prosím zadejte ještě další \"+smallNumbers[n](true)+\" znaky\";\n\
+            } else {\n\
+                return \"Prosím zadejte ještě dalších \"+n+\" znaků\";\n\
+            }\n\
+        },\n\
+        formatInputTooLong: function (input, max) {\n\
+            var n = input.length - max;\n\
+            if (n == 1) {\n\
+                return \"Prosím zadejte o jeden znak méně\";\n\
+            } else if (n <= 4) {\n\
+                return \"Prosím zadejte o \"+smallNumbers[n](true)+\" znaky méně\";\n\
+            } else {\n\
+                return \"Prosím zadejte o \"+n+\" znaků méně\";\n\
+            }\n\
+        },\n\
+        formatSelectionTooBig: function (limit) {\n\
+            if (limit == 1) {\n\
+                return \"Můžete zvolit jen jednu položku\";\n\
+            } else if (limit <= 4) {\n\
+                return \"Můžete zvolit maximálně \"+smallNumbers[limit](false)+\" položky\";\n\
+            } else {\n\
+                return \"Můžete zvolit maximálně \"+limit+\" položek\";\n\
+            }\n\
+        },\n\
+        formatLoadMore: function (pageNumber) { return \"Načítají se další výsledky…\"; },\n\
+        formatSearching: function () { return \"Vyhledávání…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_cs.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_da.js", Function("exports, module",
+"/**\n\
+ * Select2 Danish translation.\n\
+ *\n\
+ * Author: Anders Jenbo <anders@jenbo.dk>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Ingen resultater fundet\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Angiv venligst \" + n + \" tegn mere\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Angiv venligst \" + n + \" tegn mindre\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Du kan kun vælge \" + limit + \" emne\" + (limit === 1 ? \"\" : \"r\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Indlæser flere resultater…\"; },\n\
+        formatSearching: function () { return \"Søger…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_da.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_de.js", Function("exports, module",
+"/**\n\
+ * Select2 German translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Keine Übereinstimmungen gefunden\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Bitte \" + n + \" Zeichen mehr eingeben\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Bitte \" + n + \" Zeichen weniger eingeben\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Sie können nur \" + limit + \" Eintr\" + (limit === 1 ? \"ag\" : \"äge\") + \" auswählen\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Lade mehr Ergebnisse…\"; },\n\
+        formatSearching: function () { return \"Suche…\"; }\n\
+    });\n\
+})(jQuery);\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_de.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_el.js", Function("exports, module",
+"/**\n\
+ * Select2 Greek translation.\n\
+ * \n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Δεν βρέθηκαν αποτελέσματα\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Παρακαλούμε εισάγετε \" + n + \" περισσότερο\" + (n > 1 ? \"υς\" : \"\") + \" χαρακτήρ\" + (n > 1 ? \"ες\" : \"α\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Παρακαλούμε διαγράψτε \" + n + \" χαρακτήρ\" + (n > 1 ? \"ες\" : \"α\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Μπορείτε να επιλέξετε μόνο \" + limit + \" αντικείμεν\" + (limit > 1 ? \"α\" : \"ο\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Φόρτωση περισσότερων…\"; },\n\
+        formatSearching: function () { return \"Αναζήτηση…\"; }\n\
+    });\n\
+})(jQuery);\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_el.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_es.js", Function("exports, module",
+"/**\n\
+ * Select2 Spanish translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"No se encontraron resultados\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Por favor, introduzca \" + n + \" car\" + (n == 1? \"ácter\" : \"acteres\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Por favor, elimine \" + n + \" car\" + (n == 1? \"ácter\" : \"acteres\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Sólo puede seleccionar \" + limit + \" elemento\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Cargando más resultados…\"; },\n\
+        formatSearching: function () { return \"Buscando…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_es.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_et.js", Function("exports, module",
+"/**\n\
+ * Select2 Estonian translation.\n\
+ *\n\
+ * Author: Kuldar Kalvik <kuldar@kalvik.ee>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Tulemused puuduvad\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Sisesta \" + n + \" täht\" + (n == 1 ? \"\" : \"e\") + \" rohkem\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Sisesta \" + n + \" täht\" + (n == 1? \"\" : \"e\") + \" vähem\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Saad vaid \" + limit + \" tulemus\" + (limit == 1 ? \"e\" : \"t\") + \" valida\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Laen tulemusi..\"; },\n\
+        formatSearching: function () { return \"Otsin..\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_et.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_eu.js", Function("exports, module",
+"/**\n\
+ * Select2 Basque translation.\n\
+ *\n\
+ * Author: Julen Ruiz Aizpuru <julenx at gmail dot com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () {\n\
+          return \"Ez da bat datorrenik aurkitu\";\n\
+        },\n\
+        formatInputTooShort: function (input, min) {\n\
+          var n = min - input.length;\n\
+          if (n === 1) {\n\
+            return \"Idatzi karaktere bat gehiago\";\n\
+          } else {\n\
+            return \"Idatzi \" + n + \" karaktere gehiago\";\n\
+          }\n\
+        },\n\
+        formatInputTooLong: function (input, max) {\n\
+          var n = input.length - max;\n\
+          if (n === 1) {\n\
+            return \"Idatzi karaktere bat gutxiago\";\n\
+          } else {\n\
+            return \"Idatzi \" + n + \" karaktere gutxiago\";\n\
+          }\n\
+        },\n\
+        formatSelectionTooBig: function (limit) {\n\
+          if (limit === 1 ) {\n\
+            return \"Elementu bakarra hauta dezakezu\";\n\
+          } else {\n\
+            return limit + \" elementu hauta ditzakezu soilik\";\n\
+          }\n\
+        },\n\
+        formatLoadMore: function (pageNumber) {\n\
+          return \"Emaitza gehiago kargatzen…\";\n\
+        },\n\
+        formatSearching: function () {\n\
+          return \"Bilatzen…\";\n\
+        }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_eu.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fa.js", Function("exports, module",
+"/**\n\
+ * Select2 Persian translation.\n\
+ * \n\
+ * Author: Ali Choopan <choopan@arsh.co>\n\
+ * Author: Ebrahim Byagowi <ebrahim@gnu.org>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatMatches: function (matches) { return matches + \" نتیجه موجود است، کلیدهای جهت بالا و پایین را برای گشتن استفاده کنید.\"; },\n\
+        formatNoMatches: function () { return \"نتیجه‌ای یافت نشد.\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"لطفاً \" + n + \" نویسه بیشتر وارد نمایید\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"لطفاً \" + n + \" نویسه را حذف کنید.\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"شما فقط می‌توانید \" + limit + \" مورد را انتخاب کنید\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"در حال بارگیری موارد بیشتر…\"; },\n\
+        formatSearching: function () { return \"در حال جستجو…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_fa.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fi.js", Function("exports, module",
+"/**\n\
+ * Select2 Finnish translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () {\n\
+            return \"Ei tuloksia\";\n\
+        },\n\
+        formatInputTooShort: function (input, min) {\n\
+            var n = min - input.length;\n\
+            return \"Ole hyvä ja anna \" + n + \" merkkiä lisää\";\n\
+        },\n\
+        formatInputTooLong: function (input, max) {\n\
+            var n = input.length - max;\n\
+            return \"Ole hyvä ja anna \" + n + \" merkkiä vähemmän\";\n\
+        },\n\
+        formatSelectionTooBig: function (limit) {\n\
+            return \"Voit valita ainoastaan \" + limit + \" kpl\";\n\
+        },\n\
+        formatLoadMore: function (pageNumber) {\n\
+            return \"Ladataan lisää tuloksia…\";\n\
+        },\n\
+        formatSearching: function () {\n\
+            return \"Etsitään…\";\n\
+        }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_fi.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fr.js", Function("exports, module",
+"/**\n\
+ * Select2 French translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatMatches: function (matches) { return matches + \" résultats sont disponibles, utilisez les flèches haut et bas pour naviguer.\"; },\n\
+        formatNoMatches: function () { return \"Aucun résultat trouvé\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Merci de saisir \" + n + \" caractère\" + (n == 1 ? \"\" : \"s\") + \" de plus\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Merci de supprimer \" + n + \" caractère\" + (n == 1 ? \"\" : \"s\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Vous pouvez seulement sélectionner \" + limit + \" élément\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Chargement de résultats supplémentaires…\"; },\n\
+        formatSearching: function () { return \"Recherche en cours…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_fr.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_gl.js", Function("exports, module",
+"/**\n\
+ * Select2 Galician translation\n\
+ * \n\
+ * Author: Leandro Regueiro <leandro.regueiro@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () {\n\
+            return \"Non se atoparon resultados\";\n\
+        },\n\
+        formatInputTooShort: function (input, min) {\n\
+            var n = min - input.length;\n\
+            if (n === 1) {\n\
+                return \"Engada un carácter\";\n\
+            } else {\n\
+                return \"Engada \" + n + \" caracteres\";\n\
+            }\n\
+        },\n\
+        formatInputTooLong: function (input, max) {\n\
+            var n = input.length - max;\n\
+            if (n === 1) {\n\
+                return \"Elimine un carácter\";\n\
+            } else {\n\
+                return \"Elimine \" + n + \" caracteres\";\n\
+            }\n\
+        },\n\
+        formatSelectionTooBig: function (limit) {\n\
+            if (limit === 1 ) {\n\
+                return \"Só pode seleccionar un elemento\";\n\
+            } else {\n\
+                return \"Só pode seleccionar \" + limit + \" elementos\";\n\
+            }\n\
+        },\n\
+        formatLoadMore: function (pageNumber) {\n\
+            return \"Cargando máis resultados…\";\n\
+        },\n\
+        formatSearching: function () {\n\
+            return \"Buscando…\";\n\
+        }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_gl.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_he.js", Function("exports, module",
+"/**\n\
+* Select2 Hebrew translation.\n\
+*\n\
+* Author: Yakir Sitbon <http://www.yakirs.net/>\n\
+*/\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"לא נמצאו התאמות\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"נא להזין עוד \" + n + \" תווים נוספים\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"נא להזין פחות \" + n + \" תווים\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"ניתן לבחור \" + limit + \" פריטים\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"טוען תוצאות נוספות…\"; },\n\
+        formatSearching: function () { return \"מחפש…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_he.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_hr.js", Function("exports, module",
+"/**\n\
+ * Select2 Croatian translation.\n\
+ *\n\
+ * @author  Edi Modrić <edi.modric@gmail.com>\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nema rezultata\"; },\n\
+        formatInputTooShort: function (input, min) { return \"Unesite još\" + character(min - input.length); },\n\
+        formatInputTooLong: function (input, max) { return \"Unesite\" + character(input.length - max) + \" manje\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Maksimalan broj odabranih stavki je \" + limit; },\n\
+        formatLoadMore: function (pageNumber) { return \"Učitavanje rezultata…\"; },\n\
+        formatSearching: function () { return \"Pretraga…\"; }\n\
+    });\n\
+\n\
+    function character (n) {\n\
+        return \" \" + n + \" znak\" + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 19) ? n%10 > 1 ? \"a\" : \"\" : \"ova\");\n\
+    }\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_hr.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_hu.js", Function("exports, module",
+"/**\n\
+ * Select2 Hungarian translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nincs találat.\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Túl rövid. Még \" + n + \" karakter hiányzik.\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Túl hosszú. \" + n + \" karakterrel több, mint kellene.\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Csak \" + limit + \" elemet lehet kiválasztani.\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Töltés…\"; },\n\
+        formatSearching: function () { return \"Keresés…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_hu.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_id.js", Function("exports, module",
+"/**\n\
+ * Select2 Indonesian translation.\n\
+ * \n\
+ * Author: Ibrahim Yusuf <ibrahim7usuf@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Tidak ada data yang sesuai\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Masukkan \" + n + \" huruf lagi\" + (n == 1 ? \"\" : \"s\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Hapus \" + n + \" huruf\" + (n == 1 ? \"\" : \"s\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Anda hanya dapat memilih \" + limit + \" pilihan\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Mengambil data…\"; },\n\
+        formatSearching: function () { return \"Mencari…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_id.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_is.js", Function("exports, module",
+"/**\n\
+ * Select2 Icelandic translation.\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Ekkert fannst\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Vinsamlegast skrifið \" + n + \" staf\" + (n > 1 ? \"i\" : \"\") + \" í viðbót\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Vinsamlegast styttið texta um \" + n + \" staf\" + (n > 1 ? \"i\" : \"\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Þú getur aðeins valið \" + limit + \" atriði\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Sæki fleiri niðurstöður…\"; },\n\
+        formatSearching: function () { return \"Leita…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_is.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_it.js", Function("exports, module",
+"/**\n\
+ * Select2 Italian translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nessuna corrispondenza trovata\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Inserisci ancora \" + n + \" caratter\" + (n == 1? \"e\" : \"i\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Inserisci \" + n + \" caratter\" + (n == 1? \"e\" : \"i\") + \" in meno\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Puoi selezionare solo \" + limit + \" element\" + (limit == 1 ? \"o\" : \"i\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Caricamento in corso…\"; },\n\
+        formatSearching: function () { return \"Ricerca…\"; }\n\
+    });\n\
+})(jQuery);\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_it.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ja.js", Function("exports, module",
+"/**\n\
+ * Select2 Japanese translation.\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"該当なし\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"後\" + n + \"文字入れてください\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"検索文字列が\" + n + \"文字長すぎます\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"最多で\" + limit + \"項目までしか選択できません\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"読込中･･･\"; },\n\
+        formatSearching: function () { return \"検索中･･･\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ja.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ka.js", Function("exports, module",
+"/**\n\
+ * Select2 Georgian (Kartuli) translation.\n\
+ * \n\
+ * Author: Dimitri Kurashvili dimakura@gmail.com\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"ვერ მოიძებნა\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"გთხოვთ შეიყვანოთ კიდევ \" + n + \" სიმბოლო\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"გთხოვთ წაშალოთ \" + n + \" სიმბოლო\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"თქვენ შეგიძლიათ მხოლოდ \" + limit + \" ჩანაწერის მონიშვნა\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"შედეგის ჩატვირთვა…\"; },\n\
+        formatSearching: function () { return \"ძებნა…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ka.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ko.js", Function("exports, module",
+"/**\n\
+ * Select2 Korean translation.\n\
+ * \n\
+ * @author  Swen Mun <longfinfunnel@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"결과 없음\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"너무 짧습니다. \"+n+\"글자 더 입력해주세요.\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"너무 깁니다. \"+n+\"글자 지워주세요.\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"최대 \"+limit+\"개까지만 선택하실 수 있습니다.\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"불러오는 중…\"; },\n\
+        formatSearching: function () { return \"검색 중…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ko.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_lt.js", Function("exports, module",
+"/**\n\
+ * Select2 Lithuanian translation.\n\
+ * \n\
+ * @author  CRONUS Karmalakas <cronus dot karmalakas at gmail dot com>\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Atitikmenų nerasta\"; },\n\
+        formatInputTooShort: function (input, min) { return \"Įrašykite dar\" + character(min - input.length); },\n\
+        formatInputTooLong: function (input, max) { return \"Pašalinkite\" + character(input.length - max); },\n\
+        formatSelectionTooBig: function (limit) {\n\
+        \treturn \"Jūs galite pasirinkti tik \" + limit + \" element\" + ((limit%100 > 9 && limit%100 < 21) || limit%10 == 0 ? \"ų\" : limit%10 > 1 ? \"us\" : \"ą\");\n\
+        },\n\
+        formatLoadMore: function (pageNumber) { return \"Kraunama daugiau rezultatų…\"; },\n\
+        formatSearching: function () { return \"Ieškoma…\"; }\n\
+    });\n\
+\n\
+    function character (n) {\n\
+        return \" \" + n + \" simbol\" + ((n%100 > 9 && n%100 < 21) || n%10 == 0 ? \"ių\" : n%10 > 1 ? \"ius\" : \"į\");\n\
+    }\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_lt.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_lv.js", Function("exports, module",
+"/**\n\
+ * Select2 Latvian translation.\n\
+ *\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Sakritību nav\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Lūdzu ievadiet vēl \" + n + \" simbol\" + (n == 11 ? \"us\" : n%10 == 1 ? \"u\" : \"us\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Lūdzu ievadiet par \" + n + \" simbol\" + (n == 11 ? \"iem\" : n%10 == 1 ? \"u\" : \"iem\") + \" mazāk\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Jūs varat izvēlēties ne vairāk kā \" + limit + \" element\" + (limit == 11 ? \"us\" : limit%10 == 1 ? \"u\" : \"us\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Datu ielāde…\"; },\n\
+        formatSearching: function () { return \"Meklēšana…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_lv.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_mk.js", Function("exports, module",
+"/**\n\
+ * Select2 Macedonian translation.\n\
+ * \n\
+ * Author: Marko Aleksic <psybaron@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Нема пронајдено совпаѓања\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Ве молиме внесете уште \" + n + \" карактер\" + (n == 1 ? \"\" : \"и\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Ве молиме внесете \" + n + \" помалку карактер\" + (n == 1? \"\" : \"и\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Можете да изберете само \" + limit + \" ставк\" + (limit == 1 ? \"а\" : \"и\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Вчитување резултати…\"; },\n\
+        formatSearching: function () { return \"Пребарување…\"; }\n\
+    });\n\
+})(jQuery);\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_mk.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ms.js", Function("exports, module",
+"/**\n\
+ * Select2 Malay translation.\n\
+ * \n\
+ * Author: Kepoweran <kepoweran@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Tiada padanan yang ditemui\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Sila masukkan \" + n + \" aksara lagi\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Sila hapuskan \" + n + \" aksara\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Anda hanya boleh memilih \" + limit + \" pilihan\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Sedang memuatkan keputusan…\"; },\n\
+        formatSearching: function () { return \"Mencari…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ms.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_nl.js", Function("exports, module",
+"/**\n\
+ * Select2 Dutch translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Geen resultaten gevonden\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Vul \" + n + \" karakter\" + (n == 1? \"\" : \"s\") + \" meer in\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Vul \" + n + \" karakter\" + (n == 1? \"\" : \"s\") + \" minder in\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Maximaal \" + limit + \" item\" + (limit == 1 ? \"\" : \"s\") + \" toegestaan\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Meer resultaten laden…\"; },\n\
+        formatSearching: function () { return \"Zoeken…\"; }\n\
+    });\n\
+})(jQuery);\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_nl.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_no.js", Function("exports, module",
+"/**\n\
+ * Select2 Norwegian translation.\n\
+ *\n\
+ * Author: Torgeir Veimo <torgeir.veimo@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Ingen treff\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Vennligst skriv inn \" + n + (n>1 ? \" flere tegn\" : \" tegn til\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Vennligst fjern \" + n + \" tegn\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Du kan velge maks \" + limit + \" elementer\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Laster flere resultater…\"; },\n\
+        formatSearching: function () { return \"Søker…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_no.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pl.js", Function("exports, module",
+"/**\n\
+ * Select2 Polish translation.\n\
+ * \n\
+ * @author  Jan Kondratowicz <jan@kondratowicz.pl>\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Brak wyników\"; },\n\
+        formatInputTooShort: function (input, min) { return \"Wpisz jeszcze\" + character(min - input.length, \"znak\", \"i\"); },\n\
+        formatInputTooLong: function (input, max) { return \"Wpisana fraza jest za długa o\" + character(input.length - max, \"znak\", \"i\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Możesz zaznaczyć najwyżej\" + character(limit, \"element\", \"y\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Ładowanie wyników…\"; },\n\
+        formatSearching: function () { return \"Szukanie…\"; }\n\
+    });\n\
+\n\
+    function character (n, word, pluralSuffix) {\n\
+        return \" \" + n + \" \" + word + (n == 1 ? \"\" : n%10 < 5 && n%10 > 1 && (n%100 < 5 || n%100 > 20) ? pluralSuffix : \"ów\");\n\
+    }\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_pl.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pt-BR.js", Function("exports, module",
+"/**\n\
+ * Select2 Brazilian Portuguese translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nenhum resultado encontrado\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Digite mais \" + n + \" caracter\" + (n == 1? \"\" : \"es\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Apague \" + n + \" caracter\" + (n == 1? \"\" : \"es\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Só é possível selecionar \" + limit + \" elemento\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Carregando mais resultados…\"; },\n\
+        formatSearching: function () { return \"Buscando…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_pt-BR.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pt-PT.js", Function("exports, module",
+"/**\n\
+ * Select2 Portuguese (Portugal) translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nenhum resultado encontrado\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Introduza \" + n + \" car\" + (n == 1 ? \"ácter\" : \"acteres\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Apague \" + n + \" car\" + (n == 1 ? \"ácter\" : \"acteres\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Só é possível selecionar \" + limit + \" elemento\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"A carregar mais resultados…\"; },\n\
+        formatSearching: function () { return \"A pesquisar…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_pt-PT.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ro.js", Function("exports, module",
+"/**\n\
+ * Select2 Romanian translation.\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nu a fost găsit nimic\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Vă rugăm să introduceți incă \" + n + \" caracter\" + (n == 1 ? \"\" : \"e\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Vă rugăm să introduceți mai puțin de \" + n + \" caracter\" + (n == 1? \"\" : \"e\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Aveți voie să selectați cel mult \" + limit + \" element\" + (limit == 1 ? \"\" : \"e\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Se încarcă…\"; },\n\
+        formatSearching: function () { return \"Căutare…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ro.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ru.js", Function("exports, module",
+"/**\n\
+ * Select2 Russian translation.\n\
+ *\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Совпадений не найдено\"; },\n\
+        formatInputTooShort: function (input, min) { return \"Пожалуйста, введите еще\" + character(min - input.length); },\n\
+        formatInputTooLong: function (input, max) { return \"Пожалуйста, введите на\" + character(input.length - max) + \" меньше\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Вы можете выбрать не более \" + limit + \" элемент\" + (limit%10 == 1 && limit%100 != 11 ? \"а\" : \"ов\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Загрузка данных…\"; },\n\
+        formatSearching: function () { return \"Поиск…\"; }\n\
+    });\n\
+\n\
+    function character (n) {\n\
+        return \" \" + n + \" символ\" + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 20) ? n%10 > 1 ? \"a\" : \"\" : \"ов\");\n\
+    }\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_ru.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_sk.js", Function("exports, module",
+"/**\n\
+ * Select2 Slovak translation.\n\
+ *\n\
+ * Author: David Vallner <david@vallner.net>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+    // use text for the numbers 2 through 4\n\
+    var smallNumbers = {\n\
+        2: function(masc) { return (masc ? \"dva\" : \"dve\"); },\n\
+        3: function() { return \"tri\"; },\n\
+        4: function() { return \"štyri\"; }\n\
+    }\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Nenašli sa žiadne položky\"; },\n\
+        formatInputTooShort: function (input, min) {\n\
+            var n = min - input.length;\n\
+            if (n == 1) {\n\
+                return \"Prosím zadajte ešte jeden znak\";\n\
+            } else if (n <= 4) {\n\
+                return \"Prosím zadajte ešte ďalšie \"+smallNumbers[n](true)+\" znaky\";\n\
+            } else {\n\
+                return \"Prosím zadajte ešte ďalších \"+n+\" znakov\";\n\
+            }\n\
+        },\n\
+        formatInputTooLong: function (input, max) {\n\
+            var n = input.length - max;\n\
+            if (n == 1) {\n\
+                return \"Prosím zadajte o jeden znak menej\";\n\
+            } else if (n <= 4) {\n\
+                return \"Prosím zadajte o \"+smallNumbers[n](true)+\" znaky menej\";\n\
+            } else {\n\
+                return \"Prosím zadajte o \"+n+\" znakov menej\";\n\
+            }\n\
+        },\n\
+        formatSelectionTooBig: function (limit) {\n\
+            if (limit == 1) {\n\
+                return \"Môžete zvoliť len jednu položku\";\n\
+            } else if (limit <= 4) {\n\
+                return \"Môžete zvoliť najviac \"+smallNumbers[limit](false)+\" položky\";\n\
+            } else {\n\
+                return \"Môžete zvoliť najviac \"+limit+\" položiek\";\n\
+            }\n\
+        },\n\
+        formatLoadMore: function (pageNumber) { return \"Načítavajú sa ďalšie výsledky…\"; },\n\
+        formatSearching: function () { return \"Vyhľadávanie…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_sk.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_sv.js", Function("exports, module",
+"/**\n\
+ * Select2 Swedish translation.\n\
+ *\n\
+ * Author: Jens Rantil <jens.rantil@telavox.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Inga träffar\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Var god skriv in \" + n + (n>1 ? \" till tecken\" : \" tecken till\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Var god sudda ut \" + n + \" tecken\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Du kan max välja \" + limit + \" element\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Laddar fler resultat…\"; },\n\
+        formatSearching: function () { return \"Söker…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_sv.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_th.js", Function("exports, module",
+"/**\n\
+ * Select2 Thai translation.\n\
+ *\n\
+ * Author: Atsawin Chaowanakritsanakul <joke@nakhon.net>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"ไม่พบข้อมูล\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"โปรดพิมพ์เพิ่มอีก \" + n + \" ตัวอักษร\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"โปรดลบออก \" + n + \" ตัวอักษร\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"คุณสามารถเลือกได้ไม่เกิน \" + limit + \" รายการ\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"กำลังค้นข้อมูลเพิ่ม…\"; },\n\
+        formatSearching: function () { return \"กำลังค้นข้อมูล…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_th.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_tr.js", Function("exports, module",
+"/**\n\
+ * Select2 Turkish translation.\n\
+ * \n\
+ * Author: Salim KAYABAŞI <salim.kayabasi@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Sonuç bulunamadı\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"En az \" + n + \" karakter daha girmelisiniz\"; },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return n + \" karakter azaltmalısınız\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Sadece \" + limit + \" seçim yapabilirsiniz\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"Daha fazla…\"; },\n\
+        formatSearching: function () { return \"Aranıyor…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_tr.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_uk.js", Function("exports, module",
+"/**\n\
+ * Select2 Ukrainian translation.\n\
+ * \n\
+ * @author  bigmihail <bigmihail@bigmir.net>\n\
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatMatches: function (matches) { return character(matches, \"результат\") + \" знайдено, використовуйте клавіші зі стрілками вверх та вниз для навігації.\"; },\n\
+        formatNoMatches: function () { return \"Нічого не знайдено\"; },\n\
+        formatInputTooShort: function (input, min) { return \"Введіть буль ласка ще \" + character(min - input.length, \"символ\"); },\n\
+        formatInputTooLong: function (input, max) { return \"Введіть буль ласка на \" + character(input.length - max, \"символ\") + \" менше\"; },\n\
+        formatSelectionTooBig: function (limit) { return \"Ви можете вибрати лише \" + character(limit, \"елемент\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Завантаження даних…\"; },\n\
+        formatSearching: function () { return \"Пошук…\"; }\n\
+    });\n\
+\n\
+    function character (n, word) {\n\
+        return n + \" \" + word + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 19) ? n%10 > 1 ? \"и\" : \"\" : \"ів\");\n\
+    }\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_uk.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_vi.js", Function("exports, module",
+"/**\n\
+ * Select2 Vietnamese translation.\n\
+ * \n\
+ * Author: Long Nguyen <olragon@gmail.com>\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"Không tìm thấy kết quả\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Vui lòng nhập nhiều hơn \" + n + \" ký tự\" + (n == 1 ? \"\" : \"s\"); },\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Vui lòng nhập ít hơn \" + n + \" ký tự\" + (n == 1? \"\" : \"s\"); },\n\
+        formatSelectionTooBig: function (limit) { return \"Chỉ có thể chọn được \" + limit + \" tùy chọn\" + (limit == 1 ? \"\" : \"s\"); },\n\
+        formatLoadMore: function (pageNumber) { return \"Đang lấy thêm kết quả…\"; },\n\
+        formatSearching: function () { return \"Đang tìm…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_vi.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_zh-CN.js", Function("exports, module",
+"/**\n\
+ * Select2 Chinese translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"没有找到匹配项\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"请再输入\" + n + \"个字符\";},\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"请删掉\" + n + \"个字符\";},\n\
+        formatSelectionTooBig: function (limit) { return \"你只能选择最多\" + limit + \"项\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"加载结果中…\"; },\n\
+        formatSearching: function () { return \"搜索中…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_zh-CN.js"
+));
+
+require.register("kpwebb~select2@3.4.8/select2_locale_zh-TW.js", Function("exports, module",
+"/**\n\
+ * Select2 Traditional Chinese translation\n\
+ */\n\
+(function ($) {\n\
+    \"use strict\";\n\
+    $.extend($.fn.select2.defaults, {\n\
+        formatNoMatches: function () { return \"沒有找到相符的項目\"; },\n\
+        formatInputTooShort: function (input, min) { var n = min - input.length; return \"請再輸入\" + n + \"個字元\";},\n\
+        formatInputTooLong: function (input, max) { var n = input.length - max; return \"請刪掉\" + n + \"個字元\";},\n\
+        formatSelectionTooBig: function (limit) { return \"你只能選擇最多\" + limit + \"項\"; },\n\
+        formatLoadMore: function (pageNumber) { return \"載入中…\"; },\n\
+        formatSearching: function () { return \"搜尋中…\"; }\n\
+    });\n\
+})(jQuery);\n\
+\n\
+//# sourceURL=components/kpwebb/select2/3.4.8/select2_locale_zh-TW.js"
+));
+
+require.modules["kpwebb-select2"] = require.modules["kpwebb~select2@3.4.8"];
+require.modules["kpwebb~select2"] = require.modules["kpwebb~select2@3.4.8"];
+require.modules["select2"] = require.modules["kpwebb~select2@3.4.8"];
+
+
+require.register("components~jquery@1.11.1", Function("exports, module",
 "/*!\n\
- * jQuery JavaScript Library v1.11.0\n\
+ * jQuery JavaScript Library v1.11.1\n\
  * http://jquery.com/\n\
  *\n\
  * Includes Sizzle.js\n\
@@ -5956,7 +10658,7 @@ require.register("components-jquery/jquery.js", Function("exports, require, modu
  * Released under the MIT license\n\
  * http://jquery.org/license\n\
  *\n\
- * Date: 2014-01-23T21:02Z\n\
+ * Date: 2014-05-01T17:42Z\n\
  */\n\
 \n\
 (function( global, factory ) {\n\
@@ -6006,14 +10708,12 @@ var toString = class2type.toString;\n\
 \n\
 var hasOwn = class2type.hasOwnProperty;\n\
 \n\
-var trim = \"\".trim;\n\
-\n\
 var support = {};\n\
 \n\
 \n\
 \n\
 var\n\
-\tversion = \"1.11.0\",\n\
+\tversion = \"1.11.1\",\n\
 \n\
 \t// Define a local copy of jQuery\n\
 \tjQuery = function( selector, context ) {\n\
@@ -6022,7 +10722,8 @@ var\n\
 \t\treturn new jQuery.fn.init( selector, context );\n\
 \t},\n\
 \n\
-\t// Make sure we trim BOM and NBSP (here's looking at you, Safari 5.0 and IE)\n\
+\t// Support: Android<4.1, IE<9\n\
+\t// Make sure we trim BOM and NBSP\n\
 \trtrim = /^[\\s\\uFEFF\\xA0]+|[\\s\\uFEFF\\xA0]+$/g,\n\
 \n\
 \t// Matches dashed string for camelizing\n\
@@ -6055,10 +10756,10 @@ jQuery.fn = jQuery.prototype = {\n\
 \tget: function( num ) {\n\
 \t\treturn num != null ?\n\
 \n\
-\t\t\t// Return a 'clean' array\n\
+\t\t\t// Return just the one element from the set\n\
 \t\t\t( num < 0 ? this[ num + this.length ] : this[ num ] ) :\n\
 \n\
-\t\t\t// Return just the object\n\
+\t\t\t// Return all the elements in a clean array\n\
 \t\t\tslice.call( this );\n\
 \t},\n\
 \n\
@@ -6217,7 +10918,7 @@ jQuery.extend({\n\
 \t\t// parseFloat NaNs numeric-cast false positives (null|true|false|\"\")\n\
 \t\t// ...but misinterprets leading-number strings, particularly hex literals (\"0x...\")\n\
 \t\t// subtraction forces infinities to NaN\n\
-\t\treturn obj - parseFloat( obj ) >= 0;\n\
+\t\treturn !jQuery.isArray( obj ) && obj - parseFloat( obj ) >= 0;\n\
 \t},\n\
 \n\
 \tisEmptyObject: function( obj ) {\n\
@@ -6348,20 +11049,12 @@ jQuery.extend({\n\
 \t\treturn obj;\n\
 \t},\n\
 \n\
-\t// Use native String.trim function wherever possible\n\
-\ttrim: trim && !trim.call(\"\\uFEFF\\xA0\") ?\n\
-\t\tfunction( text ) {\n\
-\t\t\treturn text == null ?\n\
-\t\t\t\t\"\" :\n\
-\t\t\t\ttrim.call( text );\n\
-\t\t} :\n\
-\n\
-\t\t// Otherwise use our own trimming functionality\n\
-\t\tfunction( text ) {\n\
-\t\t\treturn text == null ?\n\
-\t\t\t\t\"\" :\n\
-\t\t\t\t( text + \"\" ).replace( rtrim, \"\" );\n\
-\t\t},\n\
+\t// Support: Android<4.1, IE<9\n\
+\ttrim: function( text ) {\n\
+\t\treturn text == null ?\n\
+\t\t\t\"\" :\n\
+\t\t\t( text + \"\" ).replace( rtrim, \"\" );\n\
+\t},\n\
 \n\
 \t// results is for internal usage only\n\
 \tmakeArray: function( arr, results ) {\n\
@@ -6540,14 +11233,14 @@ function isArraylike( obj ) {\n\
 }\n\
 var Sizzle =\n\
 /*!\n\
- * Sizzle CSS Selector Engine v1.10.16\n\
+ * Sizzle CSS Selector Engine v1.10.19\n\
  * http://sizzlejs.com/\n\
  *\n\
  * Copyright 2013 jQuery Foundation, Inc. and other contributors\n\
  * Released under the MIT license\n\
  * http://jquery.org/license\n\
  *\n\
- * Date: 2014-01-13\n\
+ * Date: 2014-04-18\n\
  */\n\
 (function( window ) {\n\
 \n\
@@ -6556,7 +11249,9 @@ var i,\n\
 \tExpr,\n\
 \tgetText,\n\
 \tisXML,\n\
+\ttokenize,\n\
 \tcompile,\n\
+\tselect,\n\
 \toutermostContext,\n\
 \tsortInput,\n\
 \thasDuplicate,\n\
@@ -6624,17 +11319,23 @@ var i,\n\
 \t// Proper syntax: http://www.w3.org/TR/CSS21/syndata.html#value-def-identifier\n\
 \tidentifier = characterEncoding.replace( \"w\", \"w#\" ),\n\
 \n\
-\t// Acceptable operators http://www.w3.org/TR/selectors/#attribute-selectors\n\
-\tattributes = \"\\\\[\" + whitespace + \"*(\" + characterEncoding + \")\" + whitespace +\n\
-\t\t\"*(?:([*^$|!~]?=)\" + whitespace + \"*(?:(['\\\"])((?:\\\\\\\\.|[^\\\\\\\\])*?)\\\\3|(\" + identifier + \")|)|)\" + whitespace + \"*\\\\]\",\n\
+\t// Attribute selectors: http://www.w3.org/TR/selectors/#attribute-selectors\n\
+\tattributes = \"\\\\[\" + whitespace + \"*(\" + characterEncoding + \")(?:\" + whitespace +\n\
+\t\t// Operator (capture 2)\n\
+\t\t\"*([*^$|!~]?=)\" + whitespace +\n\
+\t\t// \"Attribute values must be CSS identifiers [capture 5] or strings [capture 3 or capture 4]\"\n\
+\t\t\"*(?:'((?:\\\\\\\\.|[^\\\\\\\\'])*)'|\\\"((?:\\\\\\\\.|[^\\\\\\\\\\\"])*)\\\"|(\" + identifier + \"))|)\" + whitespace +\n\
+\t\t\"*\\\\]\",\n\
 \n\
-\t// Prefer arguments quoted,\n\
-\t//   then not containing pseudos/brackets,\n\
-\t//   then attribute selectors/non-parenthetical expressions,\n\
-\t//   then anything else\n\
-\t// These preferences are here to reduce the number of selectors\n\
-\t//   needing tokenize in the PSEUDO preFilter\n\
-\tpseudos = \":(\" + characterEncoding + \")(?:\\\\(((['\\\"])((?:\\\\\\\\.|[^\\\\\\\\])*?)\\\\3|((?:\\\\\\\\.|[^\\\\\\\\()[\\\\]]|\" + attributes.replace( 3, 8 ) + \")*)|.*)\\\\)|)\",\n\
+\tpseudos = \":(\" + characterEncoding + \")(?:\\\\((\" +\n\
+\t\t// To reduce the number of selectors needing tokenize in the preFilter, prefer arguments:\n\
+\t\t// 1. quoted (capture 3; capture 4 or capture 5)\n\
+\t\t\"('((?:\\\\\\\\.|[^\\\\\\\\'])*)'|\\\"((?:\\\\\\\\.|[^\\\\\\\\\\\"])*)\\\")|\" +\n\
+\t\t// 2. simple (capture 6)\n\
+\t\t\"((?:\\\\\\\\.|[^\\\\\\\\()[\\\\]]|\" + attributes + \")*)|\" +\n\
+\t\t// 3. anything else (capture 2)\n\
+\t\t\".*\" +\n\
+\t\t\")\\\\)|)\",\n\
 \n\
 \t// Leading and non-escaped trailing whitespace, capturing some non-whitespace characters preceding the latter\n\
 \trtrim = new RegExp( \"^\" + whitespace + \"+|((?:^|[^\\\\\\\\])(?:\\\\\\\\.)*)\" + whitespace + \"+$\", \"g\" ),\n\
@@ -6679,7 +11380,7 @@ var i,\n\
 \tfunescape = function( _, escaped, escapedWhitespace ) {\n\
 \t\tvar high = \"0x\" + escaped - 0x10000;\n\
 \t\t// NaN means non-codepoint\n\
-\t\t// Support: Firefox\n\
+\t\t// Support: Firefox<24\n\
 \t\t// Workaround erroneous numeric interpretation of +\"0x\"\n\
 \t\treturn high !== high || escapedWhitespace ?\n\
 \t\t\tescaped :\n\
@@ -7075,7 +11776,7 @@ setDocument = Sizzle.setDocument = function( node ) {\n\
 \t\t\t\tvar m = context.getElementById( id );\n\
 \t\t\t\t// Check parentNode to catch when Blackberry 4.6 returns\n\
 \t\t\t\t// nodes that are no longer in the document #6963\n\
-\t\t\t\treturn m && m.parentNode ? [m] : [];\n\
+\t\t\t\treturn m && m.parentNode ? [ m ] : [];\n\
 \t\t\t}\n\
 \t\t};\n\
 \t\tExpr.filter[\"ID\"] = function( id ) {\n\
@@ -7155,11 +11856,13 @@ setDocument = Sizzle.setDocument = function( node ) {\n\
 \t\t\t// setting a boolean content attribute,\n\
 \t\t\t// since its presence should be enough\n\
 \t\t\t// http://bugs.jquery.com/ticket/12359\n\
-\t\t\tdiv.innerHTML = \"<select t=''><option selected=''></option></select>\";\n\
+\t\t\tdiv.innerHTML = \"<select msallowclip=''><option selected=''></option></select>\";\n\
 \n\
-\t\t\t// Support: IE8, Opera 10-12\n\
+\t\t\t// Support: IE8, Opera 11-12.16\n\
 \t\t\t// Nothing should be selected when empty strings follow ^= or $= or *=\n\
-\t\t\tif ( div.querySelectorAll(\"[t^='']\").length ) {\n\
+\t\t\t// The test attribute must be unknown in Opera but \"safe\" for WinRT\n\
+\t\t\t// http://msdn.microsoft.com/en-us/library/ie/hh465388.aspx#attribute_section\n\
+\t\t\tif ( div.querySelectorAll(\"[msallowclip^='']\").length ) {\n\
 \t\t\t\trbuggyQSA.push( \"[*^$]=\" + whitespace + \"*(?:''|\\\"\\\")\" );\n\
 \t\t\t}\n\
 \n\
@@ -7202,7 +11905,8 @@ setDocument = Sizzle.setDocument = function( node ) {\n\
 \t\t});\n\
 \t}\n\
 \n\
-\tif ( (support.matchesSelector = rnative.test( (matches = docElem.webkitMatchesSelector ||\n\
+\tif ( (support.matchesSelector = rnative.test( (matches = docElem.matches ||\n\
+\t\tdocElem.webkitMatchesSelector ||\n\
 \t\tdocElem.mozMatchesSelector ||\n\
 \t\tdocElem.oMatchesSelector ||\n\
 \t\tdocElem.msMatchesSelector) )) ) {\n\
@@ -7383,7 +12087,7 @@ Sizzle.matchesSelector = function( elem, expr ) {\n\
 \t\t} catch(e) {}\n\
 \t}\n\
 \n\
-\treturn Sizzle( expr, document, null, [elem] ).length > 0;\n\
+\treturn Sizzle( expr, document, null, [ elem ] ).length > 0;\n\
 };\n\
 \n\
 Sizzle.contains = function( context, elem ) {\n\
@@ -7512,7 +12216,7 @@ Expr = Sizzle.selectors = {\n\
 \t\t\tmatch[1] = match[1].replace( runescape, funescape );\n\
 \n\
 \t\t\t// Move the given value to match[3] whether quoted or unquoted\n\
-\t\t\tmatch[3] = ( match[4] || match[5] || \"\" ).replace( runescape, funescape );\n\
+\t\t\tmatch[3] = ( match[3] || match[4] || match[5] || \"\" ).replace( runescape, funescape );\n\
 \n\
 \t\t\tif ( match[2] === \"~=\" ) {\n\
 \t\t\t\tmatch[3] = \" \" + match[3] + \" \";\n\
@@ -7555,15 +12259,15 @@ Expr = Sizzle.selectors = {\n\
 \n\
 \t\t\"PSEUDO\": function( match ) {\n\
 \t\t\tvar excess,\n\
-\t\t\t\tunquoted = !match[5] && match[2];\n\
+\t\t\t\tunquoted = !match[6] && match[2];\n\
 \n\
 \t\t\tif ( matchExpr[\"CHILD\"].test( match[0] ) ) {\n\
 \t\t\t\treturn null;\n\
 \t\t\t}\n\
 \n\
 \t\t\t// Accept quoted arguments as-is\n\
-\t\t\tif ( match[3] && match[4] !== undefined ) {\n\
-\t\t\t\tmatch[2] = match[4];\n\
+\t\t\tif ( match[3] ) {\n\
+\t\t\t\tmatch[2] = match[4] || match[5] || \"\";\n\
 \n\
 \t\t\t// Strip excess characters from unquoted arguments\n\
 \t\t\t} else if ( unquoted && rpseudo.test( unquoted ) &&\n\
@@ -7968,7 +12672,7 @@ function setFilters() {}\n\
 setFilters.prototype = Expr.filters = Expr.pseudos;\n\
 Expr.setFilters = new setFilters();\n\
 \n\
-function tokenize( selector, parseOnly ) {\n\
+tokenize = Sizzle.tokenize = function( selector, parseOnly ) {\n\
 \tvar matched, match, tokens, type,\n\
 \t\tsoFar, groups, preFilters,\n\
 \t\tcached = tokenCache[ selector + \" \" ];\n\
@@ -8033,7 +12737,7 @@ function tokenize( selector, parseOnly ) {\n\
 \t\t\tSizzle.error( selector ) :\n\
 \t\t\t// Cache the tokens\n\
 \t\t\ttokenCache( selector, groups ).slice( 0 );\n\
-}\n\
+};\n\
 \n\
 function toSelector( tokens ) {\n\
 \tvar i = 0,\n\
@@ -8110,6 +12814,15 @@ function elementMatcher( matchers ) {\n\
 \t\t\treturn true;\n\
 \t\t} :\n\
 \t\tmatchers[0];\n\
+}\n\
+\n\
+function multipleContexts( selector, contexts, results ) {\n\
+\tvar i = 0,\n\
+\t\tlen = contexts.length;\n\
+\tfor ( ; i < len; i++ ) {\n\
+\t\tSizzle( selector, contexts[i], results );\n\
+\t}\n\
+\treturn results;\n\
 }\n\
 \n\
 function condense( unmatched, map, filter, context, xml ) {\n\
@@ -8380,7 +13093,7 @@ function matcherFromGroupMatchers( elementMatchers, setMatchers ) {\n\
 \t\tsuperMatcher;\n\
 }\n\
 \n\
-compile = Sizzle.compile = function( selector, group /* Internal Use Only */ ) {\n\
+compile = Sizzle.compile = function( selector, match /* Internal Use Only */ ) {\n\
 \tvar i,\n\
 \t\tsetMatchers = [],\n\
 \t\telementMatchers = [],\n\
@@ -8388,12 +13101,12 @@ compile = Sizzle.compile = function( selector, group /* Internal Use Only */ ) {
 \n\
 \tif ( !cached ) {\n\
 \t\t// Generate a function of recursive functions that can be used to check each element\n\
-\t\tif ( !group ) {\n\
-\t\t\tgroup = tokenize( selector );\n\
+\t\tif ( !match ) {\n\
+\t\t\tmatch = tokenize( selector );\n\
 \t\t}\n\
-\t\ti = group.length;\n\
+\t\ti = match.length;\n\
 \t\twhile ( i-- ) {\n\
-\t\t\tcached = matcherFromTokens( group[i] );\n\
+\t\t\tcached = matcherFromTokens( match[i] );\n\
 \t\t\tif ( cached[ expando ] ) {\n\
 \t\t\t\tsetMatchers.push( cached );\n\
 \t\t\t} else {\n\
@@ -8403,74 +13116,83 @@ compile = Sizzle.compile = function( selector, group /* Internal Use Only */ ) {
 \n\
 \t\t// Cache the compiled function\n\
 \t\tcached = compilerCache( selector, matcherFromGroupMatchers( elementMatchers, setMatchers ) );\n\
+\n\
+\t\t// Save selector and tokenization\n\
+\t\tcached.selector = selector;\n\
 \t}\n\
 \treturn cached;\n\
 };\n\
 \n\
-function multipleContexts( selector, contexts, results ) {\n\
-\tvar i = 0,\n\
-\t\tlen = contexts.length;\n\
-\tfor ( ; i < len; i++ ) {\n\
-\t\tSizzle( selector, contexts[i], results );\n\
-\t}\n\
-\treturn results;\n\
-}\n\
-\n\
-function select( selector, context, results, seed ) {\n\
+/**\n\
+ * A low-level selection function that works with Sizzle's compiled\n\
+ *  selector functions\n\
+ * @param {String|Function} selector A selector or a pre-compiled\n\
+ *  selector function built with Sizzle.compile\n\
+ * @param {Element} context\n\
+ * @param {Array} [results]\n\
+ * @param {Array} [seed] A set of elements to match against\n\
+ */\n\
+select = Sizzle.select = function( selector, context, results, seed ) {\n\
 \tvar i, tokens, token, type, find,\n\
-\t\tmatch = tokenize( selector );\n\
+\t\tcompiled = typeof selector === \"function\" && selector,\n\
+\t\tmatch = !seed && tokenize( (selector = compiled.selector || selector) );\n\
 \n\
-\tif ( !seed ) {\n\
-\t\t// Try to minimize operations if there is only one group\n\
-\t\tif ( match.length === 1 ) {\n\
+\tresults = results || [];\n\
 \n\
-\t\t\t// Take a shortcut and set the context if the root selector is an ID\n\
-\t\t\ttokens = match[0] = match[0].slice( 0 );\n\
-\t\t\tif ( tokens.length > 2 && (token = tokens[0]).type === \"ID\" &&\n\
-\t\t\t\t\tsupport.getById && context.nodeType === 9 && documentIsHTML &&\n\
-\t\t\t\t\tExpr.relative[ tokens[1].type ] ) {\n\
+\t// Try to minimize operations if there is no seed and only one group\n\
+\tif ( match.length === 1 ) {\n\
 \n\
-\t\t\t\tcontext = ( Expr.find[\"ID\"]( token.matches[0].replace(runescape, funescape), context ) || [] )[0];\n\
-\t\t\t\tif ( !context ) {\n\
-\t\t\t\t\treturn results;\n\
-\t\t\t\t}\n\
-\t\t\t\tselector = selector.slice( tokens.shift().value.length );\n\
+\t\t// Take a shortcut and set the context if the root selector is an ID\n\
+\t\ttokens = match[0] = match[0].slice( 0 );\n\
+\t\tif ( tokens.length > 2 && (token = tokens[0]).type === \"ID\" &&\n\
+\t\t\t\tsupport.getById && context.nodeType === 9 && documentIsHTML &&\n\
+\t\t\t\tExpr.relative[ tokens[1].type ] ) {\n\
+\n\
+\t\t\tcontext = ( Expr.find[\"ID\"]( token.matches[0].replace(runescape, funescape), context ) || [] )[0];\n\
+\t\t\tif ( !context ) {\n\
+\t\t\t\treturn results;\n\
+\n\
+\t\t\t// Precompiled matchers will still verify ancestry, so step up a level\n\
+\t\t\t} else if ( compiled ) {\n\
+\t\t\t\tcontext = context.parentNode;\n\
 \t\t\t}\n\
 \n\
-\t\t\t// Fetch a seed set for right-to-left matching\n\
-\t\t\ti = matchExpr[\"needsContext\"].test( selector ) ? 0 : tokens.length;\n\
-\t\t\twhile ( i-- ) {\n\
-\t\t\t\ttoken = tokens[i];\n\
+\t\t\tselector = selector.slice( tokens.shift().value.length );\n\
+\t\t}\n\
 \n\
-\t\t\t\t// Abort if we hit a combinator\n\
-\t\t\t\tif ( Expr.relative[ (type = token.type) ] ) {\n\
-\t\t\t\t\tbreak;\n\
-\t\t\t\t}\n\
-\t\t\t\tif ( (find = Expr.find[ type ]) ) {\n\
-\t\t\t\t\t// Search, expanding context for leading sibling combinators\n\
-\t\t\t\t\tif ( (seed = find(\n\
-\t\t\t\t\t\ttoken.matches[0].replace( runescape, funescape ),\n\
-\t\t\t\t\t\trsibling.test( tokens[0].type ) && testContext( context.parentNode ) || context\n\
-\t\t\t\t\t)) ) {\n\
+\t\t// Fetch a seed set for right-to-left matching\n\
+\t\ti = matchExpr[\"needsContext\"].test( selector ) ? 0 : tokens.length;\n\
+\t\twhile ( i-- ) {\n\
+\t\t\ttoken = tokens[i];\n\
 \n\
-\t\t\t\t\t\t// If seed is empty or no tokens remain, we can return early\n\
-\t\t\t\t\t\ttokens.splice( i, 1 );\n\
-\t\t\t\t\t\tselector = seed.length && toSelector( tokens );\n\
-\t\t\t\t\t\tif ( !selector ) {\n\
-\t\t\t\t\t\t\tpush.apply( results, seed );\n\
-\t\t\t\t\t\t\treturn results;\n\
-\t\t\t\t\t\t}\n\
+\t\t\t// Abort if we hit a combinator\n\
+\t\t\tif ( Expr.relative[ (type = token.type) ] ) {\n\
+\t\t\t\tbreak;\n\
+\t\t\t}\n\
+\t\t\tif ( (find = Expr.find[ type ]) ) {\n\
+\t\t\t\t// Search, expanding context for leading sibling combinators\n\
+\t\t\t\tif ( (seed = find(\n\
+\t\t\t\t\ttoken.matches[0].replace( runescape, funescape ),\n\
+\t\t\t\t\trsibling.test( tokens[0].type ) && testContext( context.parentNode ) || context\n\
+\t\t\t\t)) ) {\n\
 \n\
-\t\t\t\t\t\tbreak;\n\
+\t\t\t\t\t// If seed is empty or no tokens remain, we can return early\n\
+\t\t\t\t\ttokens.splice( i, 1 );\n\
+\t\t\t\t\tselector = seed.length && toSelector( tokens );\n\
+\t\t\t\t\tif ( !selector ) {\n\
+\t\t\t\t\t\tpush.apply( results, seed );\n\
+\t\t\t\t\t\treturn results;\n\
 \t\t\t\t\t}\n\
+\n\
+\t\t\t\t\tbreak;\n\
 \t\t\t\t}\n\
 \t\t\t}\n\
 \t\t}\n\
 \t}\n\
 \n\
-\t// Compile and execute a filtering function\n\
+\t// Compile and execute a filtering function if one is not provided\n\
 \t// Provide `match` to avoid retokenization if we modified the selector above\n\
-\tcompile( selector, match )(\n\
+\t( compiled || compile( selector, match ) )(\n\
 \t\tseed,\n\
 \t\tcontext,\n\
 \t\t!documentIsHTML,\n\
@@ -8478,7 +13200,7 @@ function select( selector, context, results, seed ) {\n\
 \t\trsibling.test( selector ) && testContext( context.parentNode ) || context\n\
 \t);\n\
 \treturn results;\n\
-}\n\
+};\n\
 \n\
 // One-time assignments\n\
 \n\
@@ -9371,8 +14093,9 @@ jQuery.extend({\n\
 \t\treadyList.resolveWith( document, [ jQuery ] );\n\
 \n\
 \t\t// Trigger any bound ready events\n\
-\t\tif ( jQuery.fn.trigger ) {\n\
-\t\t\tjQuery( document ).trigger(\"ready\").off(\"ready\");\n\
+\t\tif ( jQuery.fn.triggerHandler ) {\n\
+\t\t\tjQuery( document ).triggerHandler( \"ready\" );\n\
+\t\t\tjQuery( document ).off( \"ready\" );\n\
 \t\t}\n\
 \t}\n\
 });\n\
@@ -9480,23 +14203,21 @@ support.ownLast = i !== \"0\";\n\
 // false until the test is run\n\
 support.inlineBlockNeedsLayout = false;\n\
 \n\
+// Execute ASAP in case we need to set body.style.zoom\n\
 jQuery(function() {\n\
-\t// We need to execute this one support test ASAP because we need to know\n\
-\t// if body.style.zoom needs to be set.\n\
+\t// Minified: var a,b,c,d\n\
+\tvar val, div, body, container;\n\
 \n\
-\tvar container, div,\n\
-\t\tbody = document.getElementsByTagName(\"body\")[0];\n\
-\n\
-\tif ( !body ) {\n\
+\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
+\tif ( !body || !body.style ) {\n\
 \t\t// Return for frameset docs that don't have a body\n\
 \t\treturn;\n\
 \t}\n\
 \n\
 \t// Setup\n\
-\tcontainer = document.createElement( \"div\" );\n\
-\tcontainer.style.cssText = \"border:0;width:0;height:0;position:absolute;top:0;left:-9999px;margin-top:1px\";\n\
-\n\
 \tdiv = document.createElement( \"div\" );\n\
+\tcontainer = document.createElement( \"div\" );\n\
+\tcontainer.style.cssText = \"position:absolute;border:0;width:0;height:0;top:0;left:-9999px\";\n\
 \tbody.appendChild( container ).appendChild( div );\n\
 \n\
 \tif ( typeof div.style.zoom !== strundefined ) {\n\
@@ -9504,9 +14225,10 @@ jQuery(function() {\n\
 \t\t// Check if natively block-level elements act like inline-block\n\
 \t\t// elements when setting their display to 'inline' and giving\n\
 \t\t// them layout\n\
-\t\tdiv.style.cssText = \"border:0;margin:0;width:1px;padding:1px;display:inline;zoom:1\";\n\
+\t\tdiv.style.cssText = \"display:inline;margin:0;border:0;padding:1px;width:1px;zoom:1\";\n\
 \n\
-\t\tif ( (support.inlineBlockNeedsLayout = ( div.offsetWidth === 3 )) ) {\n\
+\t\tsupport.inlineBlockNeedsLayout = val = div.offsetWidth === 3;\n\
+\t\tif ( val ) {\n\
 \t\t\t// Prevent IE 6 from affecting layout for positioned elements #11048\n\
 \t\t\t// Prevent IE from shrinking the body in IE 7 mode #12869\n\
 \t\t\t// Support: IE<8\n\
@@ -9515,9 +14237,6 @@ jQuery(function() {\n\
 \t}\n\
 \n\
 \tbody.removeChild( container );\n\
-\n\
-\t// Null elements to avoid leaks in IE\n\
-\tcontainer = div = null;\n\
 });\n\
 \n\
 \n\
@@ -9840,12 +14559,15 @@ jQuery.fn.extend({\n\
 \t\t\t\tif ( elem.nodeType === 1 && !jQuery._data( elem, \"parsedAttrs\" ) ) {\n\
 \t\t\t\t\ti = attrs.length;\n\
 \t\t\t\t\twhile ( i-- ) {\n\
-\t\t\t\t\t\tname = attrs[i].name;\n\
 \n\
-\t\t\t\t\t\tif ( name.indexOf(\"data-\") === 0 ) {\n\
-\t\t\t\t\t\t\tname = jQuery.camelCase( name.slice(5) );\n\
-\n\
-\t\t\t\t\t\t\tdataAttr( elem, name, data[ name ] );\n\
+\t\t\t\t\t\t// Support: IE11+\n\
+\t\t\t\t\t\t// The attrs elements can be null (#14894)\n\
+\t\t\t\t\t\tif ( attrs[ i ] ) {\n\
+\t\t\t\t\t\t\tname = attrs[ i ].name;\n\
+\t\t\t\t\t\t\tif ( name.indexOf( \"data-\" ) === 0 ) {\n\
+\t\t\t\t\t\t\t\tname = jQuery.camelCase( name.slice(5) );\n\
+\t\t\t\t\t\t\t\tdataAttr( elem, name, data[ name ] );\n\
+\t\t\t\t\t\t\t}\n\
 \t\t\t\t\t\t}\n\
 \t\t\t\t\t}\n\
 \t\t\t\t\tjQuery._data( elem, \"parsedAttrs\", true );\n\
@@ -10085,13 +14807,13 @@ var rcheckableType = (/^(?:checkbox|radio)$/i);\n\
 \n\
 \n\
 (function() {\n\
-\tvar fragment = document.createDocumentFragment(),\n\
-\t\tdiv = document.createElement(\"div\"),\n\
-\t\tinput = document.createElement(\"input\");\n\
+\t// Minified: var a,b,c\n\
+\tvar input = document.createElement( \"input\" ),\n\
+\t\tdiv = document.createElement( \"div\" ),\n\
+\t\tfragment = document.createDocumentFragment();\n\
 \n\
 \t// Setup\n\
-\tdiv.setAttribute( \"className\", \"t\" );\n\
-\tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a>\";\n\
+\tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a><input type='checkbox'/>\";\n\
 \n\
 \t// IE strips leading whitespace when .innerHTML is used\n\
 \tsupport.leadingWhitespace = div.firstChild.nodeType === 3;\n\
@@ -10151,9 +14873,6 @@ var rcheckableType = (/^(?:checkbox|radio)$/i);\n\
 \t\t\tsupport.deleteExpando = false;\n\
 \t\t}\n\
 \t}\n\
-\n\
-\t// Null elements to avoid leaks in IE.\n\
-\tfragment = div = input = null;\n\
 })();\n\
 \n\
 \n\
@@ -10179,7 +14898,7 @@ var rcheckableType = (/^(?:checkbox|radio)$/i);\n\
 \n\
 var rformElems = /^(?:input|select|textarea)$/i,\n\
 \trkeyEvent = /^key/,\n\
-\trmouseEvent = /^(?:mouse|contextmenu)|click/,\n\
+\trmouseEvent = /^(?:mouse|pointer|contextmenu)|click/,\n\
 \trfocusMorph = /^(?:focusinfocus|focusoutblur)$/,\n\
 \trtypenamespace = /^([^.]*)(?:\\.(.+)|)$/;\n\
 \n\
@@ -10782,8 +15501,9 @@ jQuery.event = {\n\
 \t\tbeforeunload: {\n\
 \t\t\tpostDispatch: function( event ) {\n\
 \n\
-\t\t\t\t// Even when returnValue equals to undefined Firefox will still show alert\n\
-\t\t\t\tif ( event.result !== undefined ) {\n\
+\t\t\t\t// Support: Firefox 20+\n\
+\t\t\t\t// Firefox doesn't alert if the returnValue field is not set.\n\
+\t\t\t\tif ( event.result !== undefined && event.originalEvent ) {\n\
 \t\t\t\t\tevent.originalEvent.returnValue = event.result;\n\
 \t\t\t\t}\n\
 \t\t\t}\n\
@@ -10849,11 +15569,9 @@ jQuery.Event = function( src, props ) {\n\
 \t\t// Events bubbling up the document may have been marked as prevented\n\
 \t\t// by a handler lower down the tree; reflect the correct value.\n\
 \t\tthis.isDefaultPrevented = src.defaultPrevented ||\n\
-\t\t\t\tsrc.defaultPrevented === undefined && (\n\
-\t\t\t\t// Support: IE < 9\n\
-\t\t\t\tsrc.returnValue === false ||\n\
-\t\t\t\t// Support: Android < 4.0\n\
-\t\t\t\tsrc.getPreventDefault && src.getPreventDefault() ) ?\n\
+\t\t\t\tsrc.defaultPrevented === undefined &&\n\
+\t\t\t\t// Support: IE < 9, Android < 4.0\n\
+\t\t\t\tsrc.returnValue === false ?\n\
 \t\t\treturnTrue :\n\
 \t\t\treturnFalse;\n\
 \n\
@@ -10916,7 +15634,14 @@ jQuery.Event.prototype = {\n\
 \t\te.cancelBubble = true;\n\
 \t},\n\
 \tstopImmediatePropagation: function() {\n\
+\t\tvar e = this.originalEvent;\n\
+\n\
 \t\tthis.isImmediatePropagationStopped = returnTrue;\n\
+\n\
+\t\tif ( e && e.stopImmediatePropagation ) {\n\
+\t\t\te.stopImmediatePropagation();\n\
+\t\t}\n\
+\n\
 \t\tthis.stopPropagation();\n\
 \t}\n\
 };\n\
@@ -10924,7 +15649,9 @@ jQuery.Event.prototype = {\n\
 // Create mouseenter/leave events using mouseover/out and event-time checks\n\
 jQuery.each({\n\
 \tmouseenter: \"mouseover\",\n\
-\tmouseleave: \"mouseout\"\n\
+\tmouseleave: \"mouseout\",\n\
+\tpointerenter: \"pointerover\",\n\
+\tpointerleave: \"pointerout\"\n\
 }, function( orig, fix ) {\n\
 \tjQuery.event.special[ orig ] = {\n\
 \t\tdelegateType: fix,\n\
@@ -11928,14 +16655,15 @@ var iframe,\n\
  */\n\
 // Called only from within defaultDisplay\n\
 function actualDisplay( name, doc ) {\n\
-\tvar elem = jQuery( doc.createElement( name ) ).appendTo( doc.body ),\n\
+\tvar style,\n\
+\t\telem = jQuery( doc.createElement( name ) ).appendTo( doc.body ),\n\
 \n\
 \t\t// getDefaultComputedStyle might be reliably used only on attached element\n\
-\t\tdisplay = window.getDefaultComputedStyle ?\n\
+\t\tdisplay = window.getDefaultComputedStyle && ( style = window.getDefaultComputedStyle( elem[ 0 ] ) ) ?\n\
 \n\
 \t\t\t// Use of this method is a temporary fix (more like optmization) until something better comes along,\n\
 \t\t\t// since it was removed from specification and supported only in FF\n\
-\t\t\twindow.getDefaultComputedStyle( elem[ 0 ] ).display : jQuery.css( elem[ 0 ], \"display\" );\n\
+\t\t\tstyle.display : jQuery.css( elem[ 0 ], \"display\" );\n\
 \n\
 \t// We don't have any data stored on the element,\n\
 \t// so use \"detach\" method as fast way to get rid of the element\n\
@@ -11981,67 +16709,46 @@ function defaultDisplay( nodeName ) {\n\
 \n\
 \n\
 (function() {\n\
-\tvar a, shrinkWrapBlocksVal,\n\
-\t\tdiv = document.createElement( \"div\" ),\n\
-\t\tdivReset =\n\
-\t\t\t\"-webkit-box-sizing:content-box;-moz-box-sizing:content-box;box-sizing:content-box;\" +\n\
-\t\t\t\"display:block;padding:0;margin:0;border:0\";\n\
-\n\
-\t// Setup\n\
-\tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a><input type='checkbox'/>\";\n\
-\ta = div.getElementsByTagName( \"a\" )[ 0 ];\n\
-\n\
-\ta.style.cssText = \"float:left;opacity:.5\";\n\
-\n\
-\t// Make sure that element opacity exists\n\
-\t// (IE uses filter instead)\n\
-\t// Use a regex to work around a WebKit issue. See #5145\n\
-\tsupport.opacity = /^0.5/.test( a.style.opacity );\n\
-\n\
-\t// Verify style float existence\n\
-\t// (IE uses styleFloat instead of cssFloat)\n\
-\tsupport.cssFloat = !!a.style.cssFloat;\n\
-\n\
-\tdiv.style.backgroundClip = \"content-box\";\n\
-\tdiv.cloneNode( true ).style.backgroundClip = \"\";\n\
-\tsupport.clearCloneStyle = div.style.backgroundClip === \"content-box\";\n\
-\n\
-\t// Null elements to avoid leaks in IE.\n\
-\ta = div = null;\n\
+\tvar shrinkWrapBlocksVal;\n\
 \n\
 \tsupport.shrinkWrapBlocks = function() {\n\
-\t\tvar body, container, div, containerStyles;\n\
-\n\
-\t\tif ( shrinkWrapBlocksVal == null ) {\n\
-\t\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
-\t\t\tif ( !body ) {\n\
-\t\t\t\t// Test fired too early or in an unsupported environment, exit.\n\
-\t\t\t\treturn;\n\
-\t\t\t}\n\
-\n\
-\t\t\tcontainerStyles = \"border:0;width:0;height:0;position:absolute;top:0;left:-9999px\";\n\
-\t\t\tcontainer = document.createElement( \"div\" );\n\
-\t\t\tdiv = document.createElement( \"div\" );\n\
-\n\
-\t\t\tbody.appendChild( container ).appendChild( div );\n\
-\n\
-\t\t\t// Will be changed later if needed.\n\
-\t\t\tshrinkWrapBlocksVal = false;\n\
-\n\
-\t\t\tif ( typeof div.style.zoom !== strundefined ) {\n\
-\t\t\t\t// Support: IE6\n\
-\t\t\t\t// Check if elements with layout shrink-wrap their children\n\
-\t\t\t\tdiv.style.cssText = divReset + \";width:1px;padding:1px;zoom:1\";\n\
-\t\t\t\tdiv.innerHTML = \"<div></div>\";\n\
-\t\t\t\tdiv.firstChild.style.width = \"5px\";\n\
-\t\t\t\tshrinkWrapBlocksVal = div.offsetWidth !== 3;\n\
-\t\t\t}\n\
-\n\
-\t\t\tbody.removeChild( container );\n\
-\n\
-\t\t\t// Null elements to avoid leaks in IE.\n\
-\t\t\tbody = container = div = null;\n\
+\t\tif ( shrinkWrapBlocksVal != null ) {\n\
+\t\t\treturn shrinkWrapBlocksVal;\n\
 \t\t}\n\
+\n\
+\t\t// Will be changed later if needed.\n\
+\t\tshrinkWrapBlocksVal = false;\n\
+\n\
+\t\t// Minified: var b,c,d\n\
+\t\tvar div, body, container;\n\
+\n\
+\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
+\t\tif ( !body || !body.style ) {\n\
+\t\t\t// Test fired too early or in an unsupported environment, exit.\n\
+\t\t\treturn;\n\
+\t\t}\n\
+\n\
+\t\t// Setup\n\
+\t\tdiv = document.createElement( \"div\" );\n\
+\t\tcontainer = document.createElement( \"div\" );\n\
+\t\tcontainer.style.cssText = \"position:absolute;border:0;width:0;height:0;top:0;left:-9999px\";\n\
+\t\tbody.appendChild( container ).appendChild( div );\n\
+\n\
+\t\t// Support: IE6\n\
+\t\t// Check if elements with layout shrink-wrap their children\n\
+\t\tif ( typeof div.style.zoom !== strundefined ) {\n\
+\t\t\t// Reset CSS: box-sizing; display; margin; border\n\
+\t\t\tdiv.style.cssText =\n\
+\t\t\t\t// Support: Firefox<29, Android 2.3\n\
+\t\t\t\t// Vendor-prefix box-sizing\n\
+\t\t\t\t\"-webkit-box-sizing:content-box;-moz-box-sizing:content-box;\" +\n\
+\t\t\t\t\"box-sizing:content-box;display:block;margin:0;border:0;\" +\n\
+\t\t\t\t\"padding:1px;width:1px;zoom:1\";\n\
+\t\t\tdiv.appendChild( document.createElement( \"div\" ) ).style.width = \"5px\";\n\
+\t\t\tshrinkWrapBlocksVal = div.offsetWidth !== 3;\n\
+\t\t}\n\
+\n\
+\t\tbody.removeChild( container );\n\
 \n\
 \t\treturn shrinkWrapBlocksVal;\n\
 \t};\n\
@@ -12190,92 +16897,46 @@ function addGetHookIf( conditionFn, hookFn ) {\n\
 \n\
 \n\
 (function() {\n\
-\tvar a, reliableHiddenOffsetsVal, boxSizingVal, boxSizingReliableVal,\n\
-\t\tpixelPositionVal, reliableMarginRightVal,\n\
-\t\tdiv = document.createElement( \"div\" ),\n\
-\t\tcontainerStyles = \"border:0;width:0;height:0;position:absolute;top:0;left:-9999px\",\n\
-\t\tdivReset =\n\
-\t\t\t\"-webkit-box-sizing:content-box;-moz-box-sizing:content-box;box-sizing:content-box;\" +\n\
-\t\t\t\"display:block;padding:0;margin:0;border:0\";\n\
+\t// Minified: var b,c,d,e,f,g, h,i\n\
+\tvar div, style, a, pixelPositionVal, boxSizingReliableVal,\n\
+\t\treliableHiddenOffsetsVal, reliableMarginRightVal;\n\
 \n\
 \t// Setup\n\
+\tdiv = document.createElement( \"div\" );\n\
 \tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a><input type='checkbox'/>\";\n\
 \ta = div.getElementsByTagName( \"a\" )[ 0 ];\n\
+\tstyle = a && a.style;\n\
 \n\
-\ta.style.cssText = \"float:left;opacity:.5\";\n\
+\t// Finish early in limited (non-browser) environments\n\
+\tif ( !style ) {\n\
+\t\treturn;\n\
+\t}\n\
 \n\
-\t// Make sure that element opacity exists\n\
-\t// (IE uses filter instead)\n\
-\t// Use a regex to work around a WebKit issue. See #5145\n\
-\tsupport.opacity = /^0.5/.test( a.style.opacity );\n\
+\tstyle.cssText = \"float:left;opacity:.5\";\n\
+\n\
+\t// Support: IE<9\n\
+\t// Make sure that element opacity exists (as opposed to filter)\n\
+\tsupport.opacity = style.opacity === \"0.5\";\n\
 \n\
 \t// Verify style float existence\n\
 \t// (IE uses styleFloat instead of cssFloat)\n\
-\tsupport.cssFloat = !!a.style.cssFloat;\n\
+\tsupport.cssFloat = !!style.cssFloat;\n\
 \n\
 \tdiv.style.backgroundClip = \"content-box\";\n\
 \tdiv.cloneNode( true ).style.backgroundClip = \"\";\n\
 \tsupport.clearCloneStyle = div.style.backgroundClip === \"content-box\";\n\
 \n\
-\t// Null elements to avoid leaks in IE.\n\
-\ta = div = null;\n\
+\t// Support: Firefox<29, Android 2.3\n\
+\t// Vendor-prefix box-sizing\n\
+\tsupport.boxSizing = style.boxSizing === \"\" || style.MozBoxSizing === \"\" ||\n\
+\t\tstyle.WebkitBoxSizing === \"\";\n\
 \n\
 \tjQuery.extend(support, {\n\
 \t\treliableHiddenOffsets: function() {\n\
-\t\t\tif ( reliableHiddenOffsetsVal != null ) {\n\
-\t\t\t\treturn reliableHiddenOffsetsVal;\n\
-\t\t\t}\n\
-\n\
-\t\t\tvar container, tds, isSupported,\n\
-\t\t\t\tdiv = document.createElement( \"div\" ),\n\
-\t\t\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
-\n\
-\t\t\tif ( !body ) {\n\
-\t\t\t\t// Return for frameset docs that don't have a body\n\
-\t\t\t\treturn;\n\
-\t\t\t}\n\
-\n\
-\t\t\t// Setup\n\
-\t\t\tdiv.setAttribute( \"className\", \"t\" );\n\
-\t\t\tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a><input type='checkbox'/>\";\n\
-\n\
-\t\t\tcontainer = document.createElement( \"div\" );\n\
-\t\t\tcontainer.style.cssText = containerStyles;\n\
-\n\
-\t\t\tbody.appendChild( container ).appendChild( div );\n\
-\n\
-\t\t\t// Support: IE8\n\
-\t\t\t// Check if table cells still have offsetWidth/Height when they are set\n\
-\t\t\t// to display:none and there are still other visible table cells in a\n\
-\t\t\t// table row; if so, offsetWidth/Height are not reliable for use when\n\
-\t\t\t// determining if an element has been hidden directly using\n\
-\t\t\t// display:none (it is still safe to use offsets if a parent element is\n\
-\t\t\t// hidden; don safety goggles and see bug #4512 for more information).\n\
-\t\t\tdiv.innerHTML = \"<table><tr><td></td><td>t</td></tr></table>\";\n\
-\t\t\ttds = div.getElementsByTagName( \"td\" );\n\
-\t\t\ttds[ 0 ].style.cssText = \"padding:0;margin:0;border:0;display:none\";\n\
-\t\t\tisSupported = ( tds[ 0 ].offsetHeight === 0 );\n\
-\n\
-\t\t\ttds[ 0 ].style.display = \"\";\n\
-\t\t\ttds[ 1 ].style.display = \"none\";\n\
-\n\
-\t\t\t// Support: IE8\n\
-\t\t\t// Check if empty table cells still have offsetWidth/Height\n\
-\t\t\treliableHiddenOffsetsVal = isSupported && ( tds[ 0 ].offsetHeight === 0 );\n\
-\n\
-\t\t\tbody.removeChild( container );\n\
-\n\
-\t\t\t// Null elements to avoid leaks in IE.\n\
-\t\t\tdiv = body = null;\n\
-\n\
-\t\t\treturn reliableHiddenOffsetsVal;\n\
-\t\t},\n\
-\n\
-\t\tboxSizing: function() {\n\
-\t\t\tif ( boxSizingVal == null ) {\n\
+\t\t\tif ( reliableHiddenOffsetsVal == null ) {\n\
 \t\t\t\tcomputeStyleTests();\n\
 \t\t\t}\n\
-\t\t\treturn boxSizingVal;\n\
+\t\t\treturn reliableHiddenOffsetsVal;\n\
 \t\t},\n\
 \n\
 \t\tboxSizingReliable: function() {\n\
@@ -12292,84 +16953,86 @@ function addGetHookIf( conditionFn, hookFn ) {\n\
 \t\t\treturn pixelPositionVal;\n\
 \t\t},\n\
 \n\
+\t\t// Support: Android 2.3\n\
 \t\treliableMarginRight: function() {\n\
-\t\t\tvar body, container, div, marginDiv;\n\
-\n\
-\t\t\t// Use window.getComputedStyle because jsdom on node.js will break without it.\n\
-\t\t\tif ( reliableMarginRightVal == null && window.getComputedStyle ) {\n\
-\t\t\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
-\t\t\t\tif ( !body ) {\n\
-\t\t\t\t\t// Test fired too early or in an unsupported environment, exit.\n\
-\t\t\t\t\treturn;\n\
-\t\t\t\t}\n\
-\n\
-\t\t\t\tcontainer = document.createElement( \"div\" );\n\
-\t\t\t\tdiv = document.createElement( \"div\" );\n\
-\t\t\t\tcontainer.style.cssText = containerStyles;\n\
-\n\
-\t\t\t\tbody.appendChild( container ).appendChild( div );\n\
-\n\
-\t\t\t\t// Check if div with explicit width and no margin-right incorrectly\n\
-\t\t\t\t// gets computed margin-right based on width of container. (#3333)\n\
-\t\t\t\t// Fails in WebKit before Feb 2011 nightlies\n\
-\t\t\t\t// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right\n\
-\t\t\t\tmarginDiv = div.appendChild( document.createElement( \"div\" ) );\n\
-\t\t\t\tmarginDiv.style.cssText = div.style.cssText = divReset;\n\
-\t\t\t\tmarginDiv.style.marginRight = marginDiv.style.width = \"0\";\n\
-\t\t\t\tdiv.style.width = \"1px\";\n\
-\n\
-\t\t\t\treliableMarginRightVal =\n\
-\t\t\t\t\t!parseFloat( ( window.getComputedStyle( marginDiv, null ) || {} ).marginRight );\n\
-\n\
-\t\t\t\tbody.removeChild( container );\n\
+\t\t\tif ( reliableMarginRightVal == null ) {\n\
+\t\t\t\tcomputeStyleTests();\n\
 \t\t\t}\n\
-\n\
 \t\t\treturn reliableMarginRightVal;\n\
 \t\t}\n\
 \t});\n\
 \n\
 \tfunction computeStyleTests() {\n\
-\t\tvar container, div,\n\
-\t\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
+\t\t// Minified: var b,c,d,j\n\
+\t\tvar div, body, container, contents;\n\
 \n\
-\t\tif ( !body ) {\n\
+\t\tbody = document.getElementsByTagName( \"body\" )[ 0 ];\n\
+\t\tif ( !body || !body.style ) {\n\
 \t\t\t// Test fired too early or in an unsupported environment, exit.\n\
 \t\t\treturn;\n\
 \t\t}\n\
 \n\
-\t\tcontainer = document.createElement( \"div\" );\n\
+\t\t// Setup\n\
 \t\tdiv = document.createElement( \"div\" );\n\
-\t\tcontainer.style.cssText = containerStyles;\n\
-\n\
+\t\tcontainer = document.createElement( \"div\" );\n\
+\t\tcontainer.style.cssText = \"position:absolute;border:0;width:0;height:0;top:0;left:-9999px\";\n\
 \t\tbody.appendChild( container ).appendChild( div );\n\
 \n\
 \t\tdiv.style.cssText =\n\
-\t\t\t\"-webkit-box-sizing:border-box;-moz-box-sizing:border-box;box-sizing:border-box;\" +\n\
-\t\t\t\t\"position:absolute;display:block;padding:1px;border:1px;width:4px;\" +\n\
-\t\t\t\t\"margin-top:1%;top:1%\";\n\
+\t\t\t// Support: Firefox<29, Android 2.3\n\
+\t\t\t// Vendor-prefix box-sizing\n\
+\t\t\t\"-webkit-box-sizing:border-box;-moz-box-sizing:border-box;\" +\n\
+\t\t\t\"box-sizing:border-box;display:block;margin-top:1%;top:1%;\" +\n\
+\t\t\t\"border:1px;padding:1px;width:4px;position:absolute\";\n\
 \n\
-\t\t// Workaround failing boxSizing test due to offsetWidth returning wrong value\n\
-\t\t// with some non-1 values of body zoom, ticket #13543\n\
-\t\tjQuery.swap( body, body.style.zoom != null ? { zoom: 1 } : {}, function() {\n\
-\t\t\tboxSizingVal = div.offsetWidth === 4;\n\
-\t\t});\n\
-\n\
-\t\t// Will be changed later if needed.\n\
-\t\tboxSizingReliableVal = true;\n\
-\t\tpixelPositionVal = false;\n\
+\t\t// Support: IE<9\n\
+\t\t// Assume reasonable values in the absence of getComputedStyle\n\
+\t\tpixelPositionVal = boxSizingReliableVal = false;\n\
 \t\treliableMarginRightVal = true;\n\
 \n\
-\t\t// Use window.getComputedStyle because jsdom on node.js will break without it.\n\
+\t\t// Check for getComputedStyle so that this code is not run in IE<9.\n\
 \t\tif ( window.getComputedStyle ) {\n\
 \t\t\tpixelPositionVal = ( window.getComputedStyle( div, null ) || {} ).top !== \"1%\";\n\
 \t\t\tboxSizingReliableVal =\n\
 \t\t\t\t( window.getComputedStyle( div, null ) || { width: \"4px\" } ).width === \"4px\";\n\
+\n\
+\t\t\t// Support: Android 2.3\n\
+\t\t\t// Div with explicit width and no margin-right incorrectly\n\
+\t\t\t// gets computed margin-right based on width of container (#3333)\n\
+\t\t\t// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right\n\
+\t\t\tcontents = div.appendChild( document.createElement( \"div\" ) );\n\
+\n\
+\t\t\t// Reset CSS: box-sizing; display; margin; border; padding\n\
+\t\t\tcontents.style.cssText = div.style.cssText =\n\
+\t\t\t\t// Support: Firefox<29, Android 2.3\n\
+\t\t\t\t// Vendor-prefix box-sizing\n\
+\t\t\t\t\"-webkit-box-sizing:content-box;-moz-box-sizing:content-box;\" +\n\
+\t\t\t\t\"box-sizing:content-box;display:block;margin:0;border:0;padding:0\";\n\
+\t\t\tcontents.style.marginRight = contents.style.width = \"0\";\n\
+\t\t\tdiv.style.width = \"1px\";\n\
+\n\
+\t\t\treliableMarginRightVal =\n\
+\t\t\t\t!parseFloat( ( window.getComputedStyle( contents, null ) || {} ).marginRight );\n\
+\t\t}\n\
+\n\
+\t\t// Support: IE8\n\
+\t\t// Check if table cells still have offsetWidth/Height when they are set\n\
+\t\t// to display:none and there are still other visible table cells in a\n\
+\t\t// table row; if so, offsetWidth/Height are not reliable for use when\n\
+\t\t// determining if an element has been hidden directly using\n\
+\t\t// display:none (it is still safe to use offsets if a parent element is\n\
+\t\t// hidden; don safety goggles and see bug #4512 for more information).\n\
+\t\tdiv.innerHTML = \"<table><tr><td></td><td>t</td></tr></table>\";\n\
+\t\tcontents = div.getElementsByTagName( \"td\" );\n\
+\t\tcontents[ 0 ].style.cssText = \"margin:0;border:0;padding:0;display:none\";\n\
+\t\treliableHiddenOffsetsVal = contents[ 0 ].offsetHeight === 0;\n\
+\t\tif ( reliableHiddenOffsetsVal ) {\n\
+\t\t\tcontents[ 0 ].style.display = \"\";\n\
+\t\t\tcontents[ 1 ].style.display = \"none\";\n\
+\t\t\treliableHiddenOffsetsVal = contents[ 0 ].offsetHeight === 0;\n\
 \t\t}\n\
 \n\
 \t\tbody.removeChild( container );\n\
-\n\
-\t\t// Null elements to avoid leaks in IE.\n\
-\t\tdiv = body = null;\n\
 \t}\n\
 \n\
 })();\n\
@@ -12409,8 +17072,8 @@ var\n\
 \n\
 \tcssShow = { position: \"absolute\", visibility: \"hidden\", display: \"block\" },\n\
 \tcssNormalTransform = {\n\
-\t\tletterSpacing: 0,\n\
-\t\tfontWeight: 400\n\
+\t\tletterSpacing: \"0\",\n\
+\t\tfontWeight: \"400\"\n\
 \t},\n\
 \n\
 \tcssPrefixes = [ \"Webkit\", \"O\", \"Moz\", \"ms\" ];\n\
@@ -12467,13 +17130,10 @@ function showHide( elements, show ) {\n\
 \t\t\t\tvalues[ index ] = jQuery._data( elem, \"olddisplay\", defaultDisplay(elem.nodeName) );\n\
 \t\t\t}\n\
 \t\t} else {\n\
+\t\t\thidden = isHidden( elem );\n\
 \n\
-\t\t\tif ( !values[ index ] ) {\n\
-\t\t\t\thidden = isHidden( elem );\n\
-\n\
-\t\t\t\tif ( display && display !== \"none\" || !hidden ) {\n\
-\t\t\t\t\tjQuery._data( elem, \"olddisplay\", hidden ? display : jQuery.css( elem, \"display\" ) );\n\
-\t\t\t\t}\n\
+\t\t\tif ( display && display !== \"none\" || !hidden ) {\n\
+\t\t\t\tjQuery._data( elem, \"olddisplay\", hidden ? display : jQuery.css( elem, \"display\" ) );\n\
 \t\t\t}\n\
 \t\t}\n\
 \t}\n\
@@ -12546,7 +17206,7 @@ function getWidthOrHeight( elem, name, extra ) {\n\
 \tvar valueIsBorderBox = true,\n\
 \t\tval = name === \"width\" ? elem.offsetWidth : elem.offsetHeight,\n\
 \t\tstyles = getStyles( elem ),\n\
-\t\tisBorderBox = support.boxSizing() && jQuery.css( elem, \"boxSizing\", false, styles ) === \"border-box\";\n\
+\t\tisBorderBox = support.boxSizing && jQuery.css( elem, \"boxSizing\", false, styles ) === \"border-box\";\n\
 \n\
 \t// some non-html elements return undefined for offsetWidth, so check for null/undefined\n\
 \t// svg - https://bugzilla.mozilla.org/show_bug.cgi?id=649285\n\
@@ -12602,6 +17262,8 @@ jQuery.extend({\n\
 \tcssNumber: {\n\
 \t\t\"columnCount\": true,\n\
 \t\t\"fillOpacity\": true,\n\
+\t\t\"flexGrow\": true,\n\
+\t\t\"flexShrink\": true,\n\
 \t\t\"fontWeight\": true,\n\
 \t\t\"lineHeight\": true,\n\
 \t\t\"opacity\": true,\n\
@@ -12670,9 +17332,6 @@ jQuery.extend({\n\
 \t\t\t\t// Support: IE\n\
 \t\t\t\t// Swallow errors from 'invalid' CSS values (#5509)\n\
 \t\t\t\ttry {\n\
-\t\t\t\t\t// Support: Chrome, Safari\n\
-\t\t\t\t\t// Setting style to blank string required to delete \"style: x !important;\"\n\
-\t\t\t\t\tstyle[ name ] = \"\";\n\
 \t\t\t\t\tstyle[ name ] = value;\n\
 \t\t\t\t} catch(e) {}\n\
 \t\t\t}\n\
@@ -12729,7 +17388,7 @@ jQuery.each([ \"height\", \"width\" ], function( i, name ) {\n\
 \t\t\tif ( computed ) {\n\
 \t\t\t\t// certain elements can have dimension info if we invisibly show them\n\
 \t\t\t\t// however, it must have a current display style that would benefit from this\n\
-\t\t\t\treturn elem.offsetWidth === 0 && rdisplayswap.test( jQuery.css( elem, \"display\" ) ) ?\n\
+\t\t\t\treturn rdisplayswap.test( jQuery.css( elem, \"display\" ) ) && elem.offsetWidth === 0 ?\n\
 \t\t\t\t\tjQuery.swap( elem, cssShow, function() {\n\
 \t\t\t\t\t\treturn getWidthOrHeight( elem, name, extra );\n\
 \t\t\t\t\t}) :\n\
@@ -12744,7 +17403,7 @@ jQuery.each([ \"height\", \"width\" ], function( i, name ) {\n\
 \t\t\t\t\telem,\n\
 \t\t\t\t\tname,\n\
 \t\t\t\t\textra,\n\
-\t\t\t\t\tsupport.boxSizing() && jQuery.css( elem, \"boxSizing\", false, styles ) === \"border-box\",\n\
+\t\t\t\t\tsupport.boxSizing && jQuery.css( elem, \"boxSizing\", false, styles ) === \"border-box\",\n\
 \t\t\t\t\tstyles\n\
 \t\t\t\t) : 0\n\
 \t\t\t);\n\
@@ -13093,7 +17752,7 @@ function createTween( value, prop, animation ) {\n\
 \n\
 function defaultPrefilter( elem, props, opts ) {\n\
 \t/* jshint validthis: true */\n\
-\tvar prop, value, toggle, tween, hooks, oldfire, display, dDisplay,\n\
+\tvar prop, value, toggle, tween, hooks, oldfire, display, checkDisplay,\n\
 \t\tanim = this,\n\
 \t\torig = {},\n\
 \t\tstyle = elem.style,\n\
@@ -13137,16 +17796,16 @@ function defaultPrefilter( elem, props, opts ) {\n\
 \t\t// Set display property to inline-block for height/width\n\
 \t\t// animations on inline elements that are having width/height animated\n\
 \t\tdisplay = jQuery.css( elem, \"display\" );\n\
-\t\tdDisplay = defaultDisplay( elem.nodeName );\n\
-\t\tif ( display === \"none\" ) {\n\
-\t\t\tdisplay = dDisplay;\n\
-\t\t}\n\
-\t\tif ( display === \"inline\" &&\n\
-\t\t\t\tjQuery.css( elem, \"float\" ) === \"none\" ) {\n\
+\n\
+\t\t// Test default display if display is currently \"none\"\n\
+\t\tcheckDisplay = display === \"none\" ?\n\
+\t\t\tjQuery._data( elem, \"olddisplay\" ) || defaultDisplay( elem.nodeName ) : display;\n\
+\n\
+\t\tif ( checkDisplay === \"inline\" && jQuery.css( elem, \"float\" ) === \"none\" ) {\n\
 \n\
 \t\t\t// inline-level elements accept inline-block;\n\
 \t\t\t// block-level elements need to be inline with layout\n\
-\t\t\tif ( !support.inlineBlockNeedsLayout || dDisplay === \"inline\" ) {\n\
+\t\t\tif ( !support.inlineBlockNeedsLayout || defaultDisplay( elem.nodeName ) === \"inline\" ) {\n\
 \t\t\t\tstyle.display = \"inline-block\";\n\
 \t\t\t} else {\n\
 \t\t\t\tstyle.zoom = 1;\n\
@@ -13181,6 +17840,10 @@ function defaultPrefilter( elem, props, opts ) {\n\
 \t\t\t\t}\n\
 \t\t\t}\n\
 \t\t\torig[ prop ] = dataShow && dataShow[ prop ] || jQuery.style( elem, prop );\n\
+\n\
+\t\t// Any non-fx value stops us from restoring the original display value\n\
+\t\t} else {\n\
+\t\t\tdisplay = undefined;\n\
 \t\t}\n\
 \t}\n\
 \n\
@@ -13222,6 +17885,10 @@ function defaultPrefilter( elem, props, opts ) {\n\
 \t\t\t\t}\n\
 \t\t\t}\n\
 \t\t}\n\
+\n\
+\t// If this is a noop like .hide().hide(), restore an overwritten display value\n\
+\t} else if ( (display === \"none\" ? defaultDisplay( elem.nodeName ) : display) === \"inline\" ) {\n\
+\t\tstyle.display = display;\n\
 \t}\n\
 }\n\
 \n\
@@ -13638,10 +18305,11 @@ jQuery.fn.delay = function( time, type ) {\n\
 \n\
 \n\
 (function() {\n\
-\tvar a, input, select, opt,\n\
-\t\tdiv = document.createElement(\"div\" );\n\
+\t// Minified: var a,b,c,d,e\n\
+\tvar input, div, select, a, opt;\n\
 \n\
 \t// Setup\n\
+\tdiv = document.createElement( \"div\" );\n\
 \tdiv.setAttribute( \"className\", \"t\" );\n\
 \tdiv.innerHTML = \"  <link/><table></table><a href='/a'>a</a><input type='checkbox'/>\";\n\
 \ta = div.getElementsByTagName(\"a\")[ 0 ];\n\
@@ -13689,9 +18357,6 @@ jQuery.fn.delay = function( time, type ) {\n\
 \tinput.value = \"t\";\n\
 \tinput.setAttribute( \"type\", \"radio\" );\n\
 \tsupport.radioValue = input.value === \"t\";\n\
-\n\
-\t// Null elements to avoid leaks in IE.\n\
-\ta = input = select = opt = div = null;\n\
 })();\n\
 \n\
 \n\
@@ -13765,7 +18430,9 @@ jQuery.extend({\n\
 \t\t\t\tvar val = jQuery.find.attr( elem, \"value\" );\n\
 \t\t\t\treturn val != null ?\n\
 \t\t\t\t\tval :\n\
-\t\t\t\t\tjQuery.text( elem );\n\
+\t\t\t\t\t// Support: IE10-11+\n\
+\t\t\t\t\t// option.text throws exceptions (#14686, #14858)\n\
+\t\t\t\t\tjQuery.trim( jQuery.text( elem ) );\n\
 \t\t\t}\n\
 \t\t},\n\
 \t\tselect: {\n\
@@ -15935,7 +20602,7 @@ jQuery.fn.load = function( url, params, callback ) {\n\
 \t\toff = url.indexOf(\" \");\n\
 \n\
 \tif ( off >= 0 ) {\n\
-\t\tselector = url.slice( off, url.length );\n\
+\t\tselector = jQuery.trim( url.slice( off, url.length ) );\n\
 \t\turl = url.slice( 0, off );\n\
 \t}\n\
 \n\
@@ -16248,6 +20915,12 @@ jQuery.fn.andSelf = jQuery.fn.addBack;\n\
 // derived from file names, and jQuery is normally delivered in a lowercase\n\
 // file name. Do this after creating the global so that if an AMD module wants\n\
 // to call noConflict to hide this version of jQuery, it will work.\n\
+\n\
+// Note that for maximum portability, libraries that are not jQuery should\n\
+// declare themselves as anonymous modules, and avoid setting a global if an\n\
+// AMD loader is present. jQuery is a special case. For more information, see\n\
+// https://github.com/jrburke/requirejs/wiki/Updating-existing-libraries#wiki-anon\n\
+\n\
 if ( typeof define === \"function\" && define.amd ) {\n\
 \tdefine( \"jquery\", [], function() {\n\
 \t\treturn jQuery;\n\
@@ -16289,3505 +20962,2345 @@ if ( typeof noGlobal === strundefined ) {\n\
 return jQuery;\n\
 \n\
 }));\n\
-//@ sourceURL=components-jquery/jquery.js"
+//# sourceURL=components/components/jquery/1.11.1/jquery.js"
 ));
-require.register("kpwebb-select2/select2.js", Function("exports, require, module",
-"/*\n\
-Copyright 2012 Igor Vaynberg\n\
-\n\
-Version: @@ver@@ Timestamp: @@timestamp@@\n\
-\n\
-This software is licensed under the Apache License, Version 2.0 (the \"Apache License\") or the GNU\n\
-General Public License version 2 (the \"GPL License\"). You may choose either license to govern your\n\
-use of this software only upon the condition that you accept all of the terms of either the Apache\n\
-License or the GPL License.\n\
-\n\
-You may obtain a copy of the Apache License and the GPL License at:\n\
-\n\
-    http://www.apache.org/licenses/LICENSE-2.0\n\
-    http://www.gnu.org/licenses/gpl-2.0.html\n\
-\n\
-Unless required by applicable law or agreed to in writing, software distributed under the\n\
-Apache License or the GPL License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR\n\
-CONDITIONS OF ANY KIND, either express or implied. See the Apache License and the GPL License for\n\
-the specific language governing permissions and limitations under the Apache License and the GPL License.\n\
-*/\n\
-(function ($) {\n\
-    if(typeof $.fn.each2 == \"undefined\") {\n\
-        $.extend($.fn, {\n\
-            /*\n\
-            * 4-10 times faster .each replacement\n\
-            * use it carefully, as it overrides jQuery context of element on each iteration\n\
-            */\n\
-            each2 : function (c) {\n\
-                var j = $([0]), i = -1, l = this.length;\n\
-                while (\n\
-                    ++i < l\n\
-                    && (j.context = j[0] = this[i])\n\
-                    && c.call(j[0], i, j) !== false //\"this\"=DOM, i=index, j=jQuery object\n\
-                );\n\
-                return this;\n\
-            }\n\
-        });\n\
-    }\n\
-})(jQuery);\n\
-\n\
-(function ($, undefined) {\n\
-    \"use strict\";\n\
-    /*global document, window, jQuery, console */\n\
-\n\
-    if (window.Select2 !== undefined) {\n\
-        return;\n\
-    }\n\
-\n\
-    var KEY, AbstractSelect2, SingleSelect2, MultiSelect2, nextUid, sizer,\n\
-        lastMousePosition={x:0,y:0}, $document, scrollBarDimensions,\n\
-\n\
-    KEY = {\n\
-        TAB: 9,\n\
-        ENTER: 13,\n\
-        ESC: 27,\n\
-        SPACE: 32,\n\
-        LEFT: 37,\n\
-        UP: 38,\n\
-        RIGHT: 39,\n\
-        DOWN: 40,\n\
-        SHIFT: 16,\n\
-        CTRL: 17,\n\
-        ALT: 18,\n\
-        PAGE_UP: 33,\n\
-        PAGE_DOWN: 34,\n\
-        HOME: 36,\n\
-        END: 35,\n\
-        BACKSPACE: 8,\n\
-        DELETE: 46,\n\
-        isArrow: function (k) {\n\
-            k = k.which ? k.which : k;\n\
-            switch (k) {\n\
-            case KEY.LEFT:\n\
-            case KEY.RIGHT:\n\
-            case KEY.UP:\n\
-            case KEY.DOWN:\n\
-                return true;\n\
-            }\n\
-            return false;\n\
-        },\n\
-        isControl: function (e) {\n\
-            var k = e.which;\n\
-            switch (k) {\n\
-            case KEY.SHIFT:\n\
-            case KEY.CTRL:\n\
-            case KEY.ALT:\n\
-                return true;\n\
-            }\n\
-\n\
-            if (e.metaKey) return true;\n\
-\n\
-            return false;\n\
-        },\n\
-        isFunctionKey: function (k) {\n\
-            k = k.which ? k.which : k;\n\
-            return k >= 112 && k <= 123;\n\
-        }\n\
-    },\n\
-    MEASURE_SCROLLBAR_TEMPLATE = \"<div class='select2-measure-scrollbar'></div>\",\n\
-\n\
-    DIACRITICS = {\"\\u24B6\":\"A\",\"\\uFF21\":\"A\",\"\\u00C0\":\"A\",\"\\u00C1\":\"A\",\"\\u00C2\":\"A\",\"\\u1EA6\":\"A\",\"\\u1EA4\":\"A\",\"\\u1EAA\":\"A\",\"\\u1EA8\":\"A\",\"\\u00C3\":\"A\",\"\\u0100\":\"A\",\"\\u0102\":\"A\",\"\\u1EB0\":\"A\",\"\\u1EAE\":\"A\",\"\\u1EB4\":\"A\",\"\\u1EB2\":\"A\",\"\\u0226\":\"A\",\"\\u01E0\":\"A\",\"\\u00C4\":\"A\",\"\\u01DE\":\"A\",\"\\u1EA2\":\"A\",\"\\u00C5\":\"A\",\"\\u01FA\":\"A\",\"\\u01CD\":\"A\",\"\\u0200\":\"A\",\"\\u0202\":\"A\",\"\\u1EA0\":\"A\",\"\\u1EAC\":\"A\",\"\\u1EB6\":\"A\",\"\\u1E00\":\"A\",\"\\u0104\":\"A\",\"\\u023A\":\"A\",\"\\u2C6F\":\"A\",\"\\uA732\":\"AA\",\"\\u00C6\":\"AE\",\"\\u01FC\":\"AE\",\"\\u01E2\":\"AE\",\"\\uA734\":\"AO\",\"\\uA736\":\"AU\",\"\\uA738\":\"AV\",\"\\uA73A\":\"AV\",\"\\uA73C\":\"AY\",\"\\u24B7\":\"B\",\"\\uFF22\":\"B\",\"\\u1E02\":\"B\",\"\\u1E04\":\"B\",\"\\u1E06\":\"B\",\"\\u0243\":\"B\",\"\\u0182\":\"B\",\"\\u0181\":\"B\",\"\\u24B8\":\"C\",\"\\uFF23\":\"C\",\"\\u0106\":\"C\",\"\\u0108\":\"C\",\"\\u010A\":\"C\",\"\\u010C\":\"C\",\"\\u00C7\":\"C\",\"\\u1E08\":\"C\",\"\\u0187\":\"C\",\"\\u023B\":\"C\",\"\\uA73E\":\"C\",\"\\u24B9\":\"D\",\"\\uFF24\":\"D\",\"\\u1E0A\":\"D\",\"\\u010E\":\"D\",\"\\u1E0C\":\"D\",\"\\u1E10\":\"D\",\"\\u1E12\":\"D\",\"\\u1E0E\":\"D\",\"\\u0110\":\"D\",\"\\u018B\":\"D\",\"\\u018A\":\"D\",\"\\u0189\":\"D\",\"\\uA779\":\"D\",\"\\u01F1\":\"DZ\",\"\\u01C4\":\"DZ\",\"\\u01F2\":\"Dz\",\"\\u01C5\":\"Dz\",\"\\u24BA\":\"E\",\"\\uFF25\":\"E\",\"\\u00C8\":\"E\",\"\\u00C9\":\"E\",\"\\u00CA\":\"E\",\"\\u1EC0\":\"E\",\"\\u1EBE\":\"E\",\"\\u1EC4\":\"E\",\"\\u1EC2\":\"E\",\"\\u1EBC\":\"E\",\"\\u0112\":\"E\",\"\\u1E14\":\"E\",\"\\u1E16\":\"E\",\"\\u0114\":\"E\",\"\\u0116\":\"E\",\"\\u00CB\":\"E\",\"\\u1EBA\":\"E\",\"\\u011A\":\"E\",\"\\u0204\":\"E\",\"\\u0206\":\"E\",\"\\u1EB8\":\"E\",\"\\u1EC6\":\"E\",\"\\u0228\":\"E\",\"\\u1E1C\":\"E\",\"\\u0118\":\"E\",\"\\u1E18\":\"E\",\"\\u1E1A\":\"E\",\"\\u0190\":\"E\",\"\\u018E\":\"E\",\"\\u24BB\":\"F\",\"\\uFF26\":\"F\",\"\\u1E1E\":\"F\",\"\\u0191\":\"F\",\"\\uA77B\":\"F\",\"\\u24BC\":\"G\",\"\\uFF27\":\"G\",\"\\u01F4\":\"G\",\"\\u011C\":\"G\",\"\\u1E20\":\"G\",\"\\u011E\":\"G\",\"\\u0120\":\"G\",\"\\u01E6\":\"G\",\"\\u0122\":\"G\",\"\\u01E4\":\"G\",\"\\u0193\":\"G\",\"\\uA7A0\":\"G\",\"\\uA77D\":\"G\",\"\\uA77E\":\"G\",\"\\u24BD\":\"H\",\"\\uFF28\":\"H\",\"\\u0124\":\"H\",\"\\u1E22\":\"H\",\"\\u1E26\":\"H\",\"\\u021E\":\"H\",\"\\u1E24\":\"H\",\"\\u1E28\":\"H\",\"\\u1E2A\":\"H\",\"\\u0126\":\"H\",\"\\u2C67\":\"H\",\"\\u2C75\":\"H\",\"\\uA78D\":\"H\",\"\\u24BE\":\"I\",\"\\uFF29\":\"I\",\"\\u00CC\":\"I\",\"\\u00CD\":\"I\",\"\\u00CE\":\"I\",\"\\u0128\":\"I\",\"\\u012A\":\"I\",\"\\u012C\":\"I\",\"\\u0130\":\"I\",\"\\u00CF\":\"I\",\"\\u1E2E\":\"I\",\"\\u1EC8\":\"I\",\"\\u01CF\":\"I\",\"\\u0208\":\"I\",\"\\u020A\":\"I\",\"\\u1ECA\":\"I\",\"\\u012E\":\"I\",\"\\u1E2C\":\"I\",\"\\u0197\":\"I\",\"\\u24BF\":\"J\",\"\\uFF2A\":\"J\",\"\\u0134\":\"J\",\"\\u0248\":\"J\",\"\\u24C0\":\"K\",\"\\uFF2B\":\"K\",\"\\u1E30\":\"K\",\"\\u01E8\":\"K\",\"\\u1E32\":\"K\",\"\\u0136\":\"K\",\"\\u1E34\":\"K\",\"\\u0198\":\"K\",\"\\u2C69\":\"K\",\"\\uA740\":\"K\",\"\\uA742\":\"K\",\"\\uA744\":\"K\",\"\\uA7A2\":\"K\",\"\\u24C1\":\"L\",\"\\uFF2C\":\"L\",\"\\u013F\":\"L\",\"\\u0139\":\"L\",\"\\u013D\":\"L\",\"\\u1E36\":\"L\",\"\\u1E38\":\"L\",\"\\u013B\":\"L\",\"\\u1E3C\":\"L\",\"\\u1E3A\":\"L\",\"\\u0141\":\"L\",\"\\u023D\":\"L\",\"\\u2C62\":\"L\",\"\\u2C60\":\"L\",\"\\uA748\":\"L\",\"\\uA746\":\"L\",\"\\uA780\":\"L\",\"\\u01C7\":\"LJ\",\"\\u01C8\":\"Lj\",\"\\u24C2\":\"M\",\"\\uFF2D\":\"M\",\"\\u1E3E\":\"M\",\"\\u1E40\":\"M\",\"\\u1E42\":\"M\",\"\\u2C6E\":\"M\",\"\\u019C\":\"M\",\"\\u24C3\":\"N\",\"\\uFF2E\":\"N\",\"\\u01F8\":\"N\",\"\\u0143\":\"N\",\"\\u00D1\":\"N\",\"\\u1E44\":\"N\",\"\\u0147\":\"N\",\"\\u1E46\":\"N\",\"\\u0145\":\"N\",\"\\u1E4A\":\"N\",\"\\u1E48\":\"N\",\"\\u0220\":\"N\",\"\\u019D\":\"N\",\"\\uA790\":\"N\",\"\\uA7A4\":\"N\",\"\\u01CA\":\"NJ\",\"\\u01CB\":\"Nj\",\"\\u24C4\":\"O\",\"\\uFF2F\":\"O\",\"\\u00D2\":\"O\",\"\\u00D3\":\"O\",\"\\u00D4\":\"O\",\"\\u1ED2\":\"O\",\"\\u1ED0\":\"O\",\"\\u1ED6\":\"O\",\"\\u1ED4\":\"O\",\"\\u00D5\":\"O\",\"\\u1E4C\":\"O\",\"\\u022C\":\"O\",\"\\u1E4E\":\"O\",\"\\u014C\":\"O\",\"\\u1E50\":\"O\",\"\\u1E52\":\"O\",\"\\u014E\":\"O\",\"\\u022E\":\"O\",\"\\u0230\":\"O\",\"\\u00D6\":\"O\",\"\\u022A\":\"O\",\"\\u1ECE\":\"O\",\"\\u0150\":\"O\",\"\\u01D1\":\"O\",\"\\u020C\":\"O\",\"\\u020E\":\"O\",\"\\u01A0\":\"O\",\"\\u1EDC\":\"O\",\"\\u1EDA\":\"O\",\"\\u1EE0\":\"O\",\"\\u1EDE\":\"O\",\"\\u1EE2\":\"O\",\"\\u1ECC\":\"O\",\"\\u1ED8\":\"O\",\"\\u01EA\":\"O\",\"\\u01EC\":\"O\",\"\\u00D8\":\"O\",\"\\u01FE\":\"O\",\"\\u0186\":\"O\",\"\\u019F\":\"O\",\"\\uA74A\":\"O\",\"\\uA74C\":\"O\",\"\\u01A2\":\"OI\",\"\\uA74E\":\"OO\",\"\\u0222\":\"OU\",\"\\u24C5\":\"P\",\"\\uFF30\":\"P\",\"\\u1E54\":\"P\",\"\\u1E56\":\"P\",\"\\u01A4\":\"P\",\"\\u2C63\":\"P\",\"\\uA750\":\"P\",\"\\uA752\":\"P\",\"\\uA754\":\"P\",\"\\u24C6\":\"Q\",\"\\uFF31\":\"Q\",\"\\uA756\":\"Q\",\"\\uA758\":\"Q\",\"\\u024A\":\"Q\",\"\\u24C7\":\"R\",\"\\uFF32\":\"R\",\"\\u0154\":\"R\",\"\\u1E58\":\"R\",\"\\u0158\":\"R\",\"\\u0210\":\"R\",\"\\u0212\":\"R\",\"\\u1E5A\":\"R\",\"\\u1E5C\":\"R\",\"\\u0156\":\"R\",\"\\u1E5E\":\"R\",\"\\u024C\":\"R\",\"\\u2C64\":\"R\",\"\\uA75A\":\"R\",\"\\uA7A6\":\"R\",\"\\uA782\":\"R\",\"\\u24C8\":\"S\",\"\\uFF33\":\"S\",\"\\u1E9E\":\"S\",\"\\u015A\":\"S\",\"\\u1E64\":\"S\",\"\\u015C\":\"S\",\"\\u1E60\":\"S\",\"\\u0160\":\"S\",\"\\u1E66\":\"S\",\"\\u1E62\":\"S\",\"\\u1E68\":\"S\",\"\\u0218\":\"S\",\"\\u015E\":\"S\",\"\\u2C7E\":\"S\",\"\\uA7A8\":\"S\",\"\\uA784\":\"S\",\"\\u24C9\":\"T\",\"\\uFF34\":\"T\",\"\\u1E6A\":\"T\",\"\\u0164\":\"T\",\"\\u1E6C\":\"T\",\"\\u021A\":\"T\",\"\\u0162\":\"T\",\"\\u1E70\":\"T\",\"\\u1E6E\":\"T\",\"\\u0166\":\"T\",\"\\u01AC\":\"T\",\"\\u01AE\":\"T\",\"\\u023E\":\"T\",\"\\uA786\":\"T\",\"\\uA728\":\"TZ\",\"\\u24CA\":\"U\",\"\\uFF35\":\"U\",\"\\u00D9\":\"U\",\"\\u00DA\":\"U\",\"\\u00DB\":\"U\",\"\\u0168\":\"U\",\"\\u1E78\":\"U\",\"\\u016A\":\"U\",\"\\u1E7A\":\"U\",\"\\u016C\":\"U\",\"\\u00DC\":\"U\",\"\\u01DB\":\"U\",\"\\u01D7\":\"U\",\"\\u01D5\":\"U\",\"\\u01D9\":\"U\",\"\\u1EE6\":\"U\",\"\\u016E\":\"U\",\"\\u0170\":\"U\",\"\\u01D3\":\"U\",\"\\u0214\":\"U\",\"\\u0216\":\"U\",\"\\u01AF\":\"U\",\"\\u1EEA\":\"U\",\"\\u1EE8\":\"U\",\"\\u1EEE\":\"U\",\"\\u1EEC\":\"U\",\"\\u1EF0\":\"U\",\"\\u1EE4\":\"U\",\"\\u1E72\":\"U\",\"\\u0172\":\"U\",\"\\u1E76\":\"U\",\"\\u1E74\":\"U\",\"\\u0244\":\"U\",\"\\u24CB\":\"V\",\"\\uFF36\":\"V\",\"\\u1E7C\":\"V\",\"\\u1E7E\":\"V\",\"\\u01B2\":\"V\",\"\\uA75E\":\"V\",\"\\u0245\":\"V\",\"\\uA760\":\"VY\",\"\\u24CC\":\"W\",\"\\uFF37\":\"W\",\"\\u1E80\":\"W\",\"\\u1E82\":\"W\",\"\\u0174\":\"W\",\"\\u1E86\":\"W\",\"\\u1E84\":\"W\",\"\\u1E88\":\"W\",\"\\u2C72\":\"W\",\"\\u24CD\":\"X\",\"\\uFF38\":\"X\",\"\\u1E8A\":\"X\",\"\\u1E8C\":\"X\",\"\\u24CE\":\"Y\",\"\\uFF39\":\"Y\",\"\\u1EF2\":\"Y\",\"\\u00DD\":\"Y\",\"\\u0176\":\"Y\",\"\\u1EF8\":\"Y\",\"\\u0232\":\"Y\",\"\\u1E8E\":\"Y\",\"\\u0178\":\"Y\",\"\\u1EF6\":\"Y\",\"\\u1EF4\":\"Y\",\"\\u01B3\":\"Y\",\"\\u024E\":\"Y\",\"\\u1EFE\":\"Y\",\"\\u24CF\":\"Z\",\"\\uFF3A\":\"Z\",\"\\u0179\":\"Z\",\"\\u1E90\":\"Z\",\"\\u017B\":\"Z\",\"\\u017D\":\"Z\",\"\\u1E92\":\"Z\",\"\\u1E94\":\"Z\",\"\\u01B5\":\"Z\",\"\\u0224\":\"Z\",\"\\u2C7F\":\"Z\",\"\\u2C6B\":\"Z\",\"\\uA762\":\"Z\",\"\\u24D0\":\"a\",\"\\uFF41\":\"a\",\"\\u1E9A\":\"a\",\"\\u00E0\":\"a\",\"\\u00E1\":\"a\",\"\\u00E2\":\"a\",\"\\u1EA7\":\"a\",\"\\u1EA5\":\"a\",\"\\u1EAB\":\"a\",\"\\u1EA9\":\"a\",\"\\u00E3\":\"a\",\"\\u0101\":\"a\",\"\\u0103\":\"a\",\"\\u1EB1\":\"a\",\"\\u1EAF\":\"a\",\"\\u1EB5\":\"a\",\"\\u1EB3\":\"a\",\"\\u0227\":\"a\",\"\\u01E1\":\"a\",\"\\u00E4\":\"a\",\"\\u01DF\":\"a\",\"\\u1EA3\":\"a\",\"\\u00E5\":\"a\",\"\\u01FB\":\"a\",\"\\u01CE\":\"a\",\"\\u0201\":\"a\",\"\\u0203\":\"a\",\"\\u1EA1\":\"a\",\"\\u1EAD\":\"a\",\"\\u1EB7\":\"a\",\"\\u1E01\":\"a\",\"\\u0105\":\"a\",\"\\u2C65\":\"a\",\"\\u0250\":\"a\",\"\\uA733\":\"aa\",\"\\u00E6\":\"ae\",\"\\u01FD\":\"ae\",\"\\u01E3\":\"ae\",\"\\uA735\":\"ao\",\"\\uA737\":\"au\",\"\\uA739\":\"av\",\"\\uA73B\":\"av\",\"\\uA73D\":\"ay\",\"\\u24D1\":\"b\",\"\\uFF42\":\"b\",\"\\u1E03\":\"b\",\"\\u1E05\":\"b\",\"\\u1E07\":\"b\",\"\\u0180\":\"b\",\"\\u0183\":\"b\",\"\\u0253\":\"b\",\"\\u24D2\":\"c\",\"\\uFF43\":\"c\",\"\\u0107\":\"c\",\"\\u0109\":\"c\",\"\\u010B\":\"c\",\"\\u010D\":\"c\",\"\\u00E7\":\"c\",\"\\u1E09\":\"c\",\"\\u0188\":\"c\",\"\\u023C\":\"c\",\"\\uA73F\":\"c\",\"\\u2184\":\"c\",\"\\u24D3\":\"d\",\"\\uFF44\":\"d\",\"\\u1E0B\":\"d\",\"\\u010F\":\"d\",\"\\u1E0D\":\"d\",\"\\u1E11\":\"d\",\"\\u1E13\":\"d\",\"\\u1E0F\":\"d\",\"\\u0111\":\"d\",\"\\u018C\":\"d\",\"\\u0256\":\"d\",\"\\u0257\":\"d\",\"\\uA77A\":\"d\",\"\\u01F3\":\"dz\",\"\\u01C6\":\"dz\",\"\\u24D4\":\"e\",\"\\uFF45\":\"e\",\"\\u00E8\":\"e\",\"\\u00E9\":\"e\",\"\\u00EA\":\"e\",\"\\u1EC1\":\"e\",\"\\u1EBF\":\"e\",\"\\u1EC5\":\"e\",\"\\u1EC3\":\"e\",\"\\u1EBD\":\"e\",\"\\u0113\":\"e\",\"\\u1E15\":\"e\",\"\\u1E17\":\"e\",\"\\u0115\":\"e\",\"\\u0117\":\"e\",\"\\u00EB\":\"e\",\"\\u1EBB\":\"e\",\"\\u011B\":\"e\",\"\\u0205\":\"e\",\"\\u0207\":\"e\",\"\\u1EB9\":\"e\",\"\\u1EC7\":\"e\",\"\\u0229\":\"e\",\"\\u1E1D\":\"e\",\"\\u0119\":\"e\",\"\\u1E19\":\"e\",\"\\u1E1B\":\"e\",\"\\u0247\":\"e\",\"\\u025B\":\"e\",\"\\u01DD\":\"e\",\"\\u24D5\":\"f\",\"\\uFF46\":\"f\",\"\\u1E1F\":\"f\",\"\\u0192\":\"f\",\"\\uA77C\":\"f\",\"\\u24D6\":\"g\",\"\\uFF47\":\"g\",\"\\u01F5\":\"g\",\"\\u011D\":\"g\",\"\\u1E21\":\"g\",\"\\u011F\":\"g\",\"\\u0121\":\"g\",\"\\u01E7\":\"g\",\"\\u0123\":\"g\",\"\\u01E5\":\"g\",\"\\u0260\":\"g\",\"\\uA7A1\":\"g\",\"\\u1D79\":\"g\",\"\\uA77F\":\"g\",\"\\u24D7\":\"h\",\"\\uFF48\":\"h\",\"\\u0125\":\"h\",\"\\u1E23\":\"h\",\"\\u1E27\":\"h\",\"\\u021F\":\"h\",\"\\u1E25\":\"h\",\"\\u1E29\":\"h\",\"\\u1E2B\":\"h\",\"\\u1E96\":\"h\",\"\\u0127\":\"h\",\"\\u2C68\":\"h\",\"\\u2C76\":\"h\",\"\\u0265\":\"h\",\"\\u0195\":\"hv\",\"\\u24D8\":\"i\",\"\\uFF49\":\"i\",\"\\u00EC\":\"i\",\"\\u00ED\":\"i\",\"\\u00EE\":\"i\",\"\\u0129\":\"i\",\"\\u012B\":\"i\",\"\\u012D\":\"i\",\"\\u00EF\":\"i\",\"\\u1E2F\":\"i\",\"\\u1EC9\":\"i\",\"\\u01D0\":\"i\",\"\\u0209\":\"i\",\"\\u020B\":\"i\",\"\\u1ECB\":\"i\",\"\\u012F\":\"i\",\"\\u1E2D\":\"i\",\"\\u0268\":\"i\",\"\\u0131\":\"i\",\"\\u24D9\":\"j\",\"\\uFF4A\":\"j\",\"\\u0135\":\"j\",\"\\u01F0\":\"j\",\"\\u0249\":\"j\",\"\\u24DA\":\"k\",\"\\uFF4B\":\"k\",\"\\u1E31\":\"k\",\"\\u01E9\":\"k\",\"\\u1E33\":\"k\",\"\\u0137\":\"k\",\"\\u1E35\":\"k\",\"\\u0199\":\"k\",\"\\u2C6A\":\"k\",\"\\uA741\":\"k\",\"\\uA743\":\"k\",\"\\uA745\":\"k\",\"\\uA7A3\":\"k\",\"\\u24DB\":\"l\",\"\\uFF4C\":\"l\",\"\\u0140\":\"l\",\"\\u013A\":\"l\",\"\\u013E\":\"l\",\"\\u1E37\":\"l\",\"\\u1E39\":\"l\",\"\\u013C\":\"l\",\"\\u1E3D\":\"l\",\"\\u1E3B\":\"l\",\"\\u017F\":\"l\",\"\\u0142\":\"l\",\"\\u019A\":\"l\",\"\\u026B\":\"l\",\"\\u2C61\":\"l\",\"\\uA749\":\"l\",\"\\uA781\":\"l\",\"\\uA747\":\"l\",\"\\u01C9\":\"lj\",\"\\u24DC\":\"m\",\"\\uFF4D\":\"m\",\"\\u1E3F\":\"m\",\"\\u1E41\":\"m\",\"\\u1E43\":\"m\",\"\\u0271\":\"m\",\"\\u026F\":\"m\",\"\\u24DD\":\"n\",\"\\uFF4E\":\"n\",\"\\u01F9\":\"n\",\"\\u0144\":\"n\",\"\\u00F1\":\"n\",\"\\u1E45\":\"n\",\"\\u0148\":\"n\",\"\\u1E47\":\"n\",\"\\u0146\":\"n\",\"\\u1E4B\":\"n\",\"\\u1E49\":\"n\",\"\\u019E\":\"n\",\"\\u0272\":\"n\",\"\\u0149\":\"n\",\"\\uA791\":\"n\",\"\\uA7A5\":\"n\",\"\\u01CC\":\"nj\",\"\\u24DE\":\"o\",\"\\uFF4F\":\"o\",\"\\u00F2\":\"o\",\"\\u00F3\":\"o\",\"\\u00F4\":\"o\",\"\\u1ED3\":\"o\",\"\\u1ED1\":\"o\",\"\\u1ED7\":\"o\",\"\\u1ED5\":\"o\",\"\\u00F5\":\"o\",\"\\u1E4D\":\"o\",\"\\u022D\":\"o\",\"\\u1E4F\":\"o\",\"\\u014D\":\"o\",\"\\u1E51\":\"o\",\"\\u1E53\":\"o\",\"\\u014F\":\"o\",\"\\u022F\":\"o\",\"\\u0231\":\"o\",\"\\u00F6\":\"o\",\"\\u022B\":\"o\",\"\\u1ECF\":\"o\",\"\\u0151\":\"o\",\"\\u01D2\":\"o\",\"\\u020D\":\"o\",\"\\u020F\":\"o\",\"\\u01A1\":\"o\",\"\\u1EDD\":\"o\",\"\\u1EDB\":\"o\",\"\\u1EE1\":\"o\",\"\\u1EDF\":\"o\",\"\\u1EE3\":\"o\",\"\\u1ECD\":\"o\",\"\\u1ED9\":\"o\",\"\\u01EB\":\"o\",\"\\u01ED\":\"o\",\"\\u00F8\":\"o\",\"\\u01FF\":\"o\",\"\\u0254\":\"o\",\"\\uA74B\":\"o\",\"\\uA74D\":\"o\",\"\\u0275\":\"o\",\"\\u01A3\":\"oi\",\"\\u0223\":\"ou\",\"\\uA74F\":\"oo\",\"\\u24DF\":\"p\",\"\\uFF50\":\"p\",\"\\u1E55\":\"p\",\"\\u1E57\":\"p\",\"\\u01A5\":\"p\",\"\\u1D7D\":\"p\",\"\\uA751\":\"p\",\"\\uA753\":\"p\",\"\\uA755\":\"p\",\"\\u24E0\":\"q\",\"\\uFF51\":\"q\",\"\\u024B\":\"q\",\"\\uA757\":\"q\",\"\\uA759\":\"q\",\"\\u24E1\":\"r\",\"\\uFF52\":\"r\",\"\\u0155\":\"r\",\"\\u1E59\":\"r\",\"\\u0159\":\"r\",\"\\u0211\":\"r\",\"\\u0213\":\"r\",\"\\u1E5B\":\"r\",\"\\u1E5D\":\"r\",\"\\u0157\":\"r\",\"\\u1E5F\":\"r\",\"\\u024D\":\"r\",\"\\u027D\":\"r\",\"\\uA75B\":\"r\",\"\\uA7A7\":\"r\",\"\\uA783\":\"r\",\"\\u24E2\":\"s\",\"\\uFF53\":\"s\",\"\\u00DF\":\"s\",\"\\u015B\":\"s\",\"\\u1E65\":\"s\",\"\\u015D\":\"s\",\"\\u1E61\":\"s\",\"\\u0161\":\"s\",\"\\u1E67\":\"s\",\"\\u1E63\":\"s\",\"\\u1E69\":\"s\",\"\\u0219\":\"s\",\"\\u015F\":\"s\",\"\\u023F\":\"s\",\"\\uA7A9\":\"s\",\"\\uA785\":\"s\",\"\\u1E9B\":\"s\",\"\\u24E3\":\"t\",\"\\uFF54\":\"t\",\"\\u1E6B\":\"t\",\"\\u1E97\":\"t\",\"\\u0165\":\"t\",\"\\u1E6D\":\"t\",\"\\u021B\":\"t\",\"\\u0163\":\"t\",\"\\u1E71\":\"t\",\"\\u1E6F\":\"t\",\"\\u0167\":\"t\",\"\\u01AD\":\"t\",\"\\u0288\":\"t\",\"\\u2C66\":\"t\",\"\\uA787\":\"t\",\"\\uA729\":\"tz\",\"\\u24E4\":\"u\",\"\\uFF55\":\"u\",\"\\u00F9\":\"u\",\"\\u00FA\":\"u\",\"\\u00FB\":\"u\",\"\\u0169\":\"u\",\"\\u1E79\":\"u\",\"\\u016B\":\"u\",\"\\u1E7B\":\"u\",\"\\u016D\":\"u\",\"\\u00FC\":\"u\",\"\\u01DC\":\"u\",\"\\u01D8\":\"u\",\"\\u01D6\":\"u\",\"\\u01DA\":\"u\",\"\\u1EE7\":\"u\",\"\\u016F\":\"u\",\"\\u0171\":\"u\",\"\\u01D4\":\"u\",\"\\u0215\":\"u\",\"\\u0217\":\"u\",\"\\u01B0\":\"u\",\"\\u1EEB\":\"u\",\"\\u1EE9\":\"u\",\"\\u1EEF\":\"u\",\"\\u1EED\":\"u\",\"\\u1EF1\":\"u\",\"\\u1EE5\":\"u\",\"\\u1E73\":\"u\",\"\\u0173\":\"u\",\"\\u1E77\":\"u\",\"\\u1E75\":\"u\",\"\\u0289\":\"u\",\"\\u24E5\":\"v\",\"\\uFF56\":\"v\",\"\\u1E7D\":\"v\",\"\\u1E7F\":\"v\",\"\\u028B\":\"v\",\"\\uA75F\":\"v\",\"\\u028C\":\"v\",\"\\uA761\":\"vy\",\"\\u24E6\":\"w\",\"\\uFF57\":\"w\",\"\\u1E81\":\"w\",\"\\u1E83\":\"w\",\"\\u0175\":\"w\",\"\\u1E87\":\"w\",\"\\u1E85\":\"w\",\"\\u1E98\":\"w\",\"\\u1E89\":\"w\",\"\\u2C73\":\"w\",\"\\u24E7\":\"x\",\"\\uFF58\":\"x\",\"\\u1E8B\":\"x\",\"\\u1E8D\":\"x\",\"\\u24E8\":\"y\",\"\\uFF59\":\"y\",\"\\u1EF3\":\"y\",\"\\u00FD\":\"y\",\"\\u0177\":\"y\",\"\\u1EF9\":\"y\",\"\\u0233\":\"y\",\"\\u1E8F\":\"y\",\"\\u00FF\":\"y\",\"\\u1EF7\":\"y\",\"\\u1E99\":\"y\",\"\\u1EF5\":\"y\",\"\\u01B4\":\"y\",\"\\u024F\":\"y\",\"\\u1EFF\":\"y\",\"\\u24E9\":\"z\",\"\\uFF5A\":\"z\",\"\\u017A\":\"z\",\"\\u1E91\":\"z\",\"\\u017C\":\"z\",\"\\u017E\":\"z\",\"\\u1E93\":\"z\",\"\\u1E95\":\"z\",\"\\u01B6\":\"z\",\"\\u0225\":\"z\",\"\\u0240\":\"z\",\"\\u2C6C\":\"z\",\"\\uA763\":\"z\",\"\\u0386\":\"\\u0391\",\"\\u0388\":\"\\u0395\",\"\\u0389\":\"\\u0397\",\"\\u038A\":\"\\u0399\",\"\\u03AA\":\"\\u0399\",\"\\u038C\":\"\\u039F\",\"\\u038E\":\"\\u03A5\",\"\\u03AB\":\"\\u03A5\",\"\\u038F\":\"\\u03A9\",\"\\u03AC\":\"\\u03B1\",\"\\u03AD\":\"\\u03B5\",\"\\u03AE\":\"\\u03B7\",\"\\u03AF\":\"\\u03B9\",\"\\u03CA\":\"\\u03B9\",\"\\u0390\":\"\\u03B9\",\"\\u03CC\":\"\\u03BF\",\"\\u03CD\":\"\\u03C5\",\"\\u03CB\":\"\\u03C5\",\"\\u03B0\":\"\\u03C5\",\"\\u03C9\":\"\\u03C9\",\"\\u03C2\":\"\\u03C3\"};\n\
-\n\
-    $document = $(document);\n\
-\n\
-    nextUid=(function() { var counter=1; return function() { return counter++; }; }());\n\
-\n\
-\n\
-    function reinsertElement(element) {\n\
-        var placeholder = $(document.createTextNode(''));\n\
-\n\
-        element.before(placeholder);\n\
-        placeholder.before(element);\n\
-        placeholder.remove();\n\
-    }\n\
-\n\
-    function stripDiacritics(str) {\n\
-        // Used 'uni range + named function' from http://jsperf.com/diacritics/18\n\
-        function match(a) {\n\
-            return DIACRITICS[a] || a;\n\
-        }\n\
-\n\
-        return str.replace(/[^\\u0000-\\u007E]/g, match);\n\
-    }\n\
-\n\
-    function indexOf(value, array) {\n\
-        var i = 0, l = array.length;\n\
-        for (; i < l; i = i + 1) {\n\
-            if (equal(value, array[i])) return i;\n\
-        }\n\
-        return -1;\n\
-    }\n\
-\n\
-    function measureScrollbar () {\n\
-        var $template = $( MEASURE_SCROLLBAR_TEMPLATE );\n\
-        $template.appendTo('body');\n\
-\n\
-        var dim = {\n\
-            width: $template.width() - $template[0].clientWidth,\n\
-            height: $template.height() - $template[0].clientHeight\n\
-        };\n\
-        $template.remove();\n\
-\n\
-        return dim;\n\
-    }\n\
-\n\
-    /**\n\
-     * Compares equality of a and b\n\
-     * @param a\n\
-     * @param b\n\
-     */\n\
-    function equal(a, b) {\n\
-        if (a === b) return true;\n\
-        if (a === undefined || b === undefined) return false;\n\
-        if (a === null || b === null) return false;\n\
-        // Check whether 'a' or 'b' is a string (primitive or object).\n\
-        // The concatenation of an empty string (+'') converts its argument to a string's primitive.\n\
-        if (a.constructor === String) return a+'' === b+''; // a+'' - in case 'a' is a String object\n\
-        if (b.constructor === String) return b+'' === a+''; // b+'' - in case 'b' is a String object\n\
-        return false;\n\
-    }\n\
-\n\
-    /**\n\
-     * Splits the string into an array of values, trimming each value. An empty array is returned for nulls or empty\n\
-     * strings\n\
-     * @param string\n\
-     * @param separator\n\
-     */\n\
-    function splitVal(string, separator) {\n\
-        var val, i, l;\n\
-        if (string === null || string.length < 1) return [];\n\
-        val = string.split(separator);\n\
-        for (i = 0, l = val.length; i < l; i = i + 1) val[i] = $.trim(val[i]);\n\
-        return val;\n\
-    }\n\
-\n\
-    function getSideBorderPadding(element) {\n\
-        return element.outerWidth(false) - element.width();\n\
-    }\n\
-\n\
-    function installKeyUpChangeEvent(element) {\n\
-        var key=\"keyup-change-value\";\n\
-        element.on(\"keydown\", function () {\n\
-            if ($.data(element, key) === undefined) {\n\
-                $.data(element, key, element.val());\n\
-            }\n\
-        });\n\
-        element.on(\"keyup\", function () {\n\
-            var val= $.data(element, key);\n\
-            if (val !== undefined && element.val() !== val) {\n\
-                $.removeData(element, key);\n\
-                element.trigger(\"keyup-change\");\n\
-            }\n\
-        });\n\
-    }\n\
-\n\
-\n\
-    /**\n\
-     * filters mouse events so an event is fired only if the mouse moved.\n\
-     *\n\
-     * filters out mouse events that occur when mouse is stationary but\n\
-     * the elements under the pointer are scrolled.\n\
-     */\n\
-    function installFilteredMouseMove(element) {\n\
-        element.on(\"mousemove\", function (e) {\n\
-            var lastpos = lastMousePosition;\n\
-            if (lastpos === undefined || lastpos.x !== e.pageX || lastpos.y !== e.pageY) {\n\
-                $(e.target).trigger(\"mousemove-filtered\", e);\n\
-            }\n\
-        });\n\
-    }\n\
-\n\
-    /**\n\
-     * Debounces a function. Returns a function that calls the original fn function only if no invocations have been made\n\
-     * within the last quietMillis milliseconds.\n\
-     *\n\
-     * @param quietMillis number of milliseconds to wait before invoking fn\n\
-     * @param fn function to be debounced\n\
-     * @param ctx object to be used as this reference within fn\n\
-     * @return debounced version of fn\n\
-     */\n\
-    function debounce(quietMillis, fn, ctx) {\n\
-        ctx = ctx || undefined;\n\
-        var timeout;\n\
-        return function () {\n\
-            var args = arguments;\n\
-            window.clearTimeout(timeout);\n\
-            timeout = window.setTimeout(function() {\n\
-                fn.apply(ctx, args);\n\
-            }, quietMillis);\n\
-        };\n\
-    }\n\
-\n\
-    function installDebouncedScroll(threshold, element) {\n\
-        var notify = debounce(threshold, function (e) { element.trigger(\"scroll-debounced\", e);});\n\
-        element.on(\"scroll\", function (e) {\n\
-            if (indexOf(e.target, element.get()) >= 0) notify(e);\n\
-        });\n\
-    }\n\
-\n\
-    function focus($el) {\n\
-        if ($el[0] === document.activeElement) return;\n\
-\n\
-        /* set the focus in a 0 timeout - that way the focus is set after the processing\n\
-            of the current event has finished - which seems like the only reliable way\n\
-            to set focus */\n\
-        window.setTimeout(function() {\n\
-            var el=$el[0], pos=$el.val().length, range;\n\
-\n\
-            $el.focus();\n\
-\n\
-            /* make sure el received focus so we do not error out when trying to manipulate the caret.\n\
-                sometimes modals or others listeners may steal it after its set */\n\
-            var isVisible = (el.offsetWidth > 0 || el.offsetHeight > 0);\n\
-            if (isVisible && el === document.activeElement) {\n\
-\n\
-                /* after the focus is set move the caret to the end, necessary when we val()\n\
-                    just before setting focus */\n\
-                if(el.setSelectionRange)\n\
-                {\n\
-                    el.setSelectionRange(pos, pos);\n\
-                }\n\
-                else if (el.createTextRange) {\n\
-                    range = el.createTextRange();\n\
-                    range.collapse(false);\n\
-                    range.select();\n\
-                }\n\
-            }\n\
-        }, 0);\n\
-    }\n\
-\n\
-    function getCursorInfo(el) {\n\
-        el = $(el)[0];\n\
-        var offset = 0;\n\
-        var length = 0;\n\
-        if ('selectionStart' in el) {\n\
-            offset = el.selectionStart;\n\
-            length = el.selectionEnd - offset;\n\
-        } else if ('selection' in document) {\n\
-            el.focus();\n\
-            var sel = document.selection.createRange();\n\
-            length = document.selection.createRange().text.length;\n\
-            sel.moveStart('character', -el.value.length);\n\
-            offset = sel.text.length - length;\n\
-        }\n\
-        return { offset: offset, length: length };\n\
-    }\n\
-\n\
-    function killEvent(event) {\n\
-        event.preventDefault();\n\
-        event.stopPropagation();\n\
-    }\n\
-    function killEventImmediately(event) {\n\
-        event.preventDefault();\n\
-        event.stopImmediatePropagation();\n\
-    }\n\
-\n\
-    function measureTextWidth(e) {\n\
-        if (!sizer){\n\
-            var style = e[0].currentStyle || window.getComputedStyle(e[0], null);\n\
-            sizer = $(document.createElement(\"div\")).css({\n\
-                position: \"absolute\",\n\
-                left: \"-10000px\",\n\
-                top: \"-10000px\",\n\
-                display: \"none\",\n\
-                fontSize: style.fontSize,\n\
-                fontFamily: style.fontFamily,\n\
-                fontStyle: style.fontStyle,\n\
-                fontWeight: style.fontWeight,\n\
-                letterSpacing: style.letterSpacing,\n\
-                textTransform: style.textTransform,\n\
-                whiteSpace: \"nowrap\"\n\
-            });\n\
-            sizer.attr(\"class\",\"select2-sizer\");\n\
-            $(\"body\").append(sizer);\n\
-        }\n\
-        sizer.text(e.val());\n\
-        return sizer.width();\n\
-    }\n\
-\n\
-    function syncCssClasses(dest, src, adapter) {\n\
-        var classes, replacements = [], adapted;\n\
-\n\
-        classes = dest.attr(\"class\");\n\
-        if (classes) {\n\
-            classes = '' + classes; // for IE which returns object\n\
-            $(classes.split(\" \")).each2(function() {\n\
-                if (this.indexOf(\"select2-\") === 0) {\n\
-                    replacements.push(this);\n\
-                }\n\
-            });\n\
-        }\n\
-        classes = src.attr(\"class\");\n\
-        if (classes) {\n\
-            classes = '' + classes; // for IE which returns object\n\
-            $(classes.split(\" \")).each2(function() {\n\
-                if (this.indexOf(\"select2-\") !== 0) {\n\
-                    adapted = adapter(this);\n\
-                    if (adapted) {\n\
-                        replacements.push(adapted);\n\
-                    }\n\
-                }\n\
-            });\n\
-        }\n\
-        dest.attr(\"class\", replacements.join(\" \"));\n\
-    }\n\
-\n\
-\n\
-    function markMatch(text, term, markup, escapeMarkup) {\n\
-        var match=stripDiacritics(text.toUpperCase()).indexOf(stripDiacritics(term.toUpperCase())),\n\
-            tl=term.length;\n\
-\n\
-        if (match<0) {\n\
-            markup.push(escapeMarkup(text));\n\
-            return;\n\
-        }\n\
-\n\
-        markup.push(escapeMarkup(text.substring(0, match)));\n\
-        markup.push(\"<span class='select2-match'>\");\n\
-        markup.push(escapeMarkup(text.substring(match, match + tl)));\n\
-        markup.push(\"</span>\");\n\
-        markup.push(escapeMarkup(text.substring(match + tl, text.length)));\n\
-    }\n\
-\n\
-    function defaultEscapeMarkup(markup) {\n\
-        var replace_map = {\n\
-            '\\\\': '&#92;',\n\
-            '&': '&amp;',\n\
-            '<': '&lt;',\n\
-            '>': '&gt;',\n\
-            '\"': '&quot;',\n\
-            \"'\": '&#39;',\n\
-            \"/\": '&#47;'\n\
-        };\n\
-\n\
-        return String(markup).replace(/[&<>\"'\\/\\\\]/g, function (match) {\n\
-            return replace_map[match];\n\
-        });\n\
-    }\n\
-\n\
-    /**\n\
-     * Produces an ajax-based query function\n\
-     *\n\
-     * @param options object containing configuration parameters\n\
-     * @param options.params parameter map for the transport ajax call, can contain such options as cache, jsonpCallback, etc. see $.ajax\n\
-     * @param options.transport function that will be used to execute the ajax request. must be compatible with parameters supported by $.ajax\n\
-     * @param options.url url for the data\n\
-     * @param options.data a function(searchTerm, pageNumber, context) that should return an object containing query string parameters for the above url.\n\
-     * @param options.dataType request data type: ajax, jsonp, other datatypes supported by jQuery's $.ajax function or the transport function if specified\n\
-     * @param options.quietMillis (optional) milliseconds to wait before making the ajaxRequest, helps debounce the ajax function if invoked too often\n\
-     * @param options.results a function(remoteData, pageNumber, query) that converts data returned form the remote request to the format expected by Select2.\n\
-     *      The expected format is an object containing the following keys:\n\
-     *      results array of objects that will be used as choices\n\
-     *      more (optional) boolean indicating whether there are more results available\n\
-     *      Example: {results:[{id:1, text:'Red'},{id:2, text:'Blue'}], more:true}\n\
-     */\n\
-    function ajax(options) {\n\
-        var timeout, // current scheduled but not yet executed request\n\
-            handler = null,\n\
-            quietMillis = options.quietMillis || 100,\n\
-            ajaxUrl = options.url,\n\
-            self = this;\n\
-\n\
-        return function (query) {\n\
-            window.clearTimeout(timeout);\n\
-            timeout = window.setTimeout(function () {\n\
-                var data = options.data, // ajax data function\n\
-                    url = ajaxUrl, // ajax url string or function\n\
-                    transport = options.transport || $.fn.select2.ajaxDefaults.transport,\n\
-                    // deprecated - to be removed in 4.0  - use params instead\n\
-                    deprecated = {\n\
-                        type: options.type || 'GET', // set type of request (GET or POST)\n\
-                        cache: options.cache || false,\n\
-                        jsonpCallback: options.jsonpCallback||undefined,\n\
-                        dataType: options.dataType||\"json\"\n\
-                    },\n\
-                    params = $.extend({}, $.fn.select2.ajaxDefaults.params, deprecated);\n\
-\n\
-                data = data ? data.call(self, query.term, query.page, query.context) : null;\n\
-                url = (typeof url === 'function') ? url.call(self, query.term, query.page, query.context) : url;\n\
-\n\
-                if (handler && typeof handler.abort === \"function\") { handler.abort(); }\n\
-\n\
-                if (options.params) {\n\
-                    if ($.isFunction(options.params)) {\n\
-                        $.extend(params, options.params.call(self));\n\
-                    } else {\n\
-                        $.extend(params, options.params);\n\
-                    }\n\
-                }\n\
-\n\
-                $.extend(params, {\n\
-                    url: url,\n\
-                    dataType: options.dataType,\n\
-                    data: data,\n\
-                    success: function (data) {\n\
-                        // TODO - replace query.page with query so users have access to term, page, etc.\n\
-                        // added query as third paramter to keep backwards compatibility\n\
-                        var results = options.results(data, query.page, query);\n\
-                        query.callback(results);\n\
-                    }\n\
-                });\n\
-                handler = transport.call(self, params);\n\
-            }, quietMillis);\n\
-        };\n\
-    }\n\
-\n\
-    /**\n\
-     * Produces a query function that works with a local array\n\
-     *\n\
-     * @param options object containing configuration parameters. The options parameter can either be an array or an\n\
-     * object.\n\
-     *\n\
-     * If the array form is used it is assumed that it contains objects with 'id' and 'text' keys.\n\
-     *\n\
-     * If the object form is used it is assumed that it contains 'data' and 'text' keys. The 'data' key should contain\n\
-     * an array of objects that will be used as choices. These objects must contain at least an 'id' key. The 'text'\n\
-     * key can either be a String in which case it is expected that each element in the 'data' array has a key with the\n\
-     * value of 'text' which will be used to match choices. Alternatively, text can be a function(item) that can extract\n\
-     * the text.\n\
-     */\n\
-    function local(options) {\n\
-        var data = options, // data elements\n\
-            dataText,\n\
-            tmp,\n\
-            text = function (item) { return \"\"+item.text; }; // function used to retrieve the text portion of a data item that is matched against the search\n\
-\n\
-         if ($.isArray(data)) {\n\
-            tmp = data;\n\
-            data = { results: tmp };\n\
-        }\n\
-\n\
-         if ($.isFunction(data) === false) {\n\
-            tmp = data;\n\
-            data = function() { return tmp; };\n\
-        }\n\
-\n\
-        var dataItem = data();\n\
-        if (dataItem.text) {\n\
-            text = dataItem.text;\n\
-            // if text is not a function we assume it to be a key name\n\
-            if (!$.isFunction(text)) {\n\
-                dataText = dataItem.text; // we need to store this in a separate variable because in the next step data gets reset and data.text is no longer available\n\
-                text = function (item) { return item[dataText]; };\n\
-            }\n\
-        }\n\
-\n\
-        return function (query) {\n\
-            var t = query.term, filtered = { results: [] }, process;\n\
-            if (t === \"\") {\n\
-                query.callback(data());\n\
-                return;\n\
-            }\n\
-\n\
-            process = function(datum, collection) {\n\
-                var group, attr;\n\
-                datum = datum[0];\n\
-                if (datum.children) {\n\
-                    group = {};\n\
-                    for (attr in datum) {\n\
-                        if (datum.hasOwnProperty(attr)) group[attr]=datum[attr];\n\
-                    }\n\
-                    group.children=[];\n\
-                    $(datum.children).each2(function(i, childDatum) { process(childDatum, group.children); });\n\
-                    if (group.children.length || query.matcher(t, text(group), datum)) {\n\
-                        collection.push(group);\n\
-                    }\n\
-                } else {\n\
-                    if (query.matcher(t, text(datum), datum)) {\n\
-                        collection.push(datum);\n\
-                    }\n\
-                }\n\
-            };\n\
-\n\
-            $(data().results).each2(function(i, datum) { process(datum, filtered.results); });\n\
-            query.callback(filtered);\n\
-        };\n\
-    }\n\
-\n\
-    // TODO javadoc\n\
-    function tags(data) {\n\
-        var isFunc = $.isFunction(data);\n\
-        return function (query) {\n\
-            var t = query.term, filtered = {results: []};\n\
-            var result = isFunc ? data(query) : data;\n\
-            if ($.isArray(result)) {\n\
-                $(result).each(function () {\n\
-                    var isObject = this.text !== undefined,\n\
-                        text = isObject ? this.text : this;\n\
-                    if (t === \"\" || query.matcher(t, text)) {\n\
-                        filtered.results.push(isObject ? this : {id: this, text: this});\n\
-                    }\n\
-                });\n\
-                query.callback(filtered);\n\
-            }\n\
-        };\n\
-    }\n\
-\n\
-    /**\n\
-     * Checks if the formatter function should be used.\n\
-     *\n\
-     * Throws an error if it is not a function. Returns true if it should be used,\n\
-     * false if no formatting should be performed.\n\
-     *\n\
-     * @param formatter\n\
-     */\n\
-    function checkFormatter(formatter, formatterName) {\n\
-        if ($.isFunction(formatter)) return true;\n\
-        if (!formatter) return false;\n\
-        if (typeof(formatter) === 'string') return true;\n\
-        throw new Error(formatterName +\" must be a string, function, or falsy value\");\n\
-    }\n\
-\n\
-  /**\n\
-   * Returns a given value\n\
-   * If given a function, returns its output\n\
-   *\n\
-   * @param val string|function\n\
-   * @param context value of \"this\" to be passed to function\n\
-   * @returns {*}\n\
-   */\n\
-    function evaluate(val, context) {\n\
-        if ($.isFunction(val)) {\n\
-            var args = Array.prototype.slice.call(arguments, 2);\n\
-            return val.apply(context, args);\n\
-        }\n\
-        return val;\n\
-    }\n\
-\n\
-    function countResults(results) {\n\
-        var count = 0;\n\
-        $.each(results, function(i, item) {\n\
-            if (item.children) {\n\
-                count += countResults(item.children);\n\
-            } else {\n\
-                count++;\n\
-            }\n\
-        });\n\
-        return count;\n\
-    }\n\
-\n\
-    /**\n\
-     * Default tokenizer. This function uses breaks the input on substring match of any string from the\n\
-     * opts.tokenSeparators array and uses opts.createSearchChoice to create the choice object. Both of those\n\
-     * two options have to be defined in order for the tokenizer to work.\n\
-     *\n\
-     * @param input text user has typed so far or pasted into the search field\n\
-     * @param selection currently selected choices\n\
-     * @param selectCallback function(choice) callback tho add the choice to selection\n\
-     * @param opts select2's opts\n\
-     * @return undefined/null to leave the current input unchanged, or a string to change the input to the returned value\n\
-     */\n\
-    function defaultTokenizer(input, selection, selectCallback, opts) {\n\
-        var original = input, // store the original so we can compare and know if we need to tell the search to update its text\n\
-            dupe = false, // check for whether a token we extracted represents a duplicate selected choice\n\
-            token, // token\n\
-            index, // position at which the separator was found\n\
-            i, l, // looping variables\n\
-            separator; // the matched separator\n\
-\n\
-        if (!opts.createSearchChoice || !opts.tokenSeparators || opts.tokenSeparators.length < 1) return undefined;\n\
-\n\
-        while (true) {\n\
-            index = -1;\n\
-\n\
-            for (i = 0, l = opts.tokenSeparators.length; i < l; i++) {\n\
-                separator = opts.tokenSeparators[i];\n\
-                index = input.indexOf(separator);\n\
-                if (index >= 0) break;\n\
-            }\n\
-\n\
-            if (index < 0) break; // did not find any token separator in the input string, bail\n\
-\n\
-            token = input.substring(0, index);\n\
-            input = input.substring(index + separator.length);\n\
-\n\
-            if (token.length > 0) {\n\
-                token = opts.createSearchChoice.call(this, token, selection);\n\
-                if (token !== undefined && token !== null && opts.id(token) !== undefined && opts.id(token) !== null) {\n\
-                    dupe = false;\n\
-                    for (i = 0, l = selection.length; i < l; i++) {\n\
-                        if (equal(opts.id(token), opts.id(selection[i]))) {\n\
-                            dupe = true; break;\n\
-                        }\n\
-                    }\n\
-\n\
-                    if (!dupe) selectCallback(token);\n\
-                }\n\
-            }\n\
-        }\n\
-\n\
-        if (original!==input) return input;\n\
-    }\n\
-\n\
-    function cleanupJQueryElements() {\n\
-        var self = this;\n\
-\n\
-        $.each(arguments, function (i, element) {\n\
-            self[element].remove();\n\
-            self[element] = null;\n\
-        });\n\
-    }\n\
-\n\
-    /**\n\
-     * Creates a new class\n\
-     *\n\
-     * @param superClass\n\
-     * @param methods\n\
-     */\n\
-    function clazz(SuperClass, methods) {\n\
-        var constructor = function () {};\n\
-        constructor.prototype = new SuperClass;\n\
-        constructor.prototype.constructor = constructor;\n\
-        constructor.prototype.parent = SuperClass.prototype;\n\
-        constructor.prototype = $.extend(constructor.prototype, methods);\n\
-        return constructor;\n\
-    }\n\
-\n\
-    AbstractSelect2 = clazz(Object, {\n\
-\n\
-        // abstract\n\
-        bind: function (func) {\n\
-            var self = this;\n\
-            return function () {\n\
-                func.apply(self, arguments);\n\
-            };\n\
-        },\n\
-\n\
-        // abstract\n\
-        init: function (opts) {\n\
-            var results, search, resultsSelector = \".select2-results\";\n\
-\n\
-            // prepare options\n\
-            this.opts = opts = this.prepareOpts(opts);\n\
-\n\
-            this.id=opts.id;\n\
-\n\
-            // destroy if called on an existing component\n\
-            if (opts.element.data(\"select2\") !== undefined &&\n\
-                opts.element.data(\"select2\") !== null) {\n\
-                opts.element.data(\"select2\").destroy();\n\
-            }\n\
-\n\
-            this.container = this.createContainer();\n\
-\n\
-            this.liveRegion = $(\"<span>\", {\n\
-                    role: \"status\",\n\
-                    \"aria-live\": \"polite\"\n\
-                })\n\
-                .addClass(\"select2-hidden-accessible\")\n\
-                .appendTo(document.body);\n\
-\n\
-            this.containerId=\"s2id_\"+(opts.element.attr(\"id\") || \"autogen\"+nextUid());\n\
-            this.containerEventName= this.containerId\n\
-                .replace(/([.])/g, '_')\n\
-                .replace(/([;&,\\-\\.\\+\\*\\~':\"\\!\\^#$%@\\[\\]\\(\\)=>\\|])/g, '\\\\$1');\n\
-            this.container.attr(\"id\", this.containerId);\n\
-\n\
-            this.container.attr(\"title\", opts.element.attr(\"title\"));\n\
-\n\
-            this.body = $(\"body\");\n\
-\n\
-            syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);\n\
-\n\
-            this.container.attr(\"style\", opts.element.attr(\"style\"));\n\
-            this.container.css(evaluate(opts.containerCss, this.opts.element));\n\
-            this.container.addClass(evaluate(opts.containerCssClass, this.opts.element));\n\
-\n\
-            this.elementTabIndex = this.opts.element.attr(\"tabindex\");\n\
-\n\
-            // swap container for the element\n\
-            this.opts.element\n\
-                .data(\"select2\", this)\n\
-                .attr(\"tabindex\", \"-1\")\n\
-                .before(this.container)\n\
-                .on(\"click.select2\", killEvent); // do not leak click events\n\
-\n\
-            this.container.data(\"select2\", this);\n\
-\n\
-            this.dropdown = this.container.find(\".select2-drop\");\n\
-\n\
-            syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);\n\
-\n\
-            this.dropdown.addClass(evaluate(opts.dropdownCssClass, this.opts.element));\n\
-            this.dropdown.data(\"select2\", this);\n\
-            this.dropdown.on(\"click\", killEvent);\n\
-\n\
-            this.results = results = this.container.find(resultsSelector);\n\
-            this.search = search = this.container.find(\"input.select2-input\");\n\
-\n\
-            this.queryCount = 0;\n\
-            this.resultsPage = 0;\n\
-            this.context = null;\n\
-\n\
-            // initialize the container\n\
-            this.initContainer();\n\
-\n\
-            this.container.on(\"click\", killEvent);\n\
-\n\
-            installFilteredMouseMove(this.results);\n\
-\n\
-            this.dropdown.on(\"mousemove-filtered\", resultsSelector, this.bind(this.highlightUnderEvent));\n\
-            this.dropdown.on(\"touchstart touchmove touchend\", resultsSelector, this.bind(function (event) {\n\
-                this._touchEvent = true;\n\
-                this.highlightUnderEvent(event);\n\
-            }));\n\
-            this.dropdown.on(\"touchmove\", resultsSelector, this.bind(this.touchMoved));\n\
-            this.dropdown.on(\"touchstart touchend\", resultsSelector, this.bind(this.clearTouchMoved));\n\
-\n\
-            // Waiting for a click event on touch devices to select option and hide dropdown\n\
-            // otherwise click will be triggered on an underlying element\n\
-            this.dropdown.on('click', this.bind(function (event) {\n\
-                if (this._touchEvent) {\n\
-                    this._touchEvent = false;\n\
-                    this.selectHighlighted();\n\
-                }\n\
-            }));\n\
-\n\
-            installDebouncedScroll(80, this.results);\n\
-            this.dropdown.on(\"scroll-debounced\", resultsSelector, this.bind(this.loadMoreIfNeeded));\n\
-\n\
-            // do not propagate change event from the search field out of the component\n\
-            $(this.container).on(\"change\", \".select2-input\", function(e) {e.stopPropagation();});\n\
-            $(this.dropdown).on(\"change\", \".select2-input\", function(e) {e.stopPropagation();});\n\
-\n\
-            // if jquery.mousewheel plugin is installed we can prevent out-of-bounds scrolling of results via mousewheel\n\
-            if ($.fn.mousewheel) {\n\
-                results.mousewheel(function (e, delta, deltaX, deltaY) {\n\
-                    var top = results.scrollTop();\n\
-                    if (deltaY > 0 && top - deltaY <= 0) {\n\
-                        results.scrollTop(0);\n\
-                        killEvent(e);\n\
-                    } else if (deltaY < 0 && results.get(0).scrollHeight - results.scrollTop() + deltaY <= results.height()) {\n\
-                        results.scrollTop(results.get(0).scrollHeight - results.height());\n\
-                        killEvent(e);\n\
-                    }\n\
-                });\n\
-            }\n\
-\n\
-            installKeyUpChangeEvent(search);\n\
-            search.on(\"keyup-change input paste\", this.bind(this.updateResults));\n\
-            search.on(\"focus\", function () { search.addClass(\"select2-focused\"); });\n\
-            search.on(\"blur\", function () { search.removeClass(\"select2-focused\");});\n\
-\n\
-            this.dropdown.on(\"mouseup\", resultsSelector, this.bind(function (e) {\n\
-                if ($(e.target).closest(\".select2-result-selectable\").length > 0) {\n\
-                    this.highlightUnderEvent(e);\n\
-                    this.selectHighlighted(e);\n\
-                }\n\
-            }));\n\
-\n\
-            // trap all mouse events from leaving the dropdown. sometimes there may be a modal that is listening\n\
-            // for mouse events outside of itself so it can close itself. since the dropdown is now outside the select2's\n\
-            // dom it will trigger the popup close, which is not what we want\n\
-            // focusin can cause focus wars between modals and select2 since the dropdown is outside the modal.\n\
-            this.dropdown.on(\"click mouseup mousedown touchstart touchend focusin\", function (e) { e.stopPropagation(); });\n\
-\n\
-            this.nextSearchTerm = undefined;\n\
-\n\
-            if ($.isFunction(this.opts.initSelection)) {\n\
-                // initialize selection based on the current value of the source element\n\
-                this.initSelection();\n\
-\n\
-                // if the user has provided a function that can set selection based on the value of the source element\n\
-                // we monitor the change event on the element and trigger it, allowing for two way synchronization\n\
-                this.monitorSource();\n\
-            }\n\
-\n\
-            if (opts.maximumInputLength !== null) {\n\
-                this.search.attr(\"maxlength\", opts.maximumInputLength);\n\
-            }\n\
-\n\
-            var disabled = opts.element.prop(\"disabled\");\n\
-            if (disabled === undefined) disabled = false;\n\
-            this.enable(!disabled);\n\
-\n\
-            var readonly = opts.element.prop(\"readonly\");\n\
-            if (readonly === undefined) readonly = false;\n\
-            this.readonly(readonly);\n\
-\n\
-            // Calculate size of scrollbar\n\
-            scrollBarDimensions = scrollBarDimensions || measureScrollbar();\n\
-\n\
-            this.autofocus = opts.element.prop(\"autofocus\");\n\
-            opts.element.prop(\"autofocus\", false);\n\
-            if (this.autofocus) this.focus();\n\
-\n\
-            this.search.attr(\"placeholder\", opts.searchInputPlaceholder);\n\
-        },\n\
-\n\
-        // abstract\n\
-        destroy: function () {\n\
-            var element=this.opts.element, select2 = element.data(\"select2\");\n\
-\n\
-            this.close();\n\
-\n\
-            if (element.length && element[0].detachEvent) {\n\
-                element.each(function () {\n\
-                    this.detachEvent(\"onpropertychange\", this._sync);\n\
-                });\n\
-            }\n\
-            if (this.propertyObserver) {\n\
-                this.propertyObserver.disconnect();\n\
-                this.propertyObserver = null;\n\
-            }\n\
-            this._sync = null;\n\
-\n\
-            if (select2 !== undefined) {\n\
-                select2.container.remove();\n\
-                select2.liveRegion.remove();\n\
-                select2.dropdown.remove();\n\
-                element\n\
-                    .removeClass(\"select2-offscreen\")\n\
-                    .removeData(\"select2\")\n\
-                    .off(\".select2\")\n\
-                    .prop(\"autofocus\", this.autofocus || false);\n\
-                if (this.elementTabIndex) {\n\
-                    element.attr({tabindex: this.elementTabIndex});\n\
-                } else {\n\
-                    element.removeAttr(\"tabindex\");\n\
-                }\n\
-                element.show();\n\
-            }\n\
-\n\
-            cleanupJQueryElements.call(this,\n\
-                \"container\",\n\
-                \"liveRegion\",\n\
-                \"dropdown\",\n\
-                \"results\",\n\
-                \"search\"\n\
-            );\n\
-        },\n\
-\n\
-        // abstract\n\
-        optionToData: function(element) {\n\
-            if (element.is(\"option\")) {\n\
-                return {\n\
-                    id:element.prop(\"value\"),\n\
-                    text:element.text(),\n\
-                    element: element.get(),\n\
-                    css: element.attr(\"class\"),\n\
-                    disabled: element.prop(\"disabled\"),\n\
-                    locked: equal(element.attr(\"locked\"), \"locked\") || equal(element.data(\"locked\"), true)\n\
-                };\n\
-            } else if (element.is(\"optgroup\")) {\n\
-                return {\n\
-                    text:element.attr(\"label\"),\n\
-                    children:[],\n\
-                    element: element.get(),\n\
-                    css: element.attr(\"class\")\n\
-                };\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        prepareOpts: function (opts) {\n\
-            var element, select, idKey, ajaxUrl, self = this;\n\
-\n\
-            element = opts.element;\n\
-\n\
-            if (element.get(0).tagName.toLowerCase() === \"select\") {\n\
-                this.select = select = opts.element;\n\
-            }\n\
-\n\
-            if (select) {\n\
-                // these options are not allowed when attached to a select because they are picked up off the element itself\n\
-                $.each([\"id\", \"multiple\", \"ajax\", \"query\", \"createSearchChoice\", \"initSelection\", \"data\", \"tags\"], function () {\n\
-                    if (this in opts) {\n\
-                        throw new Error(\"Option '\" + this + \"' is not allowed for Select2 when attached to a <select> element.\");\n\
-                    }\n\
-                });\n\
-            }\n\
-\n\
-            opts = $.extend({}, {\n\
-                populateResults: function(container, results, query) {\n\
-                    var populate, id=this.opts.id, liveRegion=this.liveRegion;\n\
-\n\
-                    populate=function(results, container, depth) {\n\
-\n\
-                        var i, l, result, selectable, disabled, compound, node, label, innerContainer, formatted;\n\
-\n\
-                        results = opts.sortResults(results, container, query);\n\
-\n\
-                        // collect the created nodes for bulk append\n\
-                        var nodes = [];\n\
-                        for (i = 0, l = results.length; i < l; i = i + 1) {\n\
-\n\
-                            result=results[i];\n\
-\n\
-                            disabled = (result.disabled === true);\n\
-                            selectable = (!disabled) && (id(result) !== undefined);\n\
-\n\
-                            compound=result.children && result.children.length > 0;\n\
-\n\
-                            node=$(\"<li></li>\");\n\
-                            node.addClass(\"select2-results-dept-\"+depth);\n\
-                            node.addClass(\"select2-result\");\n\
-                            node.addClass(selectable ? \"select2-result-selectable\" : \"select2-result-unselectable\");\n\
-                            if (disabled) { node.addClass(\"select2-disabled\"); }\n\
-                            if (compound) { node.addClass(\"select2-result-with-children\"); }\n\
-                            node.addClass(self.opts.formatResultCssClass(result));\n\
-                            node.attr(\"role\", \"presentation\");\n\
-\n\
-                            label=$(document.createElement(\"div\"));\n\
-                            label.addClass(\"select2-result-label\");\n\
-                            label.attr(\"id\", \"select2-result-label-\" + nextUid());\n\
-                            label.attr(\"role\", \"option\");\n\
-\n\
-                            formatted=opts.formatResult(result, label, query, self.opts.escapeMarkup);\n\
-                            if (formatted!==undefined) {\n\
-                                label.html(formatted);\n\
-                                node.append(label);\n\
-                            }\n\
-\n\
-\n\
-                            if (compound) {\n\
-\n\
-                                innerContainer=$(\"<ul></ul>\");\n\
-                                innerContainer.addClass(\"select2-result-sub\");\n\
-                                populate(result.children, innerContainer, depth+1);\n\
-                                node.append(innerContainer);\n\
-                            }\n\
-\n\
-                            node.data(\"select2-data\", result);\n\
-                            nodes.push(node[0]);\n\
-                        }\n\
-\n\
-                        // bulk append the created nodes\n\
-                        container.append(nodes);\n\
-                        liveRegion.text(opts.formatMatches(results.length));\n\
-                    };\n\
-\n\
-                    populate(results, container, 0);\n\
-                }\n\
-            }, $.fn.select2.defaults, opts);\n\
-\n\
-            if (typeof(opts.id) !== \"function\") {\n\
-                idKey = opts.id;\n\
-                opts.id = function (e) { return e[idKey]; };\n\
-            }\n\
-\n\
-            if ($.isArray(opts.element.data(\"select2Tags\"))) {\n\
-                if (\"tags\" in opts) {\n\
-                    throw \"tags specified as both an attribute 'data-select2-tags' and in options of Select2 \" + opts.element.attr(\"id\");\n\
-                }\n\
-                opts.tags=opts.element.data(\"select2Tags\");\n\
-            }\n\
-\n\
-            if (select) {\n\
-                opts.query = this.bind(function (query) {\n\
-                    var data = { results: [], more: false },\n\
-                        term = query.term,\n\
-                        children, placeholderOption, process;\n\
-\n\
-                    process=function(element, collection) {\n\
-                        var group;\n\
-                        if (element.is(\"option\")) {\n\
-                            if (query.matcher(term, element.text(), element)) {\n\
-                                collection.push(self.optionToData(element));\n\
-                            }\n\
-                        } else if (element.is(\"optgroup\")) {\n\
-                            group=self.optionToData(element);\n\
-                            element.children().each2(function(i, elm) { process(elm, group.children); });\n\
-                            if (group.children.length>0) {\n\
-                                collection.push(group);\n\
-                            }\n\
-                        }\n\
-                    };\n\
-\n\
-                    children=element.children();\n\
-\n\
-                    // ignore the placeholder option if there is one\n\
-                    if (this.getPlaceholder() !== undefined && children.length > 0) {\n\
-                        placeholderOption = this.getPlaceholderOption();\n\
-                        if (placeholderOption) {\n\
-                            children=children.not(placeholderOption);\n\
-                        }\n\
-                    }\n\
-\n\
-                    children.each2(function(i, elm) { process(elm, data.results); });\n\
-\n\
-                    query.callback(data);\n\
-                });\n\
-                // this is needed because inside val() we construct choices from options and there id is hardcoded\n\
-                opts.id=function(e) { return e.id; };\n\
-            } else {\n\
-                if (!(\"query\" in opts)) {\n\
-\n\
-                    if (\"ajax\" in opts) {\n\
-                        ajaxUrl = opts.element.data(\"ajax-url\");\n\
-                        if (ajaxUrl && ajaxUrl.length > 0) {\n\
-                            opts.ajax.url = ajaxUrl;\n\
-                        }\n\
-                        opts.query = ajax.call(opts.element, opts.ajax);\n\
-                    } else if (\"data\" in opts) {\n\
-                        opts.query = local(opts.data);\n\
-                    } else if (\"tags\" in opts) {\n\
-                        opts.query = tags(opts.tags);\n\
-                        if (opts.createSearchChoice === undefined) {\n\
-                            opts.createSearchChoice = function (term) { return {id: $.trim(term), text: $.trim(term)}; };\n\
-                        }\n\
-                        if (opts.initSelection === undefined) {\n\
-                            opts.initSelection = function (element, callback) {\n\
-                                var data = [];\n\
-                                $(splitVal(element.val(), opts.separator)).each(function () {\n\
-                                    var obj = { id: this, text: this },\n\
-                                        tags = opts.tags;\n\
-                                    if ($.isFunction(tags)) tags=tags();\n\
-                                    $(tags).each(function() { if (equal(this.id, obj.id)) { obj = this; return false; } });\n\
-                                    data.push(obj);\n\
-                                });\n\
-\n\
-                                callback(data);\n\
-                            };\n\
-                        }\n\
-                    }\n\
-                }\n\
-            }\n\
-            if (typeof(opts.query) !== \"function\") {\n\
-                throw \"query function not defined for Select2 \" + opts.element.attr(\"id\");\n\
-            }\n\
-\n\
-            if (opts.createSearchChoicePosition === 'top') {\n\
-                opts.createSearchChoicePosition = function(list, item) { list.unshift(item); };\n\
-            }\n\
-            else if (opts.createSearchChoicePosition === 'bottom') {\n\
-                opts.createSearchChoicePosition = function(list, item) { list.push(item); };\n\
-            }\n\
-            else if (typeof(opts.createSearchChoicePosition) !== \"function\")  {\n\
-                throw \"invalid createSearchChoicePosition option must be 'top', 'bottom' or a custom function\";\n\
-            }\n\
-\n\
-            return opts;\n\
-        },\n\
-\n\
-        /**\n\
-         * Monitor the original element for changes and update select2 accordingly\n\
-         */\n\
-        // abstract\n\
-        monitorSource: function () {\n\
-            var el = this.opts.element, observer, self = this;\n\
-\n\
-            el.on(\"change.select2\", this.bind(function (e) {\n\
-                if (this.opts.element.data(\"select2-change-triggered\") !== true) {\n\
-                    this.initSelection();\n\
-                }\n\
-            }));\n\
-\n\
-            this._sync = this.bind(function () {\n\
-\n\
-                // sync enabled state\n\
-                var disabled = el.prop(\"disabled\");\n\
-                if (disabled === undefined) disabled = false;\n\
-                this.enable(!disabled);\n\
-\n\
-                var readonly = el.prop(\"readonly\");\n\
-                if (readonly === undefined) readonly = false;\n\
-                this.readonly(readonly);\n\
-\n\
-                syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);\n\
-                this.container.addClass(evaluate(this.opts.containerCssClass, this.opts.element));\n\
-\n\
-                syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);\n\
-                this.dropdown.addClass(evaluate(this.opts.dropdownCssClass, this.opts.element));\n\
-\n\
-            });\n\
-\n\
-            // IE8-10 (IE9/10 won't fire propertyChange via attachEventListener)\n\
-            if (el.length && el[0].attachEvent) {\n\
-                el.each(function() {\n\
-                    this.attachEvent(\"onpropertychange\", self._sync);\n\
-                });\n\
-            }\n\
-            \n\
-            // safari, chrome, firefox, IE11\n\
-            observer = window.MutationObserver || window.WebKitMutationObserver|| window.MozMutationObserver;\n\
-            if (observer !== undefined) {\n\
-                if (this.propertyObserver) { delete this.propertyObserver; this.propertyObserver = null; }\n\
-                this.propertyObserver = new observer(function (mutations) {\n\
-                    $.each(mutations, self._sync);\n\
-                });\n\
-                this.propertyObserver.observe(el.get(0), { attributes:true, subtree:false });\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        triggerSelect: function(data) {\n\
-            var evt = $.Event(\"select2-selecting\", { val: this.id(data), object: data });\n\
-            this.opts.element.trigger(evt);\n\
-            return !evt.isDefaultPrevented();\n\
-        },\n\
-\n\
-        /**\n\
-         * Triggers the change event on the source element\n\
-         */\n\
-        // abstract\n\
-        triggerChange: function (details) {\n\
-\n\
-            details = details || {};\n\
-            details= $.extend({}, details, { type: \"change\", val: this.val() });\n\
-            // prevents recursive triggering\n\
-            this.opts.element.data(\"select2-change-triggered\", true);\n\
-            this.opts.element.trigger(details);\n\
-            this.opts.element.data(\"select2-change-triggered\", false);\n\
-\n\
-            // some validation frameworks ignore the change event and listen instead to keyup, click for selects\n\
-            // so here we trigger the click event manually\n\
-            this.opts.element.click();\n\
-\n\
-            // ValidationEngine ignores the change event and listens instead to blur\n\
-            // so here we trigger the blur event manually if so desired\n\
-            if (this.opts.blurOnChange)\n\
-                this.opts.element.blur();\n\
-        },\n\
-\n\
-        //abstract\n\
-        isInterfaceEnabled: function()\n\
-        {\n\
-            return this.enabledInterface === true;\n\
-        },\n\
-\n\
-        // abstract\n\
-        enableInterface: function() {\n\
-            var enabled = this._enabled && !this._readonly,\n\
-                disabled = !enabled;\n\
-\n\
-            if (enabled === this.enabledInterface) return false;\n\
-\n\
-            this.container.toggleClass(\"select2-container-disabled\", disabled);\n\
-            this.close();\n\
-            this.enabledInterface = enabled;\n\
-\n\
-            return true;\n\
-        },\n\
-\n\
-        // abstract\n\
-        enable: function(enabled) {\n\
-            if (enabled === undefined) enabled = true;\n\
-            if (this._enabled === enabled) return;\n\
-            this._enabled = enabled;\n\
-\n\
-            this.opts.element.prop(\"disabled\", !enabled);\n\
-            this.enableInterface();\n\
-        },\n\
-\n\
-        // abstract\n\
-        disable: function() {\n\
-            this.enable(false);\n\
-        },\n\
-\n\
-        // abstract\n\
-        readonly: function(enabled) {\n\
-            if (enabled === undefined) enabled = false;\n\
-            if (this._readonly === enabled) return;\n\
-            this._readonly = enabled;\n\
-\n\
-            this.opts.element.prop(\"readonly\", enabled);\n\
-            this.enableInterface();\n\
-        },\n\
-\n\
-        // abstract\n\
-        opened: function () {\n\
-            return (this.container) ? this.container.hasClass(\"select2-dropdown-open\") : false;\n\
-        },\n\
-\n\
-        // abstract\n\
-        positionDropdown: function() {\n\
-            var $dropdown = this.dropdown,\n\
-                offset = this.container.offset(),\n\
-                height = this.container.outerHeight(false),\n\
-                width = this.container.outerWidth(false) - 10,\n\
-                dropHeight = $dropdown.outerHeight(false),\n\
-                $window = $(window),\n\
-                windowWidth = $window.width(),\n\
-                windowHeight = $window.height(),\n\
-                viewPortRight = $window.scrollLeft() + windowWidth,\n\
-                viewportBottom = $window.scrollTop() + windowHeight,\n\
-                dropTop = offset.top + height,\n\
-                dropLeft = offset.left,\n\
-                enoughRoomBelow = dropTop + dropHeight <= viewportBottom,\n\
-                enoughRoomAbove = (offset.top - dropHeight) >= $window.scrollTop(),\n\
-                dropWidth = $dropdown.outerWidth(false),\n\
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight,\n\
-                aboveNow = $dropdown.hasClass(\"select2-drop-above\"),\n\
-                bodyOffset,\n\
-                above,\n\
-                changeDirection,\n\
-                css,\n\
-                resultsListNode;\n\
-\n\
-            // always prefer the current above/below alignment, unless there is not enough room\n\
-            if (aboveNow) {\n\
-                above = true;\n\
-                if (!enoughRoomAbove && enoughRoomBelow) {\n\
-                    changeDirection = true;\n\
-                    above = false;\n\
-                }\n\
-            } else {\n\
-                above = false;\n\
-                if (!enoughRoomBelow && enoughRoomAbove) {\n\
-                    changeDirection = true;\n\
-                    above = true;\n\
-                }\n\
-            }\n\
-\n\
-            //if we are changing direction we need to get positions when dropdown is hidden;\n\
-            if (changeDirection) {\n\
-                $dropdown.hide();\n\
-                offset = this.container.offset();\n\
-                height = this.container.outerHeight(false);\n\
-                width = this.container.outerWidth(false);\n\
-                dropHeight = $dropdown.outerHeight(false);\n\
-                viewPortRight = $window.scrollLeft() + windowWidth;\n\
-                viewportBottom = $window.scrollTop() + windowHeight;\n\
-                dropTop = offset.top + height;\n\
-                dropLeft = offset.left;\n\
-                dropWidth = $dropdown.outerWidth(false);\n\
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;\n\
-                $dropdown.show();\n\
-\n\
-                // fix so the cursor does not move to the left within the search-textbox in IE\n\
-                this.focusSearch();\n\
-            }\n\
-\n\
-            if (this.opts.dropdownAutoWidth) {\n\
-                resultsListNode = $('.select2-results', $dropdown)[0];\n\
-                $dropdown.addClass('select2-drop-auto-width');\n\
-                $dropdown.css('width', '');\n\
-                // Add scrollbar width to dropdown if vertical scrollbar is present\n\
-                dropWidth = $dropdown.outerWidth(false) + (resultsListNode.scrollHeight === resultsListNode.clientHeight ? 0 : scrollBarDimensions.width);\n\
-                dropWidth > width ? width = dropWidth : dropWidth = width;\n\
-                dropHeight = $dropdown.outerHeight(false);\n\
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;\n\
-            }\n\
-            else {\n\
-                this.container.removeClass('select2-drop-auto-width');\n\
-            }\n\
-\n\
-            //console.log(\"below/ droptop:\", dropTop, \"dropHeight\", dropHeight, \"sum\", (dropTop+dropHeight)+\" viewport bottom\", viewportBottom, \"enough?\", enoughRoomBelow);\n\
-            //console.log(\"above/ offset.top\", offset.top, \"dropHeight\", dropHeight, \"top\", (offset.top-dropHeight), \"scrollTop\", this.body.scrollTop(), \"enough?\", enoughRoomAbove);\n\
-\n\
-            // fix positioning when body has an offset and is not position: static\n\
-            if (this.body.css('position') !== 'static') {\n\
-                bodyOffset = this.body.offset();\n\
-                dropTop -= bodyOffset.top;\n\
-                dropLeft -= bodyOffset.left;\n\
-            }\n\
-\n\
-            if (!enoughRoomOnRight) {\n\
-                dropLeft = offset.left + this.container.outerWidth(false) - dropWidth;\n\
-            }\n\
-\n\
-            css =  {\n\
-                left: dropLeft,\n\
-                width: width\n\
-            };\n\
-\n\
-            if (above) {\n\
-                css.top = offset.top - dropHeight;\n\
-                css.bottom = 'auto';\n\
-                this.container.addClass(\"select2-drop-above\");\n\
-                $dropdown.addClass(\"select2-drop-above\");\n\
-            }\n\
-            else {\n\
-                css.top = dropTop;\n\
-                css.bottom = 'auto';\n\
-                this.container.removeClass(\"select2-drop-above\");\n\
-                $dropdown.removeClass(\"select2-drop-above\");\n\
-            }\n\
-            css = $.extend(css, evaluate(this.opts.dropdownCss, this.opts.element));\n\
-\n\
-            $dropdown.css(css);\n\
-        },\n\
-\n\
-        // abstract\n\
-        shouldOpen: function() {\n\
-            var event;\n\
-\n\
-            if (this.opened()) return false;\n\
-\n\
-            if (this._enabled === false || this._readonly === true) return false;\n\
-\n\
-            event = $.Event(\"select2-opening\");\n\
-            this.opts.element.trigger(event);\n\
-            return !event.isDefaultPrevented();\n\
-        },\n\
-\n\
-        // abstract\n\
-        clearDropdownAlignmentPreference: function() {\n\
-            // clear the classes used to figure out the preference of where the dropdown should be opened\n\
-            this.container.removeClass(\"select2-drop-above\");\n\
-            this.dropdown.removeClass(\"select2-drop-above\");\n\
-        },\n\
-\n\
-        /**\n\
-         * Opens the dropdown\n\
-         *\n\
-         * @return {Boolean} whether or not dropdown was opened. This method will return false if, for example,\n\
-         * the dropdown is already open, or if the 'open' event listener on the element called preventDefault().\n\
-         */\n\
-        // abstract\n\
-        open: function () {\n\
-\n\
-            if (!this.shouldOpen()) return false;\n\
-\n\
-            this.opening();\n\
-\n\
-            // Only bind the document mousemove when the dropdown is visible\n\
-            $document.on(\"mousemove.select2Event\", function (e) {\n\
-                lastMousePosition.x = e.pageX;\n\
-                lastMousePosition.y = e.pageY;\n\
-            });\n\
-            \n\
-            return true;\n\
-        },\n\
-\n\
-        /**\n\
-         * Performs the opening of the dropdown\n\
-         */\n\
-        // abstract\n\
-        opening: function() {\n\
-            var cid = this.containerEventName,\n\
-                scroll = \"scroll.\" + cid,\n\
-                resize = \"resize.\"+cid,\n\
-                orient = \"orientationchange.\"+cid,\n\
-                mask;\n\
-\n\
-            this.container.addClass(\"select2-dropdown-open\").addClass(\"select2-container-active\");\n\
-\n\
-            this.clearDropdownAlignmentPreference();\n\
-\n\
-            if(this.dropdown[0] !== this.body.children().last()[0]) {\n\
-                this.dropdown.detach().appendTo(this.body);\n\
-            }\n\
-\n\
-            // create the dropdown mask if doesn't already exist\n\
-            mask = $(\"#select2-drop-mask\");\n\
-            if (mask.length == 0) {\n\
-                mask = $(document.createElement(\"div\"));\n\
-                mask.attr(\"id\",\"select2-drop-mask\").attr(\"class\",\"select2-drop-mask\");\n\
-                mask.hide();\n\
-                mask.appendTo(this.body);\n\
-                mask.on(\"mousedown touchstart click\", function (e) {\n\
-                    // Prevent IE from generating a click event on the body\n\
-                    reinsertElement(mask);\n\
-\n\
-                    var dropdown = $(\"#select2-drop\"), self;\n\
-                    if (dropdown.length > 0) {\n\
-                        self=dropdown.data(\"select2\");\n\
-                        if (self.opts.selectOnBlur) {\n\
-                            self.selectHighlighted({noFocus: true});\n\
-                        }\n\
-                        self.close();\n\
-                        e.preventDefault();\n\
-                        e.stopPropagation();\n\
-                    }\n\
-                });\n\
-            }\n\
-\n\
-            // ensure the mask is always right before the dropdown\n\
-            if (this.dropdown.prev()[0] !== mask[0]) {\n\
-                this.dropdown.before(mask);\n\
-            }\n\
-\n\
-            // move the global id to the correct dropdown\n\
-            $(\"#select2-drop\").removeAttr(\"id\");\n\
-            this.dropdown.attr(\"id\", \"select2-drop\");\n\
-\n\
-            // show the elements\n\
-            mask.show();\n\
-\n\
-            this.positionDropdown();\n\
-            this.dropdown.show();\n\
-            this.positionDropdown();\n\
-\n\
-            this.dropdown.addClass(\"select2-drop-active\");\n\
-\n\
-            // attach listeners to events that can change the position of the container and thus require\n\
-            // the position of the dropdown to be updated as well so it does not come unglued from the container\n\
-            var that = this;\n\
-            this.container.parents().add(window).each(function () {\n\
-                $(this).on(resize+\" \"+scroll+\" \"+orient, function (e) {\n\
-                    if (that.opened()) that.positionDropdown();\n\
-                });\n\
-            });\n\
-\n\
-\n\
-        },\n\
-\n\
-        // abstract\n\
-        close: function () {\n\
-            if (!this.opened()) return;\n\
-\n\
-            var cid = this.containerEventName,\n\
-                scroll = \"scroll.\" + cid,\n\
-                resize = \"resize.\"+cid,\n\
-                orient = \"orientationchange.\"+cid;\n\
-\n\
-            // unbind event listeners\n\
-            this.container.parents().add(window).each(function () { $(this).off(scroll).off(resize).off(orient); });\n\
-\n\
-            this.clearDropdownAlignmentPreference();\n\
-\n\
-            $(\"#select2-drop-mask\").hide();\n\
-            this.dropdown.removeAttr(\"id\"); // only the active dropdown has the select2-drop id\n\
-            this.dropdown.hide();\n\
-            this.container.removeClass(\"select2-dropdown-open\").removeClass(\"select2-container-active\");\n\
-            this.results.empty();\n\
-\n\
-            // Now that the dropdown is closed, unbind the global document mousemove event\n\
-            $document.off(\"mousemove.select2Event\");\n\
-\n\
-            this.clearSearch();\n\
-            this.search.removeClass(\"select2-active\");\n\
-            this.opts.element.trigger($.Event(\"select2-close\"));\n\
-        },\n\
-\n\
-        /**\n\
-         * Opens control, sets input value, and updates results.\n\
-         */\n\
-        // abstract\n\
-        externalSearch: function (term) {\n\
-            this.open();\n\
-            this.search.val(term);\n\
-            this.updateResults(false);\n\
-        },\n\
-\n\
-        // abstract\n\
-        clearSearch: function () {\n\
-\n\
-        },\n\
-\n\
-        //abstract\n\
-        getMaximumSelectionSize: function() {\n\
-            return evaluate(this.opts.maximumSelectionSize, this.opts.element);\n\
-        },\n\
-\n\
-        // abstract\n\
-        ensureHighlightVisible: function () {\n\
-            var results = this.results, children, index, child, hb, rb, y, more;\n\
-\n\
-            index = this.highlight();\n\
-\n\
-            if (index < 0) return;\n\
-\n\
-            if (index == 0) {\n\
-\n\
-                // if the first element is highlighted scroll all the way to the top,\n\
-                // that way any unselectable headers above it will also be scrolled\n\
-                // into view\n\
-\n\
-                results.scrollTop(0);\n\
-                return;\n\
-            }\n\
-\n\
-            children = this.findHighlightableChoices().find('.select2-result-label');\n\
-\n\
-            child = $(children[index]);\n\
-\n\
-            hb = child.offset().top + child.outerHeight(true);\n\
-\n\
-            // if this is the last child lets also make sure select2-more-results is visible\n\
-            if (index === children.length - 1) {\n\
-                more = results.find(\"li.select2-more-results\");\n\
-                if (more.length > 0) {\n\
-                    hb = more.offset().top + more.outerHeight(true);\n\
-                }\n\
-            }\n\
-\n\
-            rb = results.offset().top + results.outerHeight(true);\n\
-            if (hb > rb) {\n\
-                results.scrollTop(results.scrollTop() + (hb - rb));\n\
-            }\n\
-            y = child.offset().top - results.offset().top;\n\
-\n\
-            // make sure the top of the element is visible\n\
-            if (y < 0 && child.css('display') != 'none' ) {\n\
-                results.scrollTop(results.scrollTop() + y); // y is negative\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        findHighlightableChoices: function() {\n\
-            return this.results.find(\".select2-result-selectable:not(.select2-disabled):not(.select2-selected)\");\n\
-        },\n\
-\n\
-        // abstract\n\
-        moveHighlight: function (delta) {\n\
-            var choices = this.findHighlightableChoices(),\n\
-                index = this.highlight();\n\
-\n\
-            while (index > -1 && index < choices.length) {\n\
-                index += delta;\n\
-                var choice = $(choices[index]);\n\
-                if (choice.hasClass(\"select2-result-selectable\") && !choice.hasClass(\"select2-disabled\") && !choice.hasClass(\"select2-selected\")) {\n\
-                    this.highlight(index);\n\
-                    break;\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        highlight: function (index) {\n\
-            var choices = this.findHighlightableChoices(),\n\
-                choice,\n\
-                data;\n\
-\n\
-            if (arguments.length === 0) {\n\
-                return indexOf(choices.filter(\".select2-highlighted\")[0], choices.get());\n\
-            }\n\
-\n\
-            if (index >= choices.length) index = choices.length - 1;\n\
-            if (index < 0) index = 0;\n\
-\n\
-            this.removeHighlight();\n\
-\n\
-            choice = $(choices[index]);\n\
-            choice.addClass(\"select2-highlighted\");\n\
-\n\
-            // ensure assistive technology can determine the active choice\n\
-            this.search.attr(\"aria-activedescendant\", choice.find(\".select2-result-label\").attr(\"id\"));\n\
-\n\
-            this.ensureHighlightVisible();\n\
-\n\
-            this.liveRegion.text(choice.text());\n\
-\n\
-            data = choice.data(\"select2-data\");\n\
-            if (data) {\n\
-                this.opts.element.trigger({ type: \"select2-highlight\", val: this.id(data), choice: data });\n\
-            }\n\
-        },\n\
-\n\
-        removeHighlight: function() {\n\
-            this.results.find(\".select2-highlighted\").removeClass(\"select2-highlighted\");\n\
-        },\n\
-\n\
-        touchMoved: function() {\n\
-            this._touchMoved = true;\n\
-        },\n\
-\n\
-        clearTouchMoved: function() {\n\
-          this._touchMoved = false;\n\
-        },\n\
-\n\
-        // abstract\n\
-        countSelectableResults: function() {\n\
-            return this.findHighlightableChoices().length;\n\
-        },\n\
-\n\
-        // abstract\n\
-        highlightUnderEvent: function (event) {\n\
-            var el = $(event.target).closest(\".select2-result-selectable\");\n\
-            if (el.length > 0 && !el.is(\".select2-highlighted\")) {\n\
-                var choices = this.findHighlightableChoices();\n\
-                this.highlight(choices.index(el));\n\
-            } else if (el.length == 0) {\n\
-                // if we are over an unselectable item remove all highlights\n\
-                this.removeHighlight();\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        loadMoreIfNeeded: function () {\n\
-            var results = this.results,\n\
-                more = results.find(\"li.select2-more-results\"),\n\
-                below, // pixels the element is below the scroll fold, below==0 is when the element is starting to be visible\n\
-                page = this.resultsPage + 1,\n\
-                self=this,\n\
-                term=this.search.val(),\n\
-                context=this.context;\n\
-\n\
-            if (more.length === 0) return;\n\
-            below = more.offset().top - results.offset().top - results.height();\n\
-\n\
-            if (below <= this.opts.loadMorePadding) {\n\
-                more.addClass(\"select2-active\");\n\
-                this.opts.query({\n\
-                        element: this.opts.element,\n\
-                        term: term,\n\
-                        page: page,\n\
-                        context: context,\n\
-                        matcher: this.opts.matcher,\n\
-                        callback: this.bind(function (data) {\n\
-\n\
-                    // ignore a response if the select2 has been closed before it was received\n\
-                    if (!self.opened()) return;\n\
-\n\
-\n\
-                    self.opts.populateResults.call(this, results, data.results, {term: term, page: page, context:context});\n\
-                    self.postprocessResults(data, false, false);\n\
-\n\
-                    if (data.more===true) {\n\
-                        more.detach().appendTo(results).text(evaluate(self.opts.formatLoadMore, self.opts.element, page+1));\n\
-                        window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);\n\
-                    } else {\n\
-                        more.remove();\n\
-                    }\n\
-                    self.positionDropdown();\n\
-                    self.resultsPage = page;\n\
-                    self.context = data.context;\n\
-                    this.opts.element.trigger({ type: \"select2-loaded\", items: data });\n\
-                })});\n\
-            }\n\
-        },\n\
-\n\
-        /**\n\
-         * Default tokenizer function which does nothing\n\
-         */\n\
-        tokenize: function() {\n\
-\n\
-        },\n\
-\n\
-        /**\n\
-         * @param initial whether or not this is the call to this method right after the dropdown has been opened\n\
-         */\n\
-        // abstract\n\
-        updateResults: function (initial) {\n\
-            var search = this.search,\n\
-                results = this.results,\n\
-                opts = this.opts,\n\
-                data,\n\
-                self = this,\n\
-                input,\n\
-                term = search.val(),\n\
-                lastTerm = $.data(this.container, \"select2-last-term\"),\n\
-                // sequence number used to drop out-of-order responses\n\
-                queryNumber;\n\
-\n\
-            // prevent duplicate queries against the same term\n\
-            if (initial !== true && lastTerm && equal(term, lastTerm)) return;\n\
-\n\
-            $.data(this.container, \"select2-last-term\", term);\n\
-\n\
-            // if the search is currently hidden we do not alter the results\n\
-            if (initial !== true && (this.showSearchInput === false || !this.opened())) {\n\
-                return;\n\
-            }\n\
-\n\
-            function postRender() {\n\
-                search.removeClass(\"select2-active\");\n\
-                self.positionDropdown();\n\
-                if (results.find('.select2-no-results,.select2-selection-limit,.select2-searching').length) {\n\
-                    self.liveRegion.text(results.text());\n\
-                }\n\
-                else {\n\
-                    self.liveRegion.text(self.opts.formatMatches(results.find('.select2-result-selectable').length));\n\
-                }\n\
-            }\n\
-\n\
-            function render(html) {\n\
-                results.html(html);\n\
-                postRender();\n\
-            }\n\
-\n\
-            queryNumber = ++this.queryCount;\n\
-\n\
-            var maxSelSize = this.getMaximumSelectionSize();\n\
-            if (maxSelSize >=1) {\n\
-                data = this.data();\n\
-                if ($.isArray(data) && data.length >= maxSelSize && checkFormatter(opts.formatSelectionTooBig, \"formatSelectionTooBig\")) {\n\
-                    render(\"<li class='select2-selection-limit'>\" + evaluate(opts.formatSelectionTooBig, opts.element, maxSelSize) + \"</li>\");\n\
-                    return;\n\
-                }\n\
-            }\n\
-\n\
-            if (search.val().length < opts.minimumInputLength) {\n\
-                if (checkFormatter(opts.formatInputTooShort, \"formatInputTooShort\")) {\n\
-                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatInputTooShort, opts.element, search.val(), opts.minimumInputLength) + \"</li>\");\n\
-                } else {\n\
-                    render(\"\");\n\
-                }\n\
-                if (initial && this.showSearch) this.showSearch(true);\n\
-                return;\n\
-            }\n\
-\n\
-            if (opts.maximumInputLength && search.val().length > opts.maximumInputLength) {\n\
-                if (checkFormatter(opts.formatInputTooLong, \"formatInputTooLong\")) {\n\
-                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatInputTooLong, opts.element, search.val(), opts.maximumInputLength) + \"</li>\");\n\
-                } else {\n\
-                    render(\"\");\n\
-                }\n\
-                return;\n\
-            }\n\
-\n\
-            if (opts.formatSearching && this.findHighlightableChoices().length === 0) {\n\
-                render(\"<li class='select2-searching'>\" + evaluate(opts.formatSearching, opts.element) + \"</li>\");\n\
-            }\n\
-\n\
-            search.addClass(\"select2-active\");\n\
-\n\
-            this.removeHighlight();\n\
-\n\
-            // give the tokenizer a chance to pre-process the input\n\
-            input = this.tokenize();\n\
-            if (input != undefined && input != null) {\n\
-                search.val(input);\n\
-            }\n\
-\n\
-            this.resultsPage = 1;\n\
-\n\
-            opts.query({\n\
-                element: opts.element,\n\
-                    term: search.val(),\n\
-                    page: this.resultsPage,\n\
-                    context: null,\n\
-                    matcher: opts.matcher,\n\
-                    callback: this.bind(function (data) {\n\
-                var def; // default choice\n\
-\n\
-                // ignore old responses\n\
-                if (queryNumber != this.queryCount) {\n\
-                  return;\n\
-                }\n\
-\n\
-                // ignore a response if the select2 has been closed before it was received\n\
-                if (!this.opened()) {\n\
-                    this.search.removeClass(\"select2-active\");\n\
-                    return;\n\
-                }\n\
-\n\
-                // save context, if any\n\
-                this.context = (data.context===undefined) ? null : data.context;\n\
-                // create a default choice and prepend it to the list\n\
-                if (this.opts.createSearchChoice && search.val() !== \"\") {\n\
-                    def = this.opts.createSearchChoice.call(self, search.val(), data.results);\n\
-                    if (def !== undefined && def !== null && self.id(def) !== undefined && self.id(def) !== null) {\n\
-                        if ($(data.results).filter(\n\
-                            function () {\n\
-                                return equal(self.id(this), self.id(def));\n\
-                            }).length === 0) {\n\
-                            this.opts.createSearchChoicePosition(data.results, def);\n\
-                        }\n\
-                    }\n\
-                }\n\
-\n\
-                if (data.results.length === 0 && checkFormatter(opts.formatNoMatches, \"formatNoMatches\")) {\n\
-                    render(\"<li class='select2-no-results'>\" + evaluate(opts.formatNoMatches, opts.element, search.val()) + \"</li>\");\n\
-                    return;\n\
-                }\n\
-\n\
-                results.empty();\n\
-                self.opts.populateResults.call(this, results, data.results, {term: search.val(), page: this.resultsPage, context:null});\n\
-\n\
-                if (data.more === true && checkFormatter(opts.formatLoadMore, \"formatLoadMore\")) {\n\
-                    results.append(\"<li class='select2-more-results'>\" + opts.escapeMarkup(evaluate(opts.formatLoadMore, opts.element, this.resultsPage)) + \"</li>\");\n\
-                    window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);\n\
-                }\n\
-\n\
-                this.postprocessResults(data, initial);\n\
-\n\
-                postRender();\n\
-\n\
-                this.opts.element.trigger({ type: \"select2-loaded\", items: data });\n\
-            })});\n\
-        },\n\
-\n\
-        // abstract\n\
-        cancel: function () {\n\
-            this.close();\n\
-        },\n\
-\n\
-        // abstract\n\
-        blur: function () {\n\
-            // if selectOnBlur == true, select the currently highlighted option\n\
-            if (this.opts.selectOnBlur)\n\
-                this.selectHighlighted({noFocus: true});\n\
-\n\
-            this.close();\n\
-            this.container.removeClass(\"select2-container-active\");\n\
-            // synonymous to .is(':focus'), which is available in jquery >= 1.6\n\
-            if (this.search[0] === document.activeElement) { this.search.blur(); }\n\
-            this.clearSearch();\n\
-            this.selection.find(\".select2-search-choice-focus\").removeClass(\"select2-search-choice-focus\");\n\
-        },\n\
-\n\
-        // abstract\n\
-        focusSearch: function () {\n\
-            focus(this.search);\n\
-        },\n\
-\n\
-        // abstract\n\
-        selectHighlighted: function (options) {\n\
-            if (this._touchMoved) {\n\
-              this.clearTouchMoved();\n\
-              return;\n\
-            }\n\
-            var index=this.highlight(),\n\
-                highlighted=this.results.find(\".select2-highlighted\"),\n\
-                data = highlighted.closest('.select2-result').data(\"select2-data\");\n\
-\n\
-            if (data) {\n\
-                this.highlight(index);\n\
-                this.onSelect(data, options);\n\
-            } else if (options && options.noFocus) {\n\
-                this.close();\n\
-            }\n\
-        },\n\
-\n\
-        // abstract\n\
-        getPlaceholder: function () {\n\
-            var placeholderOption;\n\
-            return this.opts.element.attr(\"placeholder\") ||\n\
-                this.opts.element.attr(\"data-placeholder\") || // jquery 1.4 compat\n\
-                this.opts.element.data(\"placeholder\") ||\n\
-                this.opts.placeholder ||\n\
-                ((placeholderOption = this.getPlaceholderOption()) !== undefined ? placeholderOption.text() : undefined);\n\
-        },\n\
-\n\
-        // abstract\n\
-        getPlaceholderOption: function() {\n\
-            if (this.select) {\n\
-                var firstOption = this.select.children('option').first();\n\
-                if (this.opts.placeholderOption !== undefined ) {\n\
-                    //Determine the placeholder option based on the specified placeholderOption setting\n\
-                    return (this.opts.placeholderOption === \"first\" && firstOption) ||\n\
-                           (typeof this.opts.placeholderOption === \"function\" && this.opts.placeholderOption(this.select));\n\
-                } else if ($.trim(firstOption.text()) === \"\" && firstOption.val() === \"\") {\n\
-                    //No explicit placeholder option specified, use the first if it's blank\n\
-                    return firstOption;\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        /**\n\
-         * Get the desired width for the container element.  This is\n\
-         * derived first from option `width` passed to select2, then\n\
-         * the inline 'style' on the original element, and finally\n\
-         * falls back to the jQuery calculated element width.\n\
-         */\n\
-        // abstract\n\
-        initContainerWidth: function () {\n\
-            function resolveContainerWidth() {\n\
-                var style, attrs, matches, i, l, attr;\n\
-\n\
-                if (this.opts.width === \"off\") {\n\
-                    return null;\n\
-                } else if (this.opts.width === \"element\"){\n\
-                    return this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px';\n\
-                } else if (this.opts.width === \"copy\" || this.opts.width === \"resolve\") {\n\
-                    // check if there is inline style on the element that contains width\n\
-                    style = this.opts.element.attr('style');\n\
-                    if (style !== undefined) {\n\
-                        attrs = style.split(';');\n\
-                        for (i = 0, l = attrs.length; i < l; i = i + 1) {\n\
-                            attr = attrs[i].replace(/\\s/g, '');\n\
-                            matches = attr.match(/^width:(([-+]?([0-9]*\\.)?[0-9]+)(px|em|ex|%|in|cm|mm|pt|pc))/i);\n\
-                            if (matches !== null && matches.length >= 1)\n\
-                                return matches[1];\n\
-                        }\n\
-                    }\n\
-\n\
-                    if (this.opts.width === \"resolve\") {\n\
-                        // next check if css('width') can resolve a width that is percent based, this is sometimes possible\n\
-                        // when attached to input type=hidden or elements hidden via css\n\
-                        style = this.opts.element.css('width');\n\
-                        if (style.indexOf(\"%\") > 0) return style;\n\
-\n\
-                        // finally, fallback on the calculated width of the element\n\
-                        return (this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px');\n\
-                    }\n\
-\n\
-                    return null;\n\
-                } else if ($.isFunction(this.opts.width)) {\n\
-                    return this.opts.width();\n\
-                } else {\n\
-                    return this.opts.width;\n\
-               }\n\
-            };\n\
-\n\
-            var width = resolveContainerWidth.call(this);\n\
-            if (width !== null) {\n\
-                this.container.css(\"width\", width);\n\
-            }\n\
-        }\n\
-    });\n\
-\n\
-    SingleSelect2 = clazz(AbstractSelect2, {\n\
-\n\
-        // single\n\
-\n\
-        createContainer: function () {\n\
-            var container = $(document.createElement(\"div\")).attr({\n\
-                \"class\": \"select2-container\"\n\
-            }).html([\n\
-                \"<a href='javascript:void(0)' class='select2-choice' tabindex='-1'>\",\n\
-                \"   <span class='select2-chosen'>&#160;</span><abbr class='select2-search-choice-close'></abbr>\",\n\
-                \"   <span class='select2-arrow' role='presentation'><b role='presentation'></b></span>\",\n\
-                \"</a>\",\n\
-                \"<label for='' class='select2-offscreen'></label>\",\n\
-                \"<input class='select2-focusser select2-offscreen' type='text' aria-haspopup='true' role='button' />\",\n\
-                \"<div class='select2-drop select2-display-none'>\",\n\
-                \"   <div class='select2-search'>\",\n\
-                \"       <label for='' class='select2-offscreen'></label>\",\n\
-                \"       <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input' role='combobox' aria-expanded='true'\",\n\
-                \"       aria-autocomplete='list' />\",\n\
-                \"   </div>\",\n\
-                \"   <ul class='select2-results' role='listbox'>\",\n\
-                \"   </ul>\",\n\
-                \"</div>\"].join(\"\"));\n\
-            return container;\n\
-        },\n\
-\n\
-        // single\n\
-        enableInterface: function() {\n\
-            if (this.parent.enableInterface.apply(this, arguments)) {\n\
-                this.focusser.prop(\"disabled\", !this.isInterfaceEnabled());\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        opening: function () {\n\
-            var el, range, len;\n\
-\n\
-            if (this.opts.minimumResultsForSearch >= 0) {\n\
-                this.showSearch(true);\n\
-            }\n\
-\n\
-            this.parent.opening.apply(this, arguments);\n\
-\n\
-            if (this.showSearchInput !== false) {\n\
-                // IE appends focusser.val() at the end of field :/ so we manually insert it at the beginning using a range\n\
-                // all other browsers handle this just fine\n\
-\n\
-                this.search.val(this.focusser.val());\n\
-            }\n\
-            if (this.opts.shouldFocusInput(this)) {\n\
-                this.search.focus();\n\
-                // move the cursor to the end after focussing, otherwise it will be at the beginning and\n\
-                // new text will appear *before* focusser.val()\n\
-                el = this.search.get(0);\n\
-                if (el.createTextRange) {\n\
-                    range = el.createTextRange();\n\
-                    range.collapse(false);\n\
-                    range.select();\n\
-                } else if (el.setSelectionRange) {\n\
-                    len = this.search.val().length;\n\
-                    el.setSelectionRange(len, len);\n\
-                }\n\
-            }\n\
-\n\
-            // initializes search's value with nextSearchTerm (if defined by user)\n\
-            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter\n\
-            if(this.search.val() === \"\") {\n\
-                if(this.nextSearchTerm != undefined){\n\
-                    this.search.val(this.nextSearchTerm);\n\
-                    this.search.select();\n\
-                }\n\
-            }\n\
-\n\
-            this.focusser.prop(\"disabled\", true).val(\"\");\n\
-            this.updateResults(true);\n\
-            this.opts.element.trigger($.Event(\"select2-open\"));\n\
-        },\n\
-\n\
-        // single\n\
-        close: function () {\n\
-            if (!this.opened()) return;\n\
-            this.parent.close.apply(this, arguments);\n\
-\n\
-            this.focusser.prop(\"disabled\", false);\n\
-\n\
-            if (this.opts.shouldFocusInput(this)) {\n\
-                this.focusser.focus();\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        focus: function () {\n\
-            if (this.opened()) {\n\
-                this.close();\n\
-            } else {\n\
-                this.focusser.prop(\"disabled\", false);\n\
-                if (this.opts.shouldFocusInput(this)) {\n\
-                    this.focusser.focus();\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        isFocused: function () {\n\
-            return this.container.hasClass(\"select2-container-active\");\n\
-        },\n\
-\n\
-        // single\n\
-        cancel: function () {\n\
-            this.parent.cancel.apply(this, arguments);\n\
-            this.focusser.prop(\"disabled\", false);\n\
-\n\
-            if (this.opts.shouldFocusInput(this)) {\n\
-                this.focusser.focus();\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        destroy: function() {\n\
-            $(\"label[for='\" + this.focusser.attr('id') + \"']\")\n\
-                .attr('for', this.opts.element.attr(\"id\"));\n\
-            this.parent.destroy.apply(this, arguments);\n\
-\n\
-            cleanupJQueryElements.call(this,\n\
-                \"selection\",\n\
-                \"focusser\"\n\
-            );\n\
-        },\n\
-\n\
-        // single\n\
-        initContainer: function () {\n\
-\n\
-            var selection,\n\
-                container = this.container,\n\
-                dropdown = this.dropdown,\n\
-                idSuffix = nextUid(),\n\
-                elementLabel;\n\
-\n\
-            if (this.opts.minimumResultsForSearch < 0) {\n\
-                this.showSearch(false);\n\
-            } else {\n\
-                this.showSearch(true);\n\
-            }\n\
-\n\
-            this.selection = selection = container.find(\".select2-choice\");\n\
-\n\
-            this.focusser = container.find(\".select2-focusser\");\n\
-\n\
-            // add aria associations\n\
-            selection.find(\".select2-chosen\").attr(\"id\", \"select2-chosen-\"+idSuffix);\n\
-            this.focusser.attr(\"aria-labelledby\", \"select2-chosen-\"+idSuffix);\n\
-            this.results.attr(\"id\", \"select2-results-\"+idSuffix);\n\
-            this.search.attr(\"aria-owns\", \"select2-results-\"+idSuffix);\n\
-\n\
-            // rewrite labels from original element to focusser\n\
-            this.focusser.attr(\"id\", \"s2id_autogen\"+idSuffix);\n\
-\n\
-            elementLabel = $(\"label[for='\" + this.opts.element.attr(\"id\") + \"']\");\n\
-\n\
-            this.focusser.prev()\n\
-                .text(elementLabel.text())\n\
-                .attr('for', this.focusser.attr('id'));\n\
-\n\
-            // Ensure the original element retains an accessible name\n\
-            var originalTitle = this.opts.element.attr(\"title\");\n\
-            this.opts.element.attr(\"title\", (originalTitle || elementLabel.text()));\n\
-\n\
-            this.focusser.attr(\"tabindex\", this.elementTabIndex);\n\
-\n\
-            // write label for search field using the label from the focusser element\n\
-            this.search.attr(\"id\", this.focusser.attr('id') + '_search');\n\
-\n\
-            this.search.prev()\n\
-                .text($(\"label[for='\" + this.focusser.attr('id') + \"']\").text())\n\
-                .attr('for', this.search.attr('id'));\n\
-\n\
-            this.search.on(\"keydown\", this.bind(function (e) {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-\n\
-                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {\n\
-                    // prevent the page from scrolling\n\
-                    killEvent(e);\n\
-                    return;\n\
-                }\n\
-\n\
-                switch (e.which) {\n\
-                    case KEY.UP:\n\
-                    case KEY.DOWN:\n\
-                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);\n\
-                        killEvent(e);\n\
-                        return;\n\
-                    case KEY.ENTER:\n\
-                        this.selectHighlighted();\n\
-                        killEvent(e);\n\
-                        return;\n\
-                    case KEY.TAB:\n\
-                        this.selectHighlighted({noFocus: true});\n\
-                        return;\n\
-                    case KEY.ESC:\n\
-                        this.cancel(e);\n\
-                        killEvent(e);\n\
-                        return;\n\
-                }\n\
-            }));\n\
-\n\
-            this.search.on(\"blur\", this.bind(function(e) {\n\
-                // a workaround for chrome to keep the search field focussed when the scroll bar is used to scroll the dropdown.\n\
-                // without this the search field loses focus which is annoying\n\
-                if (document.activeElement === this.body.get(0)) {\n\
-                    window.setTimeout(this.bind(function() {\n\
-                        if (this.opened()) {\n\
-                            this.search.focus();\n\
-                        }\n\
-                    }), 0);\n\
-                }\n\
-            }));\n\
-\n\
-            this.focusser.on(\"keydown\", this.bind(function (e) {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-\n\
-                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e) || e.which === KEY.ESC) {\n\
-                    return;\n\
-                }\n\
-\n\
-                if (this.opts.openOnEnter === false && e.which === KEY.ENTER) {\n\
-                    killEvent(e);\n\
-                    return;\n\
-                }\n\
-\n\
-                if (e.which == KEY.DOWN || e.which == KEY.UP\n\
-                    || (e.which == KEY.ENTER && this.opts.openOnEnter)) {\n\
-\n\
-                    if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;\n\
-\n\
-                    this.open();\n\
-                    killEvent(e);\n\
-                    return;\n\
-                }\n\
-\n\
-                if (e.which == KEY.DELETE || e.which == KEY.BACKSPACE) {\n\
-                    if (this.opts.allowClear) {\n\
-                        this.clear();\n\
-                    }\n\
-                    killEvent(e);\n\
-                    return;\n\
-                }\n\
-            }));\n\
-\n\
-\n\
-            installKeyUpChangeEvent(this.focusser);\n\
-            this.focusser.on(\"keyup-change input\", this.bind(function(e) {\n\
-                if (this.opts.minimumResultsForSearch >= 0) {\n\
-                    e.stopPropagation();\n\
-                    if (this.opened()) return;\n\
-                    this.open();\n\
-                }\n\
-            }));\n\
-\n\
-            selection.on(\"mousedown touchstart\", \"abbr\", this.bind(function (e) {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-                this.clear();\n\
-                killEventImmediately(e);\n\
-                this.close();\n\
-                this.selection.focus();\n\
-            }));\n\
-\n\
-            selection.on(\"mousedown touchstart\", this.bind(function (e) {\n\
-                // Prevent IE from generating a click event on the body\n\
-                reinsertElement(selection);\n\
-\n\
-                if (!this.container.hasClass(\"select2-container-active\")) {\n\
-                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
-                }\n\
-\n\
-                if (this.opened()) {\n\
-                    this.close();\n\
-                } else if (this.isInterfaceEnabled()) {\n\
-                    this.open();\n\
-                }\n\
-\n\
-                killEvent(e);\n\
-            }));\n\
-\n\
-            dropdown.on(\"mousedown touchstart\", this.bind(function() {\n\
-                if (this.opts.shouldFocusInput(this)) {\n\
-                    this.search.focus();\n\
-                }\n\
-            }));\n\
-\n\
-            selection.on(\"focus\", this.bind(function(e) {\n\
-                killEvent(e);\n\
-            }));\n\
-\n\
-            this.focusser.on(\"focus\", this.bind(function(){\n\
-                if (!this.container.hasClass(\"select2-container-active\")) {\n\
-                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
-                }\n\
-                this.container.addClass(\"select2-container-active\");\n\
-            })).on(\"blur\", this.bind(function() {\n\
-                if (!this.opened()) {\n\
-                    this.container.removeClass(\"select2-container-active\");\n\
-                    this.opts.element.trigger($.Event(\"select2-blur\"));\n\
-                }\n\
-            }));\n\
-            this.search.on(\"focus\", this.bind(function(){\n\
-                if (!this.container.hasClass(\"select2-container-active\")) {\n\
-                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
-                }\n\
-                this.container.addClass(\"select2-container-active\");\n\
-            }));\n\
-\n\
-            this.initContainerWidth();\n\
-            this.opts.element.addClass(\"select2-offscreen\");\n\
-            this.setPlaceholder();\n\
-\n\
-        },\n\
-\n\
-        // single\n\
-        clear: function(triggerChange) {\n\
-            var data=this.selection.data(\"select2-data\");\n\
-            if (data) { // guard against queued quick consecutive clicks\n\
-                var evt = $.Event(\"select2-clearing\");\n\
-                this.opts.element.trigger(evt);\n\
-                if (evt.isDefaultPrevented()) {\n\
-                    return;\n\
-                }\n\
-                var placeholderOption = this.getPlaceholderOption();\n\
-                this.opts.element.val(placeholderOption ? placeholderOption.val() : \"\");\n\
-                this.selection.find(\".select2-chosen\").empty();\n\
-                this.selection.removeData(\"select2-data\");\n\
-                this.setPlaceholder();\n\
-\n\
-                if (triggerChange !== false){\n\
-                    this.opts.element.trigger({ type: \"select2-removed\", val: this.id(data), choice: data });\n\
-                    this.triggerChange({removed:data});\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        /**\n\
-         * Sets selection based on source element's value\n\
-         */\n\
-        // single\n\
-        initSelection: function () {\n\
-            var selected;\n\
-            if (this.isPlaceholderOptionSelected()) {\n\
-                this.updateSelection(null);\n\
-                this.close();\n\
-                this.setPlaceholder();\n\
-            } else {\n\
-                var self = this;\n\
-                this.opts.initSelection.call(null, this.opts.element, function(selected){\n\
-                    if (selected !== undefined && selected !== null) {\n\
-                        self.updateSelection(selected);\n\
-                        self.close();\n\
-                        self.setPlaceholder();\n\
-                        self.nextSearchTerm = self.opts.nextSearchTerm(selected, self.search.val());\n\
-                    }\n\
-                });\n\
-            }\n\
-        },\n\
-\n\
-        isPlaceholderOptionSelected: function() {\n\
-            var placeholderOption;\n\
-            if (this.getPlaceholder() === undefined) return false; // no placeholder specified so no option should be considered\n\
-            return ((placeholderOption = this.getPlaceholderOption()) !== undefined && placeholderOption.prop(\"selected\"))\n\
-                || (this.opts.element.val() === \"\")\n\
-                || (this.opts.element.val() === undefined)\n\
-                || (this.opts.element.val() === null);\n\
-        },\n\
-\n\
-        // single\n\
-        prepareOpts: function () {\n\
-            var opts = this.parent.prepareOpts.apply(this, arguments),\n\
-                self=this;\n\
-\n\
-            if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
-                // install the selection initializer\n\
-                opts.initSelection = function (element, callback) {\n\
-                    var selected = element.find(\"option\").filter(function() { return this.selected && !this.disabled });\n\
-                    // a single select box always has a value, no need to null check 'selected'\n\
-                    callback(self.optionToData(selected));\n\
-                };\n\
-            } else if (\"data\" in opts) {\n\
-                // install default initSelection when applied to hidden input and data is local\n\
-                opts.initSelection = opts.initSelection || function (element, callback) {\n\
-                    var id = element.val();\n\
-                    //search in data by id, storing the actual matching item\n\
-                    var match = null;\n\
-                    opts.query({\n\
-                        matcher: function(term, text, el){\n\
-                            var is_match = equal(id, opts.id(el));\n\
-                            if (is_match) {\n\
-                                match = el;\n\
-                            }\n\
-                            return is_match;\n\
-                        },\n\
-                        callback: !$.isFunction(callback) ? $.noop : function() {\n\
-                            callback(match);\n\
-                        }\n\
-                    });\n\
-                };\n\
-            }\n\
-\n\
-            return opts;\n\
-        },\n\
-\n\
-        // single\n\
-        getPlaceholder: function() {\n\
-            // if a placeholder is specified on a single select without a valid placeholder option ignore it\n\
-            if (this.select) {\n\
-                if (this.getPlaceholderOption() === undefined) {\n\
-                    return undefined;\n\
-                }\n\
-            }\n\
-\n\
-            return this.parent.getPlaceholder.apply(this, arguments);\n\
-        },\n\
-\n\
-        // single\n\
-        setPlaceholder: function () {\n\
-            var placeholder = this.getPlaceholder();\n\
-\n\
-            if (this.isPlaceholderOptionSelected() && placeholder !== undefined) {\n\
-\n\
-                // check for a placeholder option if attached to a select\n\
-                if (this.select && this.getPlaceholderOption() === undefined) return;\n\
-\n\
-                this.selection.find(\".select2-chosen\").html(this.opts.escapeMarkup(placeholder));\n\
-\n\
-                this.selection.addClass(\"select2-default\");\n\
-\n\
-                this.container.removeClass(\"select2-allowclear\");\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        postprocessResults: function (data, initial, noHighlightUpdate) {\n\
-            var selected = 0, self = this, showSearchInput = true;\n\
-\n\
-            // find the selected element in the result list\n\
-\n\
-            this.findHighlightableChoices().each2(function (i, elm) {\n\
-                if (equal(self.id(elm.data(\"select2-data\")), self.opts.element.val())) {\n\
-                    selected = i;\n\
-                    return false;\n\
-                }\n\
-            });\n\
-\n\
-            // and highlight it\n\
-            if (noHighlightUpdate !== false) {\n\
-                if (initial === true && selected >= 0) {\n\
-                    this.highlight(selected);\n\
-                } else {\n\
-                    this.highlight(0);\n\
-                }\n\
-            }\n\
-\n\
-            // hide the search box if this is the first we got the results and there are enough of them for search\n\
-\n\
-            if (initial === true) {\n\
-                var min = this.opts.minimumResultsForSearch;\n\
-                if (min >= 0) {\n\
-                    this.showSearch(countResults(data.results) >= min);\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        showSearch: function(showSearchInput) {\n\
-            if (this.showSearchInput === showSearchInput) return;\n\
-\n\
-            this.showSearchInput = showSearchInput;\n\
-\n\
-            this.dropdown.find(\".select2-search\").toggleClass(\"select2-search-hidden\", !showSearchInput);\n\
-            this.dropdown.find(\".select2-search\").toggleClass(\"select2-offscreen\", !showSearchInput);\n\
-            //add \"select2-with-searchbox\" to the container if search box is shown\n\
-            $(this.dropdown, this.container).toggleClass(\"select2-with-searchbox\", showSearchInput);\n\
-        },\n\
-\n\
-        // single\n\
-        onSelect: function (data, options) {\n\
-\n\
-            if (!this.triggerSelect(data)) { return; }\n\
-\n\
-            var old = this.opts.element.val(),\n\
-                oldData = this.data();\n\
-\n\
-            this.opts.element.val(this.id(data));\n\
-            this.updateSelection(data);\n\
-\n\
-            this.opts.element.trigger({ type: \"select2-selected\", val: this.id(data), choice: data });\n\
-\n\
-            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());\n\
-            this.close();\n\
-\n\
-            if ((!options || !options.noFocus) && this.opts.shouldFocusInput(this)) {\n\
-                this.focusser.focus();\n\
-            }\n\
-\n\
-            if (!equal(old, this.id(data))) {\n\
-                this.triggerChange({ added: data, removed: oldData });\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        updateSelection: function (data) {\n\
-\n\
-            var container=this.selection.find(\".select2-chosen\"), formatted, cssClass;\n\
-\n\
-            this.selection.data(\"select2-data\", data);\n\
-\n\
-            container.empty();\n\
-            if (data !== null) {\n\
-                formatted=this.opts.formatSelection(data, container, this.opts.escapeMarkup);\n\
-            }\n\
-            if (formatted !== undefined) {\n\
-                container.append(formatted);\n\
-            }\n\
-            cssClass=this.opts.formatSelectionCssClass(data, container);\n\
-            if (cssClass !== undefined) {\n\
-                container.addClass(cssClass);\n\
-            }\n\
-\n\
-            this.selection.removeClass(\"select2-default\");\n\
-\n\
-            if (this.opts.allowClear && this.getPlaceholder() !== undefined) {\n\
-                this.container.addClass(\"select2-allowclear\");\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        val: function () {\n\
-            var val,\n\
-                triggerChange = false,\n\
-                data = null,\n\
-                self = this,\n\
-                oldData = this.data();\n\
-\n\
-            if (arguments.length === 0) {\n\
-                return this.opts.element.val();\n\
-            }\n\
-\n\
-            val = arguments[0];\n\
-\n\
-            if (arguments.length > 1) {\n\
-                triggerChange = arguments[1];\n\
-            }\n\
-\n\
-            if (this.select) {\n\
-                this.select\n\
-                    .val(val)\n\
-                    .find(\"option\").filter(function() { return this.selected }).each2(function (i, elm) {\n\
-                        data = self.optionToData(elm);\n\
-                        return false;\n\
-                    });\n\
-                this.updateSelection(data);\n\
-                this.setPlaceholder();\n\
-                if (triggerChange) {\n\
-                    this.triggerChange({added: data, removed:oldData});\n\
-                }\n\
-            } else {\n\
-                // val is an id. !val is true for [undefined,null,'',0] - 0 is legal\n\
-                if (!val && val !== 0) {\n\
-                    this.clear(triggerChange);\n\
-                    return;\n\
-                }\n\
-                if (this.opts.initSelection === undefined) {\n\
-                    throw new Error(\"cannot call val() if initSelection() is not defined\");\n\
-                }\n\
-                this.opts.element.val(val);\n\
-                this.opts.initSelection(this.opts.element, function(data){\n\
-                    self.opts.element.val(!data ? \"\" : self.id(data));\n\
-                    self.updateSelection(data);\n\
-                    self.setPlaceholder();\n\
-                    if (triggerChange) {\n\
-                        self.triggerChange({added: data, removed:oldData});\n\
-                    }\n\
-                });\n\
-            }\n\
-        },\n\
-\n\
-        // single\n\
-        clearSearch: function () {\n\
-            this.search.val(\"\");\n\
-            this.focusser.val(\"\");\n\
-        },\n\
-\n\
-        // single\n\
-        data: function(value) {\n\
-            var data,\n\
-                triggerChange = false;\n\
-\n\
-            if (arguments.length === 0) {\n\
-                data = this.selection.data(\"select2-data\");\n\
-                if (data == undefined) data = null;\n\
-                return data;\n\
-            } else {\n\
-                if (arguments.length > 1) {\n\
-                    triggerChange = arguments[1];\n\
-                }\n\
-                if (!value) {\n\
-                    this.clear(triggerChange);\n\
-                } else {\n\
-                    data = this.data();\n\
-                    this.opts.element.val(!value ? \"\" : this.id(value));\n\
-                    this.updateSelection(value);\n\
-                    if (triggerChange) {\n\
-                        this.triggerChange({added: value, removed:data});\n\
-                    }\n\
-                }\n\
-            }\n\
-        }\n\
-    });\n\
-\n\
-    MultiSelect2 = clazz(AbstractSelect2, {\n\
-\n\
-        // multi\n\
-        createContainer: function () {\n\
-            var container = $(document.createElement(\"div\")).attr({\n\
-                \"class\": \"select2-container select2-container-multi\"\n\
-            }).html([\n\
-                \"<ul class='select2-choices'>\",\n\
-                \"  <li class='select2-search-field'>\",\n\
-                \"    <label for='' class='select2-offscreen'></label>\",\n\
-                \"    <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input'>\",\n\
-                \"  </li>\",\n\
-                \"</ul>\",\n\
-                \"<div class='select2-drop select2-drop-multi select2-display-none'>\",\n\
-                \"   <ul class='select2-results'>\",\n\
-                \"   </ul>\",\n\
-                \"</div>\"].join(\"\"));\n\
-            return container;\n\
-        },\n\
-\n\
-        // multi\n\
-        prepareOpts: function () {\n\
-            var opts = this.parent.prepareOpts.apply(this, arguments),\n\
-                self=this;\n\
-\n\
-            // TODO validate placeholder is a string if specified\n\
-\n\
-            if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
-                // install the selection initializer\n\
-                opts.initSelection = function (element, callback) {\n\
-\n\
-                    var data = [];\n\
-\n\
-                    element.find(\"option\").filter(function() { return this.selected && !this.disabled }).each2(function (i, elm) {\n\
-                        data.push(self.optionToData(elm));\n\
-                    });\n\
-                    callback(data);\n\
-                };\n\
-            } else if (\"data\" in opts) {\n\
-                // install default initSelection when applied to hidden input and data is local\n\
-                opts.initSelection = opts.initSelection || function (element, callback) {\n\
-                    var ids = splitVal(element.val(), opts.separator);\n\
-                    //search in data by array of ids, storing matching items in a list\n\
-                    var matches = [];\n\
-                    opts.query({\n\
-                        matcher: function(term, text, el){\n\
-                            var is_match = $.grep(ids, function(id) {\n\
-                                return equal(id, opts.id(el));\n\
-                            }).length;\n\
-                            if (is_match) {\n\
-                                matches.push(el);\n\
-                            }\n\
-                            return is_match;\n\
-                        },\n\
-                        callback: !$.isFunction(callback) ? $.noop : function() {\n\
-                            // reorder matches based on the order they appear in the ids array because right now\n\
-                            // they are in the order in which they appear in data array\n\
-                            var ordered = [];\n\
-                            for (var i = 0; i < ids.length; i++) {\n\
-                                var id = ids[i];\n\
-                                for (var j = 0; j < matches.length; j++) {\n\
-                                    var match = matches[j];\n\
-                                    if (equal(id, opts.id(match))) {\n\
-                                        ordered.push(match);\n\
-                                        matches.splice(j, 1);\n\
-                                        break;\n\
-                                    }\n\
-                                }\n\
-                            }\n\
-                            callback(ordered);\n\
-                        }\n\
-                    });\n\
-                };\n\
-            }\n\
-\n\
-            return opts;\n\
-        },\n\
-\n\
-        // multi\n\
-        selectChoice: function (choice) {\n\
-\n\
-            var selected = this.container.find(\".select2-search-choice-focus\");\n\
-            if (selected.length && choice && choice[0] == selected[0]) {\n\
-\n\
-            } else {\n\
-                if (selected.length) {\n\
-                    this.opts.element.trigger(\"choice-deselected\", selected);\n\
-                }\n\
-                selected.removeClass(\"select2-search-choice-focus\");\n\
-                if (choice && choice.length) {\n\
-                    this.close();\n\
-                    choice.addClass(\"select2-search-choice-focus\");\n\
-                    this.opts.element.trigger(\"choice-selected\", choice);\n\
-                }\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        destroy: function() {\n\
-            $(\"label[for='\" + this.search.attr('id') + \"']\")\n\
-                .attr('for', this.opts.element.attr(\"id\"));\n\
-            this.parent.destroy.apply(this, arguments);\n\
-\n\
-            cleanupJQueryElements.call(this,\n\
-                \"searchContainer\",\n\
-                \"selection\"\n\
-            );\n\
-        },\n\
-\n\
-        // multi\n\
-        initContainer: function () {\n\
-\n\
-            var selector = \".select2-choices\", selection;\n\
-\n\
-            this.searchContainer = this.container.find(\".select2-search-field\");\n\
-            this.selection = selection = this.container.find(selector);\n\
-\n\
-            var _this = this;\n\
-            this.selection.on(\"click\", \".select2-search-choice:not(.select2-locked)\", function (e) {\n\
-                //killEvent(e);\n\
-                _this.search[0].focus();\n\
-                _this.selectChoice($(this));\n\
-            });\n\
-\n\
-            // rewrite labels from original element to focusser\n\
-            this.search.attr(\"id\", \"s2id_autogen\"+nextUid());\n\
-\n\
-            this.search.prev()\n\
-                .text($(\"label[for='\" + this.opts.element.attr(\"id\") + \"']\").text())\n\
-                .attr('for', this.search.attr('id'));\n\
-\n\
-            this.search.on(\"input paste\", this.bind(function() {\n\
-                if (this.search.attr('placeholder') && this.search.val().length == 0) return;\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-                if (!this.opened()) {\n\
-                    this.open();\n\
-                }\n\
-            }));\n\
-\n\
-            this.search.attr(\"tabindex\", this.elementTabIndex);\n\
-\n\
-            this.keydowns = 0;\n\
-            this.search.on(\"keydown\", this.bind(function (e) {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-\n\
-                ++this.keydowns;\n\
-                var selected = selection.find(\".select2-search-choice-focus\");\n\
-                var prev = selected.prev(\".select2-search-choice:not(.select2-locked)\");\n\
-                var next = selected.next(\".select2-search-choice:not(.select2-locked)\");\n\
-                var pos = getCursorInfo(this.search);\n\
-\n\
-                if (selected.length &&\n\
-                    (e.which == KEY.LEFT || e.which == KEY.RIGHT || e.which == KEY.BACKSPACE || e.which == KEY.DELETE || e.which == KEY.ENTER)) {\n\
-                    var selectedChoice = selected;\n\
-                    if (e.which == KEY.LEFT && prev.length) {\n\
-                        selectedChoice = prev;\n\
-                    }\n\
-                    else if (e.which == KEY.RIGHT) {\n\
-                        selectedChoice = next.length ? next : null;\n\
-                    }\n\
-                    else if (e.which === KEY.BACKSPACE) {\n\
-                        if (this.unselect(selected.first())) {\n\
-                            this.search.width(10);\n\
-                            selectedChoice = prev.length ? prev : next;\n\
-                        }\n\
-                    } else if (e.which == KEY.DELETE) {\n\
-                        if (this.unselect(selected.first())) {\n\
-                            this.search.width(10);\n\
-                            selectedChoice = next.length ? next : null;\n\
-                        }\n\
-                    } else if (e.which == KEY.ENTER) {\n\
-                        selectedChoice = null;\n\
-                    }\n\
-\n\
-                    this.selectChoice(selectedChoice);\n\
-                    killEvent(e);\n\
-                    if (!selectedChoice || !selectedChoice.length) {\n\
-                        this.open();\n\
-                    }\n\
-                    return;\n\
-                } else if (((e.which === KEY.BACKSPACE && this.keydowns == 1)\n\
-                    || e.which == KEY.LEFT) && (pos.offset == 0 && !pos.length)) {\n\
-\n\
-                    this.selectChoice(selection.find(\".select2-search-choice:not(.select2-locked)\").last());\n\
-                    killEvent(e);\n\
-                    return;\n\
-                } else {\n\
-                    this.selectChoice(null);\n\
-                }\n\
-\n\
-                if (this.opened()) {\n\
-                    switch (e.which) {\n\
-                    case KEY.UP:\n\
-                    case KEY.DOWN:\n\
-                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);\n\
-                        killEvent(e);\n\
-                        return;\n\
-                    case KEY.ENTER:\n\
-                        this.selectHighlighted();\n\
-                        killEvent(e);\n\
-                        return;\n\
-                    case KEY.TAB:\n\
-                        this.selectHighlighted({noFocus:true});\n\
-                        this.close();\n\
-                        return;\n\
-                    case KEY.ESC:\n\
-                        this.cancel(e);\n\
-                        killEvent(e);\n\
-                        return;\n\
-                    }\n\
-                }\n\
-\n\
-                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e)\n\
-                 || e.which === KEY.BACKSPACE || e.which === KEY.ESC) {\n\
-                    return;\n\
-                }\n\
-\n\
-                if (e.which === KEY.ENTER) {\n\
-                    if (this.opts.openOnEnter === false) {\n\
-                        return;\n\
-                    } else if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) {\n\
-                        return;\n\
-                    }\n\
-                }\n\
-\n\
-                this.open();\n\
-\n\
-                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {\n\
-                    // prevent the page from scrolling\n\
-                    killEvent(e);\n\
-                }\n\
-\n\
-                if (e.which === KEY.ENTER) {\n\
-                    // prevent form from being submitted\n\
-                    killEvent(e);\n\
-                }\n\
-\n\
-            }));\n\
-\n\
-            this.search.on(\"keyup\", this.bind(function (e) {\n\
-                this.keydowns = 0;\n\
-                this.resizeSearch();\n\
-            })\n\
-            );\n\
-\n\
-            this.search.on(\"blur\", this.bind(function(e) {\n\
-                this.container.removeClass(\"select2-container-active\");\n\
-                this.search.removeClass(\"select2-focused\");\n\
-                this.selectChoice(null);\n\
-                if (!this.opened()) this.clearSearch();\n\
-                e.stopImmediatePropagation();\n\
-                this.opts.element.trigger($.Event(\"select2-blur\"));\n\
-            }));\n\
-\n\
-            this.container.on(\"click\", selector, this.bind(function (e) {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-                if ($(e.target).closest(\".select2-search-choice\").length > 0) {\n\
-                    // clicked inside a select2 search choice, do not open\n\
-                    return;\n\
-                }\n\
-                this.selectChoice(null);\n\
-                this.clearPlaceholder();\n\
-                if (!this.container.hasClass(\"select2-container-active\")) {\n\
-                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
-                }\n\
-                this.open();\n\
-                this.focusSearch();\n\
-                e.preventDefault();\n\
-            }));\n\
-\n\
-            this.container.on(\"focus\", selector, this.bind(function () {\n\
-                if (!this.isInterfaceEnabled()) return;\n\
-                if (!this.container.hasClass(\"select2-container-active\")) {\n\
-                    this.opts.element.trigger($.Event(\"select2-focus\"));\n\
-                }\n\
-                this.container.addClass(\"select2-container-active\");\n\
-                this.dropdown.addClass(\"select2-drop-active\");\n\
-                this.clearPlaceholder();\n\
-            }));\n\
-\n\
-            this.initContainerWidth();\n\
-            this.opts.element.addClass(\"select2-offscreen\");\n\
-\n\
-            // set the placeholder if necessary\n\
-            this.clearSearch();\n\
-        },\n\
-\n\
-        // multi\n\
-        enableInterface: function() {\n\
-            if (this.parent.enableInterface.apply(this, arguments)) {\n\
-                this.search.prop(\"disabled\", !this.isInterfaceEnabled());\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        initSelection: function () {\n\
-            var data;\n\
-            if (this.opts.element.val() === \"\" && this.opts.element.text() === \"\") {\n\
-                this.updateSelection([]);\n\
-                this.close();\n\
-                // set the placeholder if necessary\n\
-                this.clearSearch();\n\
-            }\n\
-            if (this.select || this.opts.element.val() !== \"\") {\n\
-                var self = this;\n\
-                this.opts.initSelection.call(null, this.opts.element, function(data){\n\
-                    if (data !== undefined && data !== null) {\n\
-                        self.updateSelection(data);\n\
-                        self.close();\n\
-                        // set the placeholder if necessary\n\
-                        self.clearSearch();\n\
-                    }\n\
-                });\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        clearSearch: function () {\n\
-            var placeholder = this.getPlaceholder(),\n\
-                maxWidth = this.getMaxSearchWidth();\n\
-\n\
-            if (placeholder !== undefined  && this.getVal().length === 0 && this.search.hasClass(\"select2-focused\") === false) {\n\
-                this.search.val(placeholder).addClass(\"select2-default\");\n\
-                // stretch the search box to full width of the container so as much of the placeholder is visible as possible\n\
-                // we could call this.resizeSearch(), but we do not because that requires a sizer and we do not want to create one so early because of a firefox bug, see #944\n\
-                this.search.width(maxWidth > 0 ? maxWidth : this.container.css(\"width\"));\n\
-            } else {\n\
-                this.search.val(\"\").width(10);\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        clearPlaceholder: function () {\n\
-            if (this.search.hasClass(\"select2-default\")) {\n\
-                this.search.val(\"\").removeClass(\"select2-default\");\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        opening: function () {\n\
-            this.clearPlaceholder(); // should be done before super so placeholder is not used to search\n\
-            this.resizeSearch();\n\
-\n\
-            this.parent.opening.apply(this, arguments);\n\
-\n\
-            this.focusSearch();\n\
-\n\
-            // initializes search's value with nextSearchTerm (if defined by user)\n\
-            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter\n\
-            if(this.search.val() === \"\") {\n\
-                if(this.nextSearchTerm != undefined){\n\
-                    this.search.val(this.nextSearchTerm);\n\
-                    this.search.select();\n\
-                }\n\
-            }\n\
-\n\
-            this.updateResults(true);\n\
-            if (this.opts.shouldFocusInput(this)) {\n\
-                this.search.focus();\n\
-            }\n\
-            this.opts.element.trigger($.Event(\"select2-open\"));\n\
-        },\n\
-\n\
-        // multi\n\
-        close: function () {\n\
-            if (!this.opened()) return;\n\
-            this.parent.close.apply(this, arguments);\n\
-        },\n\
-\n\
-        // multi\n\
-        focus: function () {\n\
-            this.close();\n\
-            this.search.focus();\n\
-        },\n\
-\n\
-        // multi\n\
-        isFocused: function () {\n\
-            return this.search.hasClass(\"select2-focused\");\n\
-        },\n\
-\n\
-        // multi\n\
-        updateSelection: function (data) {\n\
-            var ids = [], filtered = [], self = this;\n\
-\n\
-            // filter out duplicates\n\
-            $(data).each(function () {\n\
-                if (indexOf(self.id(this), ids) < 0) {\n\
-                    ids.push(self.id(this));\n\
-                    filtered.push(this);\n\
-                }\n\
-            });\n\
-            data = filtered;\n\
-\n\
-            this.selection.find(\".select2-search-choice\").remove();\n\
-            $(data).each(function () {\n\
-                self.addSelectedChoice(this);\n\
-            });\n\
-            self.postprocessResults();\n\
-        },\n\
-\n\
-        // multi\n\
-        tokenize: function() {\n\
-            var input = this.search.val();\n\
-            input = this.opts.tokenizer.call(this, input, this.data(), this.bind(this.onSelect), this.opts);\n\
-            if (input != null && input != undefined) {\n\
-                this.search.val(input);\n\
-                if (input.length > 0) {\n\
-                    this.open();\n\
-                }\n\
-            }\n\
-\n\
-        },\n\
-\n\
-        // multi\n\
-        onSelect: function (data, options) {\n\
-\n\
-            if (!this.triggerSelect(data)) { return; }\n\
-\n\
-            this.addSelectedChoice(data);\n\
-\n\
-            this.opts.element.trigger({ type: \"selected\", val: this.id(data), choice: data });\n\
-\n\
-            // keep track of the search's value before it gets cleared\n\
-            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());\n\
-\n\
-            this.clearSearch();\n\
-            this.updateResults();\n\
-\n\
-            if (this.select || !this.opts.closeOnSelect) this.postprocessResults(data, false, this.opts.closeOnSelect===true);\n\
-\n\
-            if (this.opts.closeOnSelect) {\n\
-                this.close();\n\
-                this.search.width(10);\n\
-            } else {\n\
-                if (this.countSelectableResults()>0) {\n\
-                    this.search.width(10);\n\
-                    this.resizeSearch();\n\
-                    if (this.getMaximumSelectionSize() > 0 && this.val().length >= this.getMaximumSelectionSize()) {\n\
-                        // if we reached max selection size repaint the results so choices\n\
-                        // are replaced with the max selection reached message\n\
-                        this.updateResults(true);\n\
-                    } else {\n\
-                        // initializes search's value with nextSearchTerm and update search result\n\
-                        if(this.nextSearchTerm != undefined){\n\
-                            this.search.val(this.nextSearchTerm);\n\
-                            this.updateResults();\n\
-                            this.search.select();\n\
-                        }\n\
-                    }\n\
-                    this.positionDropdown();\n\
-                } else {\n\
-                    // if nothing left to select close\n\
-                    this.close();\n\
-                    this.search.width(10);\n\
-                }\n\
-            }\n\
-\n\
-            // since its not possible to select an element that has already been\n\
-            // added we do not need to check if this is a new element before firing change\n\
-            this.triggerChange({ added: data });\n\
-\n\
-            if (!options || !options.noFocus)\n\
-                this.focusSearch();\n\
-        },\n\
-\n\
-        // multi\n\
-        cancel: function () {\n\
-            this.close();\n\
-            this.focusSearch();\n\
-        },\n\
-\n\
-        addSelectedChoice: function (data) {\n\
-            var enableChoice = !data.locked,\n\
-                enabledItem = $(\n\
-                    \"<li class='select2-search-choice'>\" +\n\
-                    \"    <div></div>\" +\n\
-                    \"    <a href='#' class='select2-search-choice-close' tabindex='-1'></a>\" +\n\
-                    \"</li>\"),\n\
-                disabledItem = $(\n\
-                    \"<li class='select2-search-choice select2-locked'>\" +\n\
-                    \"<div></div>\" +\n\
-                    \"</li>\");\n\
-            var choice = enableChoice ? enabledItem : disabledItem,\n\
-                id = this.id(data),\n\
-                val = this.getVal(),\n\
-                formatted,\n\
-                cssClass;\n\
-\n\
-            formatted=this.opts.formatSelection(data, choice.find(\"div\"), this.opts.escapeMarkup);\n\
-            if (formatted != undefined) {\n\
-                choice.find(\"div\").replaceWith(\"<div>\"+formatted+\"</div>\");\n\
-            }\n\
-            cssClass=this.opts.formatSelectionCssClass(data, choice.find(\"div\"));\n\
-            if (cssClass != undefined) {\n\
-                choice.addClass(cssClass);\n\
-            }\n\
-\n\
-            if(enableChoice){\n\
-              choice.find(\".select2-search-choice-close\")\n\
-                  .on(\"mousedown\", killEvent)\n\
-                  .on(\"click dblclick\", this.bind(function (e) {\n\
-                  if (!this.isInterfaceEnabled()) return;\n\
-\n\
-                  this.unselect($(e.target));\n\
-                  this.selection.find(\".select2-search-choice-focus\").removeClass(\"select2-search-choice-focus\");\n\
-                  killEvent(e);\n\
-                  this.close();\n\
-                  this.focusSearch();\n\
-              })).on(\"focus\", this.bind(function () {\n\
-                  if (!this.isInterfaceEnabled()) return;\n\
-                  this.container.addClass(\"select2-container-active\");\n\
-                  this.dropdown.addClass(\"select2-drop-active\");\n\
-              }));\n\
-            }\n\
-\n\
-            choice.data(\"select2-data\", data);\n\
-            choice.insertBefore(this.searchContainer);\n\
-\n\
-            val.push(id);\n\
-            this.setVal(val);\n\
-        },\n\
-\n\
-        // multi\n\
-        unselect: function (selected) {\n\
-            var val = this.getVal(),\n\
-                data,\n\
-                index;\n\
-            selected = selected.closest(\".select2-search-choice\");\n\
-\n\
-            if (selected.length === 0) {\n\
-                throw \"Invalid argument: \" + selected + \". Must be .select2-search-choice\";\n\
-            }\n\
-\n\
-            data = selected.data(\"select2-data\");\n\
-\n\
-            if (!data) {\n\
-                // prevent a race condition when the 'x' is clicked really fast repeatedly the event can be queued\n\
-                // and invoked on an element already removed\n\
-                return;\n\
-            }\n\
-\n\
-            var evt = $.Event(\"select2-removing\");\n\
-            evt.val = this.id(data);\n\
-            evt.choice = data;\n\
-            this.opts.element.trigger(evt);\n\
-\n\
-            if (evt.isDefaultPrevented()) {\n\
-                return false;\n\
-            }\n\
-\n\
-            while((index = indexOf(this.id(data), val)) >= 0) {\n\
-                val.splice(index, 1);\n\
-                this.setVal(val);\n\
-                if (this.select) this.postprocessResults();\n\
-            }\n\
-\n\
-            selected.remove();\n\
-\n\
-            this.opts.element.trigger({ type: \"select2-removed\", val: this.id(data), choice: data });\n\
-            this.triggerChange({ removed: data });\n\
-\n\
-            return true;\n\
-        },\n\
-\n\
-        // multi\n\
-        postprocessResults: function (data, initial, noHighlightUpdate) {\n\
-            var val = this.getVal(),\n\
-                choices = this.results.find(\".select2-result\"),\n\
-                compound = this.results.find(\".select2-result-with-children\"),\n\
-                self = this;\n\
-\n\
-            choices.each2(function (i, choice) {\n\
-                var id = self.id(choice.data(\"select2-data\"));\n\
-                if (indexOf(id, val) >= 0) {\n\
-                    choice.addClass(\"select2-selected\");\n\
-                    // mark all children of the selected parent as selected\n\
-                    choice.find(\".select2-result-selectable\").addClass(\"select2-selected\");\n\
-                }\n\
-            });\n\
-\n\
-            compound.each2(function(i, choice) {\n\
-                // hide an optgroup if it doesn't have any selectable children\n\
-                if (!choice.is('.select2-result-selectable')\n\
-                    && choice.find(\".select2-result-selectable:not(.select2-selected)\").length === 0) {\n\
-                    choice.addClass(\"select2-selected\");\n\
-                }\n\
-            });\n\
-\n\
-            if (this.highlight() == -1 && noHighlightUpdate !== false){\n\
-                self.highlight(0);\n\
-            }\n\
-\n\
-            //If all results are chosen render formatNoMatches\n\
-            if(!this.opts.createSearchChoice && !choices.filter('.select2-result:not(.select2-selected)').length > 0){\n\
-                if(!data || data && !data.more && this.results.find(\".select2-no-results\").length === 0) {\n\
-                    if (checkFormatter(self.opts.formatNoMatches, \"formatNoMatches\")) {\n\
-                        this.results.append(\"<li class='select2-no-results'>\" + evaluate(self.opts.formatNoMatches, self.opts.element, self.search.val()) + \"</li>\");\n\
-                    }\n\
-                }\n\
-            }\n\
-\n\
-        },\n\
-\n\
-        // multi\n\
-        getMaxSearchWidth: function() {\n\
-            return this.selection.width() - getSideBorderPadding(this.search);\n\
-        },\n\
-\n\
-        // multi\n\
-        resizeSearch: function () {\n\
-            var minimumWidth, left, maxWidth, containerLeft, searchWidth,\n\
-                sideBorderPadding = getSideBorderPadding(this.search);\n\
-\n\
-            minimumWidth = measureTextWidth(this.search) + 10;\n\
-\n\
-            left = this.search.offset().left;\n\
-\n\
-            maxWidth = this.selection.width();\n\
-            containerLeft = this.selection.offset().left;\n\
-\n\
-            searchWidth = maxWidth - (left - containerLeft) - sideBorderPadding;\n\
-\n\
-            if (searchWidth < minimumWidth) {\n\
-                searchWidth = maxWidth - sideBorderPadding;\n\
-            }\n\
-\n\
-            if (searchWidth < 40) {\n\
-                searchWidth = maxWidth - sideBorderPadding;\n\
-            }\n\
-\n\
-            if (searchWidth <= 0) {\n\
-              searchWidth = minimumWidth;\n\
-            }\n\
-\n\
-            this.search.width(Math.floor(searchWidth));\n\
-        },\n\
-\n\
-        // multi\n\
-        getVal: function () {\n\
-            var val;\n\
-            if (this.select) {\n\
-                val = this.select.val();\n\
-                return val === null ? [] : val;\n\
-            } else {\n\
-                val = this.opts.element.val();\n\
-                return splitVal(val, this.opts.separator);\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        setVal: function (val) {\n\
-            var unique;\n\
-            if (this.select) {\n\
-                this.select.val(val);\n\
-            } else {\n\
-                unique = [];\n\
-                // filter out duplicates\n\
-                $(val).each(function () {\n\
-                    if (indexOf(this, unique) < 0) unique.push(this);\n\
-                });\n\
-                this.opts.element.val(unique.length === 0 ? \"\" : unique.join(this.opts.separator));\n\
-            }\n\
-        },\n\
-\n\
-        // multi\n\
-        buildChangeDetails: function (old, current) {\n\
-            var current = current.slice(0),\n\
-                old = old.slice(0);\n\
-\n\
-            // remove intersection from each array\n\
-            for (var i = 0; i < current.length; i++) {\n\
-                for (var j = 0; j < old.length; j++) {\n\
-                    if (equal(this.opts.id(current[i]), this.opts.id(old[j]))) {\n\
-                        current.splice(i, 1);\n\
-                        if(i>0){\n\
-                        \ti--;\n\
-                        }\n\
-                        old.splice(j, 1);\n\
-                        j--;\n\
-                    }\n\
-                }\n\
-            }\n\
-\n\
-            return {added: current, removed: old};\n\
-        },\n\
-\n\
-\n\
-        // multi\n\
-        val: function (val, triggerChange) {\n\
-            var oldData, self=this;\n\
-\n\
-            if (arguments.length === 0) {\n\
-                return this.getVal();\n\
-            }\n\
-\n\
-            oldData=this.data();\n\
-            if (!oldData.length) oldData=[];\n\
-\n\
-            // val is an id. !val is true for [undefined,null,'',0] - 0 is legal\n\
-            if (!val && val !== 0) {\n\
-                this.opts.element.val(\"\");\n\
-                this.updateSelection([]);\n\
-                this.clearSearch();\n\
-                if (triggerChange) {\n\
-                    this.triggerChange({added: this.data(), removed: oldData});\n\
-                }\n\
-                return;\n\
-            }\n\
-\n\
-            // val is a list of ids\n\
-            this.setVal(val);\n\
-\n\
-            if (this.select) {\n\
-                this.opts.initSelection(this.select, this.bind(this.updateSelection));\n\
-                if (triggerChange) {\n\
-                    this.triggerChange(this.buildChangeDetails(oldData, this.data()));\n\
-                }\n\
-            } else {\n\
-                if (this.opts.initSelection === undefined) {\n\
-                    throw new Error(\"val() cannot be called if initSelection() is not defined\");\n\
-                }\n\
-\n\
-                this.opts.initSelection(this.opts.element, function(data){\n\
-                    var ids=$.map(data, self.id);\n\
-                    self.setVal(ids);\n\
-                    self.updateSelection(data);\n\
-                    self.clearSearch();\n\
-                    if (triggerChange) {\n\
-                        self.triggerChange(self.buildChangeDetails(oldData, self.data()));\n\
-                    }\n\
-                });\n\
-            }\n\
-            this.clearSearch();\n\
-        },\n\
-\n\
-        // multi\n\
-        onSortStart: function() {\n\
-            if (this.select) {\n\
-                throw new Error(\"Sorting of elements is not supported when attached to <select>. Attach to <input type='hidden'/> instead.\");\n\
-            }\n\
-\n\
-            // collapse search field into 0 width so its container can be collapsed as well\n\
-            this.search.width(0);\n\
-            // hide the container\n\
-            this.searchContainer.hide();\n\
-        },\n\
-\n\
-        // multi\n\
-        onSortEnd:function() {\n\
-\n\
-            var val=[], self=this;\n\
-\n\
-            // show search and move it to the end of the list\n\
-            this.searchContainer.show();\n\
-            // make sure the search container is the last item in the list\n\
-            this.searchContainer.appendTo(this.searchContainer.parent());\n\
-            // since we collapsed the width in dragStarted, we resize it here\n\
-            this.resizeSearch();\n\
-\n\
-            // update selection\n\
-            this.selection.find(\".select2-search-choice\").each(function() {\n\
-                val.push(self.opts.id($(this).data(\"select2-data\")));\n\
-            });\n\
-            this.setVal(val);\n\
-            this.triggerChange();\n\
-        },\n\
-\n\
-        // multi\n\
-        data: function(values, triggerChange) {\n\
-            var self=this, ids, old;\n\
-            if (arguments.length === 0) {\n\
-                 return this.selection\n\
-                     .children(\".select2-search-choice\")\n\
-                     .map(function() { return $(this).data(\"select2-data\"); })\n\
-                     .get();\n\
-            } else {\n\
-                old = this.data();\n\
-                if (!values) { values = []; }\n\
-                ids = $.map(values, function(e) { return self.opts.id(e); });\n\
-                this.setVal(ids);\n\
-                this.updateSelection(values);\n\
-                this.clearSearch();\n\
-                if (triggerChange) {\n\
-                    this.triggerChange(this.buildChangeDetails(old, this.data()));\n\
-                }\n\
-            }\n\
-        }\n\
-    });\n\
-\n\
-    $.fn.select2 = function () {\n\
-\n\
-        var args = Array.prototype.slice.call(arguments, 0),\n\
-            opts,\n\
-            select2,\n\
-            method, value, multiple,\n\
-            allowedMethods = [\"val\", \"destroy\", \"opened\", \"open\", \"close\", \"focus\", \"isFocused\", \"container\", \"dropdown\", \"onSortStart\", \"onSortEnd\", \"enable\", \"disable\", \"readonly\", \"positionDropdown\", \"data\", \"search\"],\n\
-            valueMethods = [\"opened\", \"isFocused\", \"container\", \"dropdown\"],\n\
-            propertyMethods = [\"val\", \"data\"],\n\
-            methodsMap = { search: \"externalSearch\" };\n\
-\n\
-        this.each(function () {\n\
-            if (args.length === 0 || typeof(args[0]) === \"object\") {\n\
-                opts = args.length === 0 ? {} : $.extend({}, args[0]);\n\
-                opts.element = $(this);\n\
-\n\
-                if (opts.element.get(0).tagName.toLowerCase() === \"select\") {\n\
-                    multiple = opts.element.prop(\"multiple\");\n\
-                } else {\n\
-                    multiple = opts.multiple || false;\n\
-                    if (\"tags\" in opts) {opts.multiple = multiple = true;}\n\
-                }\n\
-\n\
-                select2 = multiple ? new window.Select2[\"class\"].multi() : new window.Select2[\"class\"].single();\n\
-                select2.init(opts);\n\
-            } else if (typeof(args[0]) === \"string\") {\n\
-\n\
-                if (indexOf(args[0], allowedMethods) < 0) {\n\
-                    throw \"Unknown method: \" + args[0];\n\
-                }\n\
-\n\
-                value = undefined;\n\
-                select2 = $(this).data(\"select2\");\n\
-                if (select2 === undefined) return;\n\
-\n\
-                method=args[0];\n\
-\n\
-                if (method === \"container\") {\n\
-                    value = select2.container;\n\
-                } else if (method === \"dropdown\") {\n\
-                    value = select2.dropdown;\n\
-                } else {\n\
-                    if (methodsMap[method]) method = methodsMap[method];\n\
-\n\
-                    value = select2[method].apply(select2, args.slice(1));\n\
-                }\n\
-                if (indexOf(args[0], valueMethods) >= 0\n\
-                    || (indexOf(args[0], propertyMethods) >= 0 && args.length == 1)) {\n\
-                    return false; // abort the iteration, ready to return first matched value\n\
-                }\n\
-            } else {\n\
-                throw \"Invalid arguments to select2 plugin: \" + args;\n\
-            }\n\
-        });\n\
-        return (value === undefined) ? this : value;\n\
-    };\n\
-\n\
-    // plugin defaults, accessible to users\n\
-    $.fn.select2.defaults = {\n\
-        width: \"copy\",\n\
-        loadMorePadding: 0,\n\
-        closeOnSelect: true,\n\
-        openOnEnter: true,\n\
-        containerCss: {},\n\
-        dropdownCss: {},\n\
-        containerCssClass: \"\",\n\
-        dropdownCssClass: \"\",\n\
-        formatResult: function(result, container, query, escapeMarkup) {\n\
-            var markup=[];\n\
-            markMatch(result.text, query.term, markup, escapeMarkup);\n\
-            return markup.join(\"\");\n\
-        },\n\
-        formatSelection: function (data, container, escapeMarkup) {\n\
-            return data ? escapeMarkup(data.text) : undefined;\n\
-        },\n\
-        sortResults: function (results, container, query) {\n\
-            return results;\n\
-        },\n\
-        formatResultCssClass: function(data) {return data.css;},\n\
-        formatSelectionCssClass: function(data, container) {return undefined;},\n\
-        formatMatches: function (matches) { return matches + \" results are available, use up and down arrow keys to navigate.\"; },\n\
-        formatNoMatches: function () { return \"No matches found\"; },\n\
-        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Enter an address\"; },\n\
-        formatInputTooLong: function (input, max) { var n = input.length - max; return \"Please delete \" + n + \" character\" + (n == 1? \"\" : \"s\"); },\n\
-        formatSelectionTooBig: function (limit) { return \"You can only select \" + limit + \" item\" + (limit == 1 ? \"\" : \"s\"); },\n\
-        formatLoadMore: function (pageNumber) { return \"Loading more results…\"; },\n\
-        formatSearching: function () { return \"Searching…\"; },\n\
-        minimumResultsForSearch: 0,\n\
-        minimumInputLength: 0,\n\
-        maximumInputLength: null,\n\
-        maximumSelectionSize: 0,\n\
-        id: function (e) { return e == undefined ? null : e.id; },\n\
-        matcher: function(term, text) {\n\
-            return stripDiacritics(''+text).toUpperCase().indexOf(stripDiacritics(''+term).toUpperCase()) >= 0;\n\
-        },\n\
-        separator: \",\",\n\
-        tokenSeparators: [],\n\
-        tokenizer: defaultTokenizer,\n\
-        escapeMarkup: defaultEscapeMarkup,\n\
-        blurOnChange: false,\n\
-        selectOnBlur: false,\n\
-        adaptContainerCssClass: function(c) { return c; },\n\
-        adaptDropdownCssClass: function(c) { return null; },\n\
-        nextSearchTerm: function(selectedObject, currentSearchTerm) { return undefined; },\n\
-        searchInputPlaceholder: '',\n\
-        createSearchChoicePosition: 'top',\n\
-        shouldFocusInput: function (instance) {\n\
-            // Attempt to detect touch devices\n\
-            var supportsTouchEvents = (('ontouchstart' in window) ||\n\
-                                       (navigator.msMaxTouchPoints > 0));\n\
-\n\
-            // Only devices which support touch events should be special cased\n\
-            if (!supportsTouchEvents) {\n\
-                return true;\n\
-            }\n\
-\n\
-            // Never focus the input if search is disabled\n\
-            if (instance.opts.minimumResultsForSearch < 0) {\n\
-                return false;\n\
-            }\n\
-\n\
-            return true;\n\
-        }\n\
-    };\n\
-\n\
-    $.fn.select2.ajaxDefaults = {\n\
-        transport: $.ajax,\n\
-        params: {\n\
-            type: \"GET\",\n\
-            cache: false,\n\
-            dataType: \"json\"\n\
-        }\n\
-    };\n\
-\n\
-    // exports\n\
-    window.Select2 = {\n\
-        query: {\n\
-            ajax: ajax,\n\
-            local: local,\n\
-            tags: tags\n\
-        }, util: {\n\
-            debounce: debounce,\n\
-            markMatch: markMatch,\n\
-            escapeMarkup: defaultEscapeMarkup,\n\
-            stripDiacritics: stripDiacritics\n\
-        }, \"class\": {\n\
-            \"abstract\": AbstractSelect2,\n\
-            \"single\": SingleSelect2,\n\
-            \"multi\": MultiSelect2\n\
-        }\n\
-    };\n\
-\n\
-}(jQuery));\n\
-//@ sourceURL=kpwebb-select2/select2.js"
-));
-require.register("kpwebb-select2/select2_locale_en.js", Function("exports, require, module",
-"/**\n\
- * Select2 <Language> translation.\n\
- * \n\
- * Author: Your Name <your@email>\n\
+
+require.modules["components-jquery"] = require.modules["components~jquery@1.11.1"];
+require.modules["components~jquery"] = require.modules["components~jquery@1.11.1"];
+require.modules["jquery"] = require.modules["components~jquery@1.11.1"];
+
+
+require.register("components~bootstrap@3.3.1", Function("exports, module",
+"/*!\n\
+ * Bootstrap v3.3.1 (http://getbootstrap.com)\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
  */\n\
-(function ($) {\n\
-    \"use strict\";\n\
 \n\
-    $.extend($.fn.select2.defaults, {\n\
-        formatMatches: function (matches) { return matches + \" results are available, use up and down arrow keys to navigate.\"; },\n\
-        formatNoMatches: function () { return \"No matches found\"; },\n\
-        formatInputTooShort: function (input, min) { var n = min - input.length; return \"Enter an address\" + (n == 1 ? \"\" : \"s\"); },\n\
-        formatInputTooLong: function (input, max) { var n = input.length - max; return \"\" + (n == 1 ? \"\" : \"s\"); },\n\
-        formatSelectionTooBig: function (limit) { return \"You can only select \" + limit + \" item\" + (limit == 1 ? \"\" : \"s\"); },\n\
-        formatLoadMore: function (pageNumber) { return \"Loading more results…\"; },\n\
-        formatSearching: function () { return \"Searching…\"; }\n\
-    });\n\
-})(jQuery);\n\
-//@ sourceURL=kpwebb-select2/select2_locale_en.js"
+if (typeof jQuery === 'undefined') {\n\
+  throw new Error('Bootstrap\\'s JavaScript requires jQuery')\n\
+}\n\
+\n\
++function ($) {\n\
+  var version = $.fn.jquery.split(' ')[0].split('.')\n\
+  if ((version[0] < 2 && version[1] < 9) || (version[0] == 1 && version[1] == 9 && version[2] < 1)) {\n\
+    throw new Error('Bootstrap\\'s JavaScript requires jQuery version 1.9.1 or higher')\n\
+  }\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: transition.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#transitions\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // CSS TRANSITION SUPPORT (Shoutout: http://www.modernizr.com/)\n\
+  // ============================================================\n\
+\n\
+  function transitionEnd() {\n\
+    var el = document.createElement('bootstrap')\n\
+\n\
+    var transEndEventNames = {\n\
+      WebkitTransition : 'webkitTransitionEnd',\n\
+      MozTransition    : 'transitionend',\n\
+      OTransition      : 'oTransitionEnd otransitionend',\n\
+      transition       : 'transitionend'\n\
+    }\n\
+\n\
+    for (var name in transEndEventNames) {\n\
+      if (el.style[name] !== undefined) {\n\
+        return { end: transEndEventNames[name] }\n\
+      }\n\
+    }\n\
+\n\
+    return false // explicit for ie8 (  ._.)\n\
+  }\n\
+\n\
+  // http://blog.alexmaccaw.com/css-transitions\n\
+  $.fn.emulateTransitionEnd = function (duration) {\n\
+    var called = false\n\
+    var $el = this\n\
+    $(this).one('bsTransitionEnd', function () { called = true })\n\
+    var callback = function () { if (!called) $($el).trigger($.support.transition.end) }\n\
+    setTimeout(callback, duration)\n\
+    return this\n\
+  }\n\
+\n\
+  $(function () {\n\
+    $.support.transition = transitionEnd()\n\
+\n\
+    if (!$.support.transition) return\n\
+\n\
+    $.event.special.bsTransitionEnd = {\n\
+      bindType: $.support.transition.end,\n\
+      delegateType: $.support.transition.end,\n\
+      handle: function (e) {\n\
+        if ($(e.target).is(this)) return e.handleObj.handler.apply(this, arguments)\n\
+      }\n\
+    }\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: alert.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#alerts\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // ALERT CLASS DEFINITION\n\
+  // ======================\n\
+\n\
+  var dismiss = '[data-dismiss=\"alert\"]'\n\
+  var Alert   = function (el) {\n\
+    $(el).on('click', dismiss, this.close)\n\
+  }\n\
+\n\
+  Alert.VERSION = '3.3.1'\n\
+\n\
+  Alert.TRANSITION_DURATION = 150\n\
+\n\
+  Alert.prototype.close = function (e) {\n\
+    var $this    = $(this)\n\
+    var selector = $this.attr('data-target')\n\
+\n\
+    if (!selector) {\n\
+      selector = $this.attr('href')\n\
+      selector = selector && selector.replace(/.*(?=#[^\\s]*$)/, '') // strip for ie7\n\
+    }\n\
+\n\
+    var $parent = $(selector)\n\
+\n\
+    if (e) e.preventDefault()\n\
+\n\
+    if (!$parent.length) {\n\
+      $parent = $this.closest('.alert')\n\
+    }\n\
+\n\
+    $parent.trigger(e = $.Event('close.bs.alert'))\n\
+\n\
+    if (e.isDefaultPrevented()) return\n\
+\n\
+    $parent.removeClass('in')\n\
+\n\
+    function removeElement() {\n\
+      // detach from parent, fire event then clean up data\n\
+      $parent.detach().trigger('closed.bs.alert').remove()\n\
+    }\n\
+\n\
+    $.support.transition && $parent.hasClass('fade') ?\n\
+      $parent\n\
+        .one('bsTransitionEnd', removeElement)\n\
+        .emulateTransitionEnd(Alert.TRANSITION_DURATION) :\n\
+      removeElement()\n\
+  }\n\
+\n\
+\n\
+  // ALERT PLUGIN DEFINITION\n\
+  // =======================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this = $(this)\n\
+      var data  = $this.data('bs.alert')\n\
+\n\
+      if (!data) $this.data('bs.alert', (data = new Alert(this)))\n\
+      if (typeof option == 'string') data[option].call($this)\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.alert\n\
+\n\
+  $.fn.alert             = Plugin\n\
+  $.fn.alert.Constructor = Alert\n\
+\n\
+\n\
+  // ALERT NO CONFLICT\n\
+  // =================\n\
+\n\
+  $.fn.alert.noConflict = function () {\n\
+    $.fn.alert = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // ALERT DATA-API\n\
+  // ==============\n\
+\n\
+  $(document).on('click.bs.alert.data-api', dismiss, Alert.prototype.close)\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: button.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#buttons\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // BUTTON PUBLIC CLASS DEFINITION\n\
+  // ==============================\n\
+\n\
+  var Button = function (element, options) {\n\
+    this.$element  = $(element)\n\
+    this.options   = $.extend({}, Button.DEFAULTS, options)\n\
+    this.isLoading = false\n\
+  }\n\
+\n\
+  Button.VERSION  = '3.3.1'\n\
+\n\
+  Button.DEFAULTS = {\n\
+    loadingText: 'loading...'\n\
+  }\n\
+\n\
+  Button.prototype.setState = function (state) {\n\
+    var d    = 'disabled'\n\
+    var $el  = this.$element\n\
+    var val  = $el.is('input') ? 'val' : 'html'\n\
+    var data = $el.data()\n\
+\n\
+    state = state + 'Text'\n\
+\n\
+    if (data.resetText == null) $el.data('resetText', $el[val]())\n\
+\n\
+    // push to event loop to allow forms to submit\n\
+    setTimeout($.proxy(function () {\n\
+      $el[val](data[state] == null ? this.options[state] : data[state])\n\
+\n\
+      if (state == 'loadingText') {\n\
+        this.isLoading = true\n\
+        $el.addClass(d).attr(d, d)\n\
+      } else if (this.isLoading) {\n\
+        this.isLoading = false\n\
+        $el.removeClass(d).removeAttr(d)\n\
+      }\n\
+    }, this), 0)\n\
+  }\n\
+\n\
+  Button.prototype.toggle = function () {\n\
+    var changed = true\n\
+    var $parent = this.$element.closest('[data-toggle=\"buttons\"]')\n\
+\n\
+    if ($parent.length) {\n\
+      var $input = this.$element.find('input')\n\
+      if ($input.prop('type') == 'radio') {\n\
+        if ($input.prop('checked') && this.$element.hasClass('active')) changed = false\n\
+        else $parent.find('.active').removeClass('active')\n\
+      }\n\
+      if (changed) $input.prop('checked', !this.$element.hasClass('active')).trigger('change')\n\
+    } else {\n\
+      this.$element.attr('aria-pressed', !this.$element.hasClass('active'))\n\
+    }\n\
+\n\
+    if (changed) this.$element.toggleClass('active')\n\
+  }\n\
+\n\
+\n\
+  // BUTTON PLUGIN DEFINITION\n\
+  // ========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.button')\n\
+      var options = typeof option == 'object' && option\n\
+\n\
+      if (!data) $this.data('bs.button', (data = new Button(this, options)))\n\
+\n\
+      if (option == 'toggle') data.toggle()\n\
+      else if (option) data.setState(option)\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.button\n\
+\n\
+  $.fn.button             = Plugin\n\
+  $.fn.button.Constructor = Button\n\
+\n\
+\n\
+  // BUTTON NO CONFLICT\n\
+  // ==================\n\
+\n\
+  $.fn.button.noConflict = function () {\n\
+    $.fn.button = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // BUTTON DATA-API\n\
+  // ===============\n\
+\n\
+  $(document)\n\
+    .on('click.bs.button.data-api', '[data-toggle^=\"button\"]', function (e) {\n\
+      var $btn = $(e.target)\n\
+      if (!$btn.hasClass('btn')) $btn = $btn.closest('.btn')\n\
+      Plugin.call($btn, 'toggle')\n\
+      e.preventDefault()\n\
+    })\n\
+    .on('focus.bs.button.data-api blur.bs.button.data-api', '[data-toggle^=\"button\"]', function (e) {\n\
+      $(e.target).closest('.btn').toggleClass('focus', /^focus(in)?$/.test(e.type))\n\
+    })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: carousel.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#carousel\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // CAROUSEL CLASS DEFINITION\n\
+  // =========================\n\
+\n\
+  var Carousel = function (element, options) {\n\
+    this.$element    = $(element)\n\
+    this.$indicators = this.$element.find('.carousel-indicators')\n\
+    this.options     = options\n\
+    this.paused      =\n\
+    this.sliding     =\n\
+    this.interval    =\n\
+    this.$active     =\n\
+    this.$items      = null\n\
+\n\
+    this.options.keyboard && this.$element.on('keydown.bs.carousel', $.proxy(this.keydown, this))\n\
+\n\
+    this.options.pause == 'hover' && !('ontouchstart' in document.documentElement) && this.$element\n\
+      .on('mouseenter.bs.carousel', $.proxy(this.pause, this))\n\
+      .on('mouseleave.bs.carousel', $.proxy(this.cycle, this))\n\
+  }\n\
+\n\
+  Carousel.VERSION  = '3.3.1'\n\
+\n\
+  Carousel.TRANSITION_DURATION = 600\n\
+\n\
+  Carousel.DEFAULTS = {\n\
+    interval: 5000,\n\
+    pause: 'hover',\n\
+    wrap: true,\n\
+    keyboard: true\n\
+  }\n\
+\n\
+  Carousel.prototype.keydown = function (e) {\n\
+    if (/input|textarea/i.test(e.target.tagName)) return\n\
+    switch (e.which) {\n\
+      case 37: this.prev(); break\n\
+      case 39: this.next(); break\n\
+      default: return\n\
+    }\n\
+\n\
+    e.preventDefault()\n\
+  }\n\
+\n\
+  Carousel.prototype.cycle = function (e) {\n\
+    e || (this.paused = false)\n\
+\n\
+    this.interval && clearInterval(this.interval)\n\
+\n\
+    this.options.interval\n\
+      && !this.paused\n\
+      && (this.interval = setInterval($.proxy(this.next, this), this.options.interval))\n\
+\n\
+    return this\n\
+  }\n\
+\n\
+  Carousel.prototype.getItemIndex = function (item) {\n\
+    this.$items = item.parent().children('.item')\n\
+    return this.$items.index(item || this.$active)\n\
+  }\n\
+\n\
+  Carousel.prototype.getItemForDirection = function (direction, active) {\n\
+    var delta = direction == 'prev' ? -1 : 1\n\
+    var activeIndex = this.getItemIndex(active)\n\
+    var itemIndex = (activeIndex + delta) % this.$items.length\n\
+    return this.$items.eq(itemIndex)\n\
+  }\n\
+\n\
+  Carousel.prototype.to = function (pos) {\n\
+    var that        = this\n\
+    var activeIndex = this.getItemIndex(this.$active = this.$element.find('.item.active'))\n\
+\n\
+    if (pos > (this.$items.length - 1) || pos < 0) return\n\
+\n\
+    if (this.sliding)       return this.$element.one('slid.bs.carousel', function () { that.to(pos) }) // yes, \"slid\"\n\
+    if (activeIndex == pos) return this.pause().cycle()\n\
+\n\
+    return this.slide(pos > activeIndex ? 'next' : 'prev', this.$items.eq(pos))\n\
+  }\n\
+\n\
+  Carousel.prototype.pause = function (e) {\n\
+    e || (this.paused = true)\n\
+\n\
+    if (this.$element.find('.next, .prev').length && $.support.transition) {\n\
+      this.$element.trigger($.support.transition.end)\n\
+      this.cycle(true)\n\
+    }\n\
+\n\
+    this.interval = clearInterval(this.interval)\n\
+\n\
+    return this\n\
+  }\n\
+\n\
+  Carousel.prototype.next = function () {\n\
+    if (this.sliding) return\n\
+    return this.slide('next')\n\
+  }\n\
+\n\
+  Carousel.prototype.prev = function () {\n\
+    if (this.sliding) return\n\
+    return this.slide('prev')\n\
+  }\n\
+\n\
+  Carousel.prototype.slide = function (type, next) {\n\
+    var $active   = this.$element.find('.item.active')\n\
+    var $next     = next || this.getItemForDirection(type, $active)\n\
+    var isCycling = this.interval\n\
+    var direction = type == 'next' ? 'left' : 'right'\n\
+    var fallback  = type == 'next' ? 'first' : 'last'\n\
+    var that      = this\n\
+\n\
+    if (!$next.length) {\n\
+      if (!this.options.wrap) return\n\
+      $next = this.$element.find('.item')[fallback]()\n\
+    }\n\
+\n\
+    if ($next.hasClass('active')) return (this.sliding = false)\n\
+\n\
+    var relatedTarget = $next[0]\n\
+    var slideEvent = $.Event('slide.bs.carousel', {\n\
+      relatedTarget: relatedTarget,\n\
+      direction: direction\n\
+    })\n\
+    this.$element.trigger(slideEvent)\n\
+    if (slideEvent.isDefaultPrevented()) return\n\
+\n\
+    this.sliding = true\n\
+\n\
+    isCycling && this.pause()\n\
+\n\
+    if (this.$indicators.length) {\n\
+      this.$indicators.find('.active').removeClass('active')\n\
+      var $nextIndicator = $(this.$indicators.children()[this.getItemIndex($next)])\n\
+      $nextIndicator && $nextIndicator.addClass('active')\n\
+    }\n\
+\n\
+    var slidEvent = $.Event('slid.bs.carousel', { relatedTarget: relatedTarget, direction: direction }) // yes, \"slid\"\n\
+    if ($.support.transition && this.$element.hasClass('slide')) {\n\
+      $next.addClass(type)\n\
+      $next[0].offsetWidth // force reflow\n\
+      $active.addClass(direction)\n\
+      $next.addClass(direction)\n\
+      $active\n\
+        .one('bsTransitionEnd', function () {\n\
+          $next.removeClass([type, direction].join(' ')).addClass('active')\n\
+          $active.removeClass(['active', direction].join(' '))\n\
+          that.sliding = false\n\
+          setTimeout(function () {\n\
+            that.$element.trigger(slidEvent)\n\
+          }, 0)\n\
+        })\n\
+        .emulateTransitionEnd(Carousel.TRANSITION_DURATION)\n\
+    } else {\n\
+      $active.removeClass('active')\n\
+      $next.addClass('active')\n\
+      this.sliding = false\n\
+      this.$element.trigger(slidEvent)\n\
+    }\n\
+\n\
+    isCycling && this.cycle()\n\
+\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // CAROUSEL PLUGIN DEFINITION\n\
+  // ==========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.carousel')\n\
+      var options = $.extend({}, Carousel.DEFAULTS, $this.data(), typeof option == 'object' && option)\n\
+      var action  = typeof option == 'string' ? option : options.slide\n\
+\n\
+      if (!data) $this.data('bs.carousel', (data = new Carousel(this, options)))\n\
+      if (typeof option == 'number') data.to(option)\n\
+      else if (action) data[action]()\n\
+      else if (options.interval) data.pause().cycle()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.carousel\n\
+\n\
+  $.fn.carousel             = Plugin\n\
+  $.fn.carousel.Constructor = Carousel\n\
+\n\
+\n\
+  // CAROUSEL NO CONFLICT\n\
+  // ====================\n\
+\n\
+  $.fn.carousel.noConflict = function () {\n\
+    $.fn.carousel = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // CAROUSEL DATA-API\n\
+  // =================\n\
+\n\
+  var clickHandler = function (e) {\n\
+    var href\n\
+    var $this   = $(this)\n\
+    var $target = $($this.attr('data-target') || (href = $this.attr('href')) && href.replace(/.*(?=#[^\\s]+$)/, '')) // strip for ie7\n\
+    if (!$target.hasClass('carousel')) return\n\
+    var options = $.extend({}, $target.data(), $this.data())\n\
+    var slideIndex = $this.attr('data-slide-to')\n\
+    if (slideIndex) options.interval = false\n\
+\n\
+    Plugin.call($target, options)\n\
+\n\
+    if (slideIndex) {\n\
+      $target.data('bs.carousel').to(slideIndex)\n\
+    }\n\
+\n\
+    e.preventDefault()\n\
+  }\n\
+\n\
+  $(document)\n\
+    .on('click.bs.carousel.data-api', '[data-slide]', clickHandler)\n\
+    .on('click.bs.carousel.data-api', '[data-slide-to]', clickHandler)\n\
+\n\
+  $(window).on('load', function () {\n\
+    $('[data-ride=\"carousel\"]').each(function () {\n\
+      var $carousel = $(this)\n\
+      Plugin.call($carousel, $carousel.data())\n\
+    })\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: collapse.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#collapse\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // COLLAPSE PUBLIC CLASS DEFINITION\n\
+  // ================================\n\
+\n\
+  var Collapse = function (element, options) {\n\
+    this.$element      = $(element)\n\
+    this.options       = $.extend({}, Collapse.DEFAULTS, options)\n\
+    this.$trigger      = $(this.options.trigger).filter('[href=\"#' + element.id + '\"], [data-target=\"#' + element.id + '\"]')\n\
+    this.transitioning = null\n\
+\n\
+    if (this.options.parent) {\n\
+      this.$parent = this.getParent()\n\
+    } else {\n\
+      this.addAriaAndCollapsedClass(this.$element, this.$trigger)\n\
+    }\n\
+\n\
+    if (this.options.toggle) this.toggle()\n\
+  }\n\
+\n\
+  Collapse.VERSION  = '3.3.1'\n\
+\n\
+  Collapse.TRANSITION_DURATION = 350\n\
+\n\
+  Collapse.DEFAULTS = {\n\
+    toggle: true,\n\
+    trigger: '[data-toggle=\"collapse\"]'\n\
+  }\n\
+\n\
+  Collapse.prototype.dimension = function () {\n\
+    var hasWidth = this.$element.hasClass('width')\n\
+    return hasWidth ? 'width' : 'height'\n\
+  }\n\
+\n\
+  Collapse.prototype.show = function () {\n\
+    if (this.transitioning || this.$element.hasClass('in')) return\n\
+\n\
+    var activesData\n\
+    var actives = this.$parent && this.$parent.find('> .panel').children('.in, .collapsing')\n\
+\n\
+    if (actives && actives.length) {\n\
+      activesData = actives.data('bs.collapse')\n\
+      if (activesData && activesData.transitioning) return\n\
+    }\n\
+\n\
+    var startEvent = $.Event('show.bs.collapse')\n\
+    this.$element.trigger(startEvent)\n\
+    if (startEvent.isDefaultPrevented()) return\n\
+\n\
+    if (actives && actives.length) {\n\
+      Plugin.call(actives, 'hide')\n\
+      activesData || actives.data('bs.collapse', null)\n\
+    }\n\
+\n\
+    var dimension = this.dimension()\n\
+\n\
+    this.$element\n\
+      .removeClass('collapse')\n\
+      .addClass('collapsing')[dimension](0)\n\
+      .attr('aria-expanded', true)\n\
+\n\
+    this.$trigger\n\
+      .removeClass('collapsed')\n\
+      .attr('aria-expanded', true)\n\
+\n\
+    this.transitioning = 1\n\
+\n\
+    var complete = function () {\n\
+      this.$element\n\
+        .removeClass('collapsing')\n\
+        .addClass('collapse in')[dimension]('')\n\
+      this.transitioning = 0\n\
+      this.$element\n\
+        .trigger('shown.bs.collapse')\n\
+    }\n\
+\n\
+    if (!$.support.transition) return complete.call(this)\n\
+\n\
+    var scrollSize = $.camelCase(['scroll', dimension].join('-'))\n\
+\n\
+    this.$element\n\
+      .one('bsTransitionEnd', $.proxy(complete, this))\n\
+      .emulateTransitionEnd(Collapse.TRANSITION_DURATION)[dimension](this.$element[0][scrollSize])\n\
+  }\n\
+\n\
+  Collapse.prototype.hide = function () {\n\
+    if (this.transitioning || !this.$element.hasClass('in')) return\n\
+\n\
+    var startEvent = $.Event('hide.bs.collapse')\n\
+    this.$element.trigger(startEvent)\n\
+    if (startEvent.isDefaultPrevented()) return\n\
+\n\
+    var dimension = this.dimension()\n\
+\n\
+    this.$element[dimension](this.$element[dimension]())[0].offsetHeight\n\
+\n\
+    this.$element\n\
+      .addClass('collapsing')\n\
+      .removeClass('collapse in')\n\
+      .attr('aria-expanded', false)\n\
+\n\
+    this.$trigger\n\
+      .addClass('collapsed')\n\
+      .attr('aria-expanded', false)\n\
+\n\
+    this.transitioning = 1\n\
+\n\
+    var complete = function () {\n\
+      this.transitioning = 0\n\
+      this.$element\n\
+        .removeClass('collapsing')\n\
+        .addClass('collapse')\n\
+        .trigger('hidden.bs.collapse')\n\
+    }\n\
+\n\
+    if (!$.support.transition) return complete.call(this)\n\
+\n\
+    this.$element\n\
+      [dimension](0)\n\
+      .one('bsTransitionEnd', $.proxy(complete, this))\n\
+      .emulateTransitionEnd(Collapse.TRANSITION_DURATION)\n\
+  }\n\
+\n\
+  Collapse.prototype.toggle = function () {\n\
+    this[this.$element.hasClass('in') ? 'hide' : 'show']()\n\
+  }\n\
+\n\
+  Collapse.prototype.getParent = function () {\n\
+    return $(this.options.parent)\n\
+      .find('[data-toggle=\"collapse\"][data-parent=\"' + this.options.parent + '\"]')\n\
+      .each($.proxy(function (i, element) {\n\
+        var $element = $(element)\n\
+        this.addAriaAndCollapsedClass(getTargetFromTrigger($element), $element)\n\
+      }, this))\n\
+      .end()\n\
+  }\n\
+\n\
+  Collapse.prototype.addAriaAndCollapsedClass = function ($element, $trigger) {\n\
+    var isOpen = $element.hasClass('in')\n\
+\n\
+    $element.attr('aria-expanded', isOpen)\n\
+    $trigger\n\
+      .toggleClass('collapsed', !isOpen)\n\
+      .attr('aria-expanded', isOpen)\n\
+  }\n\
+\n\
+  function getTargetFromTrigger($trigger) {\n\
+    var href\n\
+    var target = $trigger.attr('data-target')\n\
+      || (href = $trigger.attr('href')) && href.replace(/.*(?=#[^\\s]+$)/, '') // strip for ie7\n\
+\n\
+    return $(target)\n\
+  }\n\
+\n\
+\n\
+  // COLLAPSE PLUGIN DEFINITION\n\
+  // ==========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.collapse')\n\
+      var options = $.extend({}, Collapse.DEFAULTS, $this.data(), typeof option == 'object' && option)\n\
+\n\
+      if (!data && options.toggle && option == 'show') options.toggle = false\n\
+      if (!data) $this.data('bs.collapse', (data = new Collapse(this, options)))\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.collapse\n\
+\n\
+  $.fn.collapse             = Plugin\n\
+  $.fn.collapse.Constructor = Collapse\n\
+\n\
+\n\
+  // COLLAPSE NO CONFLICT\n\
+  // ====================\n\
+\n\
+  $.fn.collapse.noConflict = function () {\n\
+    $.fn.collapse = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // COLLAPSE DATA-API\n\
+  // =================\n\
+\n\
+  $(document).on('click.bs.collapse.data-api', '[data-toggle=\"collapse\"]', function (e) {\n\
+    var $this   = $(this)\n\
+\n\
+    if (!$this.attr('data-target')) e.preventDefault()\n\
+\n\
+    var $target = getTargetFromTrigger($this)\n\
+    var data    = $target.data('bs.collapse')\n\
+    var option  = data ? 'toggle' : $.extend({}, $this.data(), { trigger: this })\n\
+\n\
+    Plugin.call($target, option)\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: dropdown.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#dropdowns\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // DROPDOWN CLASS DEFINITION\n\
+  // =========================\n\
+\n\
+  var backdrop = '.dropdown-backdrop'\n\
+  var toggle   = '[data-toggle=\"dropdown\"]'\n\
+  var Dropdown = function (element) {\n\
+    $(element).on('click.bs.dropdown', this.toggle)\n\
+  }\n\
+\n\
+  Dropdown.VERSION = '3.3.1'\n\
+\n\
+  Dropdown.prototype.toggle = function (e) {\n\
+    var $this = $(this)\n\
+\n\
+    if ($this.is('.disabled, :disabled')) return\n\
+\n\
+    var $parent  = getParent($this)\n\
+    var isActive = $parent.hasClass('open')\n\
+\n\
+    clearMenus()\n\
+\n\
+    if (!isActive) {\n\
+      if ('ontouchstart' in document.documentElement && !$parent.closest('.navbar-nav').length) {\n\
+        // if mobile we use a backdrop because click events don't delegate\n\
+        $('<div class=\"dropdown-backdrop\"/>').insertAfter($(this)).on('click', clearMenus)\n\
+      }\n\
+\n\
+      var relatedTarget = { relatedTarget: this }\n\
+      $parent.trigger(e = $.Event('show.bs.dropdown', relatedTarget))\n\
+\n\
+      if (e.isDefaultPrevented()) return\n\
+\n\
+      $this\n\
+        .trigger('focus')\n\
+        .attr('aria-expanded', 'true')\n\
+\n\
+      $parent\n\
+        .toggleClass('open')\n\
+        .trigger('shown.bs.dropdown', relatedTarget)\n\
+    }\n\
+\n\
+    return false\n\
+  }\n\
+\n\
+  Dropdown.prototype.keydown = function (e) {\n\
+    if (!/(38|40|27|32)/.test(e.which) || /input|textarea/i.test(e.target.tagName)) return\n\
+\n\
+    var $this = $(this)\n\
+\n\
+    e.preventDefault()\n\
+    e.stopPropagation()\n\
+\n\
+    if ($this.is('.disabled, :disabled')) return\n\
+\n\
+    var $parent  = getParent($this)\n\
+    var isActive = $parent.hasClass('open')\n\
+\n\
+    if ((!isActive && e.which != 27) || (isActive && e.which == 27)) {\n\
+      if (e.which == 27) $parent.find(toggle).trigger('focus')\n\
+      return $this.trigger('click')\n\
+    }\n\
+\n\
+    var desc = ' li:not(.divider):visible a'\n\
+    var $items = $parent.find('[role=\"menu\"]' + desc + ', [role=\"listbox\"]' + desc)\n\
+\n\
+    if (!$items.length) return\n\
+\n\
+    var index = $items.index(e.target)\n\
+\n\
+    if (e.which == 38 && index > 0)                 index--                        // up\n\
+    if (e.which == 40 && index < $items.length - 1) index++                        // down\n\
+    if (!~index)                                      index = 0\n\
+\n\
+    $items.eq(index).trigger('focus')\n\
+  }\n\
+\n\
+  function clearMenus(e) {\n\
+    if (e && e.which === 3) return\n\
+    $(backdrop).remove()\n\
+    $(toggle).each(function () {\n\
+      var $this         = $(this)\n\
+      var $parent       = getParent($this)\n\
+      var relatedTarget = { relatedTarget: this }\n\
+\n\
+      if (!$parent.hasClass('open')) return\n\
+\n\
+      $parent.trigger(e = $.Event('hide.bs.dropdown', relatedTarget))\n\
+\n\
+      if (e.isDefaultPrevented()) return\n\
+\n\
+      $this.attr('aria-expanded', 'false')\n\
+      $parent.removeClass('open').trigger('hidden.bs.dropdown', relatedTarget)\n\
+    })\n\
+  }\n\
+\n\
+  function getParent($this) {\n\
+    var selector = $this.attr('data-target')\n\
+\n\
+    if (!selector) {\n\
+      selector = $this.attr('href')\n\
+      selector = selector && /#[A-Za-z]/.test(selector) && selector.replace(/.*(?=#[^\\s]*$)/, '') // strip for ie7\n\
+    }\n\
+\n\
+    var $parent = selector && $(selector)\n\
+\n\
+    return $parent && $parent.length ? $parent : $this.parent()\n\
+  }\n\
+\n\
+\n\
+  // DROPDOWN PLUGIN DEFINITION\n\
+  // ==========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this = $(this)\n\
+      var data  = $this.data('bs.dropdown')\n\
+\n\
+      if (!data) $this.data('bs.dropdown', (data = new Dropdown(this)))\n\
+      if (typeof option == 'string') data[option].call($this)\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.dropdown\n\
+\n\
+  $.fn.dropdown             = Plugin\n\
+  $.fn.dropdown.Constructor = Dropdown\n\
+\n\
+\n\
+  // DROPDOWN NO CONFLICT\n\
+  // ====================\n\
+\n\
+  $.fn.dropdown.noConflict = function () {\n\
+    $.fn.dropdown = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // APPLY TO STANDARD DROPDOWN ELEMENTS\n\
+  // ===================================\n\
+\n\
+  $(document)\n\
+    .on('click.bs.dropdown.data-api', clearMenus)\n\
+    .on('click.bs.dropdown.data-api', '.dropdown form', function (e) { e.stopPropagation() })\n\
+    .on('click.bs.dropdown.data-api', toggle, Dropdown.prototype.toggle)\n\
+    .on('keydown.bs.dropdown.data-api', toggle, Dropdown.prototype.keydown)\n\
+    .on('keydown.bs.dropdown.data-api', '[role=\"menu\"]', Dropdown.prototype.keydown)\n\
+    .on('keydown.bs.dropdown.data-api', '[role=\"listbox\"]', Dropdown.prototype.keydown)\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: modal.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#modals\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // MODAL CLASS DEFINITION\n\
+  // ======================\n\
+\n\
+  var Modal = function (element, options) {\n\
+    this.options        = options\n\
+    this.$body          = $(document.body)\n\
+    this.$element       = $(element)\n\
+    this.$backdrop      =\n\
+    this.isShown        = null\n\
+    this.scrollbarWidth = 0\n\
+\n\
+    if (this.options.remote) {\n\
+      this.$element\n\
+        .find('.modal-content')\n\
+        .load(this.options.remote, $.proxy(function () {\n\
+          this.$element.trigger('loaded.bs.modal')\n\
+        }, this))\n\
+    }\n\
+  }\n\
+\n\
+  Modal.VERSION  = '3.3.1'\n\
+\n\
+  Modal.TRANSITION_DURATION = 300\n\
+  Modal.BACKDROP_TRANSITION_DURATION = 150\n\
+\n\
+  Modal.DEFAULTS = {\n\
+    backdrop: true,\n\
+    keyboard: true,\n\
+    show: true\n\
+  }\n\
+\n\
+  Modal.prototype.toggle = function (_relatedTarget) {\n\
+    return this.isShown ? this.hide() : this.show(_relatedTarget)\n\
+  }\n\
+\n\
+  Modal.prototype.show = function (_relatedTarget) {\n\
+    var that = this\n\
+    var e    = $.Event('show.bs.modal', { relatedTarget: _relatedTarget })\n\
+\n\
+    this.$element.trigger(e)\n\
+\n\
+    if (this.isShown || e.isDefaultPrevented()) return\n\
+\n\
+    this.isShown = true\n\
+\n\
+    this.checkScrollbar()\n\
+    this.setScrollbar()\n\
+    this.$body.addClass('modal-open')\n\
+\n\
+    this.escape()\n\
+    this.resize()\n\
+\n\
+    this.$element.on('click.dismiss.bs.modal', '[data-dismiss=\"modal\"]', $.proxy(this.hide, this))\n\
+\n\
+    this.backdrop(function () {\n\
+      var transition = $.support.transition && that.$element.hasClass('fade')\n\
+\n\
+      if (!that.$element.parent().length) {\n\
+        that.$element.appendTo(that.$body) // don't move modals dom position\n\
+      }\n\
+\n\
+      that.$element\n\
+        .show()\n\
+        .scrollTop(0)\n\
+\n\
+      if (that.options.backdrop) that.adjustBackdrop()\n\
+      that.adjustDialog()\n\
+\n\
+      if (transition) {\n\
+        that.$element[0].offsetWidth // force reflow\n\
+      }\n\
+\n\
+      that.$element\n\
+        .addClass('in')\n\
+        .attr('aria-hidden', false)\n\
+\n\
+      that.enforceFocus()\n\
+\n\
+      var e = $.Event('shown.bs.modal', { relatedTarget: _relatedTarget })\n\
+\n\
+      transition ?\n\
+        that.$element.find('.modal-dialog') // wait for modal to slide in\n\
+          .one('bsTransitionEnd', function () {\n\
+            that.$element.trigger('focus').trigger(e)\n\
+          })\n\
+          .emulateTransitionEnd(Modal.TRANSITION_DURATION) :\n\
+        that.$element.trigger('focus').trigger(e)\n\
+    })\n\
+  }\n\
+\n\
+  Modal.prototype.hide = function (e) {\n\
+    if (e) e.preventDefault()\n\
+\n\
+    e = $.Event('hide.bs.modal')\n\
+\n\
+    this.$element.trigger(e)\n\
+\n\
+    if (!this.isShown || e.isDefaultPrevented()) return\n\
+\n\
+    this.isShown = false\n\
+\n\
+    this.escape()\n\
+    this.resize()\n\
+\n\
+    $(document).off('focusin.bs.modal')\n\
+\n\
+    this.$element\n\
+      .removeClass('in')\n\
+      .attr('aria-hidden', true)\n\
+      .off('click.dismiss.bs.modal')\n\
+\n\
+    $.support.transition && this.$element.hasClass('fade') ?\n\
+      this.$element\n\
+        .one('bsTransitionEnd', $.proxy(this.hideModal, this))\n\
+        .emulateTransitionEnd(Modal.TRANSITION_DURATION) :\n\
+      this.hideModal()\n\
+  }\n\
+\n\
+  Modal.prototype.enforceFocus = function () {\n\
+    $(document)\n\
+      .off('focusin.bs.modal') // guard against infinite focus loop\n\
+      .on('focusin.bs.modal', $.proxy(function (e) {\n\
+        if (this.$element[0] !== e.target && !this.$element.has(e.target).length) {\n\
+          this.$element.trigger('focus')\n\
+        }\n\
+      }, this))\n\
+  }\n\
+\n\
+  Modal.prototype.escape = function () {\n\
+    if (this.isShown && this.options.keyboard) {\n\
+      this.$element.on('keydown.dismiss.bs.modal', $.proxy(function (e) {\n\
+        e.which == 27 && this.hide()\n\
+      }, this))\n\
+    } else if (!this.isShown) {\n\
+      this.$element.off('keydown.dismiss.bs.modal')\n\
+    }\n\
+  }\n\
+\n\
+  Modal.prototype.resize = function () {\n\
+    if (this.isShown) {\n\
+      $(window).on('resize.bs.modal', $.proxy(this.handleUpdate, this))\n\
+    } else {\n\
+      $(window).off('resize.bs.modal')\n\
+    }\n\
+  }\n\
+\n\
+  Modal.prototype.hideModal = function () {\n\
+    var that = this\n\
+    this.$element.hide()\n\
+    this.backdrop(function () {\n\
+      that.$body.removeClass('modal-open')\n\
+      that.resetAdjustments()\n\
+      that.resetScrollbar()\n\
+      that.$element.trigger('hidden.bs.modal')\n\
+    })\n\
+  }\n\
+\n\
+  Modal.prototype.removeBackdrop = function () {\n\
+    this.$backdrop && this.$backdrop.remove()\n\
+    this.$backdrop = null\n\
+  }\n\
+\n\
+  Modal.prototype.backdrop = function (callback) {\n\
+    var that = this\n\
+    var animate = this.$element.hasClass('fade') ? 'fade' : ''\n\
+\n\
+    if (this.isShown && this.options.backdrop) {\n\
+      var doAnimate = $.support.transition && animate\n\
+\n\
+      this.$backdrop = $('<div class=\"modal-backdrop ' + animate + '\" />')\n\
+        .prependTo(this.$element)\n\
+        .on('click.dismiss.bs.modal', $.proxy(function (e) {\n\
+          if (e.target !== e.currentTarget) return\n\
+          this.options.backdrop == 'static'\n\
+            ? this.$element[0].focus.call(this.$element[0])\n\
+            : this.hide.call(this)\n\
+        }, this))\n\
+\n\
+      if (doAnimate) this.$backdrop[0].offsetWidth // force reflow\n\
+\n\
+      this.$backdrop.addClass('in')\n\
+\n\
+      if (!callback) return\n\
+\n\
+      doAnimate ?\n\
+        this.$backdrop\n\
+          .one('bsTransitionEnd', callback)\n\
+          .emulateTransitionEnd(Modal.BACKDROP_TRANSITION_DURATION) :\n\
+        callback()\n\
+\n\
+    } else if (!this.isShown && this.$backdrop) {\n\
+      this.$backdrop.removeClass('in')\n\
+\n\
+      var callbackRemove = function () {\n\
+        that.removeBackdrop()\n\
+        callback && callback()\n\
+      }\n\
+      $.support.transition && this.$element.hasClass('fade') ?\n\
+        this.$backdrop\n\
+          .one('bsTransitionEnd', callbackRemove)\n\
+          .emulateTransitionEnd(Modal.BACKDROP_TRANSITION_DURATION) :\n\
+        callbackRemove()\n\
+\n\
+    } else if (callback) {\n\
+      callback()\n\
+    }\n\
+  }\n\
+\n\
+  // these following methods are used to handle overflowing modals\n\
+\n\
+  Modal.prototype.handleUpdate = function () {\n\
+    if (this.options.backdrop) this.adjustBackdrop()\n\
+    this.adjustDialog()\n\
+  }\n\
+\n\
+  Modal.prototype.adjustBackdrop = function () {\n\
+    this.$backdrop\n\
+      .css('height', 0)\n\
+      .css('height', this.$element[0].scrollHeight)\n\
+  }\n\
+\n\
+  Modal.prototype.adjustDialog = function () {\n\
+    var modalIsOverflowing = this.$element[0].scrollHeight > document.documentElement.clientHeight\n\
+\n\
+    this.$element.css({\n\
+      paddingLeft:  !this.bodyIsOverflowing && modalIsOverflowing ? this.scrollbarWidth : '',\n\
+      paddingRight: this.bodyIsOverflowing && !modalIsOverflowing ? this.scrollbarWidth : ''\n\
+    })\n\
+  }\n\
+\n\
+  Modal.prototype.resetAdjustments = function () {\n\
+    this.$element.css({\n\
+      paddingLeft: '',\n\
+      paddingRight: ''\n\
+    })\n\
+  }\n\
+\n\
+  Modal.prototype.checkScrollbar = function () {\n\
+    this.bodyIsOverflowing = document.body.scrollHeight > document.documentElement.clientHeight\n\
+    this.scrollbarWidth = this.measureScrollbar()\n\
+  }\n\
+\n\
+  Modal.prototype.setScrollbar = function () {\n\
+    var bodyPad = parseInt((this.$body.css('padding-right') || 0), 10)\n\
+    if (this.bodyIsOverflowing) this.$body.css('padding-right', bodyPad + this.scrollbarWidth)\n\
+  }\n\
+\n\
+  Modal.prototype.resetScrollbar = function () {\n\
+    this.$body.css('padding-right', '')\n\
+  }\n\
+\n\
+  Modal.prototype.measureScrollbar = function () { // thx walsh\n\
+    var scrollDiv = document.createElement('div')\n\
+    scrollDiv.className = 'modal-scrollbar-measure'\n\
+    this.$body.append(scrollDiv)\n\
+    var scrollbarWidth = scrollDiv.offsetWidth - scrollDiv.clientWidth\n\
+    this.$body[0].removeChild(scrollDiv)\n\
+    return scrollbarWidth\n\
+  }\n\
+\n\
+\n\
+  // MODAL PLUGIN DEFINITION\n\
+  // =======================\n\
+\n\
+  function Plugin(option, _relatedTarget) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.modal')\n\
+      var options = $.extend({}, Modal.DEFAULTS, $this.data(), typeof option == 'object' && option)\n\
+\n\
+      if (!data) $this.data('bs.modal', (data = new Modal(this, options)))\n\
+      if (typeof option == 'string') data[option](_relatedTarget)\n\
+      else if (options.show) data.show(_relatedTarget)\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.modal\n\
+\n\
+  $.fn.modal             = Plugin\n\
+  $.fn.modal.Constructor = Modal\n\
+\n\
+\n\
+  // MODAL NO CONFLICT\n\
+  // =================\n\
+\n\
+  $.fn.modal.noConflict = function () {\n\
+    $.fn.modal = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // MODAL DATA-API\n\
+  // ==============\n\
+\n\
+  $(document).on('click.bs.modal.data-api', '[data-toggle=\"modal\"]', function (e) {\n\
+    var $this   = $(this)\n\
+    var href    = $this.attr('href')\n\
+    var $target = $($this.attr('data-target') || (href && href.replace(/.*(?=#[^\\s]+$)/, ''))) // strip for ie7\n\
+    var option  = $target.data('bs.modal') ? 'toggle' : $.extend({ remote: !/#/.test(href) && href }, $target.data(), $this.data())\n\
+\n\
+    if ($this.is('a')) e.preventDefault()\n\
+\n\
+    $target.one('show.bs.modal', function (showEvent) {\n\
+      if (showEvent.isDefaultPrevented()) return // only register focus restorer if modal will actually get shown\n\
+      $target.one('hidden.bs.modal', function () {\n\
+        $this.is(':visible') && $this.trigger('focus')\n\
+      })\n\
+    })\n\
+    Plugin.call($target, option, this)\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: tooltip.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#tooltip\n\
+ * Inspired by the original jQuery.tipsy by Jason Frame\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // TOOLTIP PUBLIC CLASS DEFINITION\n\
+  // ===============================\n\
+\n\
+  var Tooltip = function (element, options) {\n\
+    this.type       =\n\
+    this.options    =\n\
+    this.enabled    =\n\
+    this.timeout    =\n\
+    this.hoverState =\n\
+    this.$element   = null\n\
+\n\
+    this.init('tooltip', element, options)\n\
+  }\n\
+\n\
+  Tooltip.VERSION  = '3.3.1'\n\
+\n\
+  Tooltip.TRANSITION_DURATION = 150\n\
+\n\
+  Tooltip.DEFAULTS = {\n\
+    animation: true,\n\
+    placement: 'top',\n\
+    selector: false,\n\
+    template: '<div class=\"tooltip\" role=\"tooltip\"><div class=\"tooltip-arrow\"></div><div class=\"tooltip-inner\"></div></div>',\n\
+    trigger: 'hover focus',\n\
+    title: '',\n\
+    delay: 0,\n\
+    html: false,\n\
+    container: false,\n\
+    viewport: {\n\
+      selector: 'body',\n\
+      padding: 0\n\
+    }\n\
+  }\n\
+\n\
+  Tooltip.prototype.init = function (type, element, options) {\n\
+    this.enabled   = true\n\
+    this.type      = type\n\
+    this.$element  = $(element)\n\
+    this.options   = this.getOptions(options)\n\
+    this.$viewport = this.options.viewport && $(this.options.viewport.selector || this.options.viewport)\n\
+\n\
+    var triggers = this.options.trigger.split(' ')\n\
+\n\
+    for (var i = triggers.length; i--;) {\n\
+      var trigger = triggers[i]\n\
+\n\
+      if (trigger == 'click') {\n\
+        this.$element.on('click.' + this.type, this.options.selector, $.proxy(this.toggle, this))\n\
+      } else if (trigger != 'manual') {\n\
+        var eventIn  = trigger == 'hover' ? 'mouseenter' : 'focusin'\n\
+        var eventOut = trigger == 'hover' ? 'mouseleave' : 'focusout'\n\
+\n\
+        this.$element.on(eventIn  + '.' + this.type, this.options.selector, $.proxy(this.enter, this))\n\
+        this.$element.on(eventOut + '.' + this.type, this.options.selector, $.proxy(this.leave, this))\n\
+      }\n\
+    }\n\
+\n\
+    this.options.selector ?\n\
+      (this._options = $.extend({}, this.options, { trigger: 'manual', selector: '' })) :\n\
+      this.fixTitle()\n\
+  }\n\
+\n\
+  Tooltip.prototype.getDefaults = function () {\n\
+    return Tooltip.DEFAULTS\n\
+  }\n\
+\n\
+  Tooltip.prototype.getOptions = function (options) {\n\
+    options = $.extend({}, this.getDefaults(), this.$element.data(), options)\n\
+\n\
+    if (options.delay && typeof options.delay == 'number') {\n\
+      options.delay = {\n\
+        show: options.delay,\n\
+        hide: options.delay\n\
+      }\n\
+    }\n\
+\n\
+    return options\n\
+  }\n\
+\n\
+  Tooltip.prototype.getDelegateOptions = function () {\n\
+    var options  = {}\n\
+    var defaults = this.getDefaults()\n\
+\n\
+    this._options && $.each(this._options, function (key, value) {\n\
+      if (defaults[key] != value) options[key] = value\n\
+    })\n\
+\n\
+    return options\n\
+  }\n\
+\n\
+  Tooltip.prototype.enter = function (obj) {\n\
+    var self = obj instanceof this.constructor ?\n\
+      obj : $(obj.currentTarget).data('bs.' + this.type)\n\
+\n\
+    if (self && self.$tip && self.$tip.is(':visible')) {\n\
+      self.hoverState = 'in'\n\
+      return\n\
+    }\n\
+\n\
+    if (!self) {\n\
+      self = new this.constructor(obj.currentTarget, this.getDelegateOptions())\n\
+      $(obj.currentTarget).data('bs.' + this.type, self)\n\
+    }\n\
+\n\
+    clearTimeout(self.timeout)\n\
+\n\
+    self.hoverState = 'in'\n\
+\n\
+    if (!self.options.delay || !self.options.delay.show) return self.show()\n\
+\n\
+    self.timeout = setTimeout(function () {\n\
+      if (self.hoverState == 'in') self.show()\n\
+    }, self.options.delay.show)\n\
+  }\n\
+\n\
+  Tooltip.prototype.leave = function (obj) {\n\
+    var self = obj instanceof this.constructor ?\n\
+      obj : $(obj.currentTarget).data('bs.' + this.type)\n\
+\n\
+    if (!self) {\n\
+      self = new this.constructor(obj.currentTarget, this.getDelegateOptions())\n\
+      $(obj.currentTarget).data('bs.' + this.type, self)\n\
+    }\n\
+\n\
+    clearTimeout(self.timeout)\n\
+\n\
+    self.hoverState = 'out'\n\
+\n\
+    if (!self.options.delay || !self.options.delay.hide) return self.hide()\n\
+\n\
+    self.timeout = setTimeout(function () {\n\
+      if (self.hoverState == 'out') self.hide()\n\
+    }, self.options.delay.hide)\n\
+  }\n\
+\n\
+  Tooltip.prototype.show = function () {\n\
+    var e = $.Event('show.bs.' + this.type)\n\
+\n\
+    if (this.hasContent() && this.enabled) {\n\
+      this.$element.trigger(e)\n\
+\n\
+      var inDom = $.contains(this.$element[0].ownerDocument.documentElement, this.$element[0])\n\
+      if (e.isDefaultPrevented() || !inDom) return\n\
+      var that = this\n\
+\n\
+      var $tip = this.tip()\n\
+\n\
+      var tipId = this.getUID(this.type)\n\
+\n\
+      this.setContent()\n\
+      $tip.attr('id', tipId)\n\
+      this.$element.attr('aria-describedby', tipId)\n\
+\n\
+      if (this.options.animation) $tip.addClass('fade')\n\
+\n\
+      var placement = typeof this.options.placement == 'function' ?\n\
+        this.options.placement.call(this, $tip[0], this.$element[0]) :\n\
+        this.options.placement\n\
+\n\
+      var autoToken = /\\s?auto?\\s?/i\n\
+      var autoPlace = autoToken.test(placement)\n\
+      if (autoPlace) placement = placement.replace(autoToken, '') || 'top'\n\
+\n\
+      $tip\n\
+        .detach()\n\
+        .css({ top: 0, left: 0, display: 'block' })\n\
+        .addClass(placement)\n\
+        .data('bs.' + this.type, this)\n\
+\n\
+      this.options.container ? $tip.appendTo(this.options.container) : $tip.insertAfter(this.$element)\n\
+\n\
+      var pos          = this.getPosition()\n\
+      var actualWidth  = $tip[0].offsetWidth\n\
+      var actualHeight = $tip[0].offsetHeight\n\
+\n\
+      if (autoPlace) {\n\
+        var orgPlacement = placement\n\
+        var $container   = this.options.container ? $(this.options.container) : this.$element.parent()\n\
+        var containerDim = this.getPosition($container)\n\
+\n\
+        placement = placement == 'bottom' && pos.bottom + actualHeight > containerDim.bottom ? 'top'    :\n\
+                    placement == 'top'    && pos.top    - actualHeight < containerDim.top    ? 'bottom' :\n\
+                    placement == 'right'  && pos.right  + actualWidth  > containerDim.width  ? 'left'   :\n\
+                    placement == 'left'   && pos.left   - actualWidth  < containerDim.left   ? 'right'  :\n\
+                    placement\n\
+\n\
+        $tip\n\
+          .removeClass(orgPlacement)\n\
+          .addClass(placement)\n\
+      }\n\
+\n\
+      var calculatedOffset = this.getCalculatedOffset(placement, pos, actualWidth, actualHeight)\n\
+\n\
+      this.applyPlacement(calculatedOffset, placement)\n\
+\n\
+      var complete = function () {\n\
+        var prevHoverState = that.hoverState\n\
+        that.$element.trigger('shown.bs.' + that.type)\n\
+        that.hoverState = null\n\
+\n\
+        if (prevHoverState == 'out') that.leave(that)\n\
+      }\n\
+\n\
+      $.support.transition && this.$tip.hasClass('fade') ?\n\
+        $tip\n\
+          .one('bsTransitionEnd', complete)\n\
+          .emulateTransitionEnd(Tooltip.TRANSITION_DURATION) :\n\
+        complete()\n\
+    }\n\
+  }\n\
+\n\
+  Tooltip.prototype.applyPlacement = function (offset, placement) {\n\
+    var $tip   = this.tip()\n\
+    var width  = $tip[0].offsetWidth\n\
+    var height = $tip[0].offsetHeight\n\
+\n\
+    // manually read margins because getBoundingClientRect includes difference\n\
+    var marginTop = parseInt($tip.css('margin-top'), 10)\n\
+    var marginLeft = parseInt($tip.css('margin-left'), 10)\n\
+\n\
+    // we must check for NaN for ie 8/9\n\
+    if (isNaN(marginTop))  marginTop  = 0\n\
+    if (isNaN(marginLeft)) marginLeft = 0\n\
+\n\
+    offset.top  = offset.top  + marginTop\n\
+    offset.left = offset.left + marginLeft\n\
+\n\
+    // $.fn.offset doesn't round pixel values\n\
+    // so we use setOffset directly with our own function B-0\n\
+    $.offset.setOffset($tip[0], $.extend({\n\
+      using: function (props) {\n\
+        $tip.css({\n\
+          top: Math.round(props.top),\n\
+          left: Math.round(props.left)\n\
+        })\n\
+      }\n\
+    }, offset), 0)\n\
+\n\
+    $tip.addClass('in')\n\
+\n\
+    // check to see if placing tip in new offset caused the tip to resize itself\n\
+    var actualWidth  = $tip[0].offsetWidth\n\
+    var actualHeight = $tip[0].offsetHeight\n\
+\n\
+    if (placement == 'top' && actualHeight != height) {\n\
+      offset.top = offset.top + height - actualHeight\n\
+    }\n\
+\n\
+    var delta = this.getViewportAdjustedDelta(placement, offset, actualWidth, actualHeight)\n\
+\n\
+    if (delta.left) offset.left += delta.left\n\
+    else offset.top += delta.top\n\
+\n\
+    var isVertical          = /top|bottom/.test(placement)\n\
+    var arrowDelta          = isVertical ? delta.left * 2 - width + actualWidth : delta.top * 2 - height + actualHeight\n\
+    var arrowOffsetPosition = isVertical ? 'offsetWidth' : 'offsetHeight'\n\
+\n\
+    $tip.offset(offset)\n\
+    this.replaceArrow(arrowDelta, $tip[0][arrowOffsetPosition], isVertical)\n\
+  }\n\
+\n\
+  Tooltip.prototype.replaceArrow = function (delta, dimension, isHorizontal) {\n\
+    this.arrow()\n\
+      .css(isHorizontal ? 'left' : 'top', 50 * (1 - delta / dimension) + '%')\n\
+      .css(isHorizontal ? 'top' : 'left', '')\n\
+  }\n\
+\n\
+  Tooltip.prototype.setContent = function () {\n\
+    var $tip  = this.tip()\n\
+    var title = this.getTitle()\n\
+\n\
+    $tip.find('.tooltip-inner')[this.options.html ? 'html' : 'text'](title)\n\
+    $tip.removeClass('fade in top bottom left right')\n\
+  }\n\
+\n\
+  Tooltip.prototype.hide = function (callback) {\n\
+    var that = this\n\
+    var $tip = this.tip()\n\
+    var e    = $.Event('hide.bs.' + this.type)\n\
+\n\
+    function complete() {\n\
+      if (that.hoverState != 'in') $tip.detach()\n\
+      that.$element\n\
+        .removeAttr('aria-describedby')\n\
+        .trigger('hidden.bs.' + that.type)\n\
+      callback && callback()\n\
+    }\n\
+\n\
+    this.$element.trigger(e)\n\
+\n\
+    if (e.isDefaultPrevented()) return\n\
+\n\
+    $tip.removeClass('in')\n\
+\n\
+    $.support.transition && this.$tip.hasClass('fade') ?\n\
+      $tip\n\
+        .one('bsTransitionEnd', complete)\n\
+        .emulateTransitionEnd(Tooltip.TRANSITION_DURATION) :\n\
+      complete()\n\
+\n\
+    this.hoverState = null\n\
+\n\
+    return this\n\
+  }\n\
+\n\
+  Tooltip.prototype.fixTitle = function () {\n\
+    var $e = this.$element\n\
+    if ($e.attr('title') || typeof ($e.attr('data-original-title')) != 'string') {\n\
+      $e.attr('data-original-title', $e.attr('title') || '').attr('title', '')\n\
+    }\n\
+  }\n\
+\n\
+  Tooltip.prototype.hasContent = function () {\n\
+    return this.getTitle()\n\
+  }\n\
+\n\
+  Tooltip.prototype.getPosition = function ($element) {\n\
+    $element   = $element || this.$element\n\
+\n\
+    var el     = $element[0]\n\
+    var isBody = el.tagName == 'BODY'\n\
+\n\
+    var elRect    = el.getBoundingClientRect()\n\
+    if (elRect.width == null) {\n\
+      // width and height are missing in IE8, so compute them manually; see https://github.com/twbs/bootstrap/issues/14093\n\
+      elRect = $.extend({}, elRect, { width: elRect.right - elRect.left, height: elRect.bottom - elRect.top })\n\
+    }\n\
+    var elOffset  = isBody ? { top: 0, left: 0 } : $element.offset()\n\
+    var scroll    = { scroll: isBody ? document.documentElement.scrollTop || document.body.scrollTop : $element.scrollTop() }\n\
+    var outerDims = isBody ? { width: $(window).width(), height: $(window).height() } : null\n\
+\n\
+    return $.extend({}, elRect, scroll, outerDims, elOffset)\n\
+  }\n\
+\n\
+  Tooltip.prototype.getCalculatedOffset = function (placement, pos, actualWidth, actualHeight) {\n\
+    return placement == 'bottom' ? { top: pos.top + pos.height,   left: pos.left + pos.width / 2 - actualWidth / 2  } :\n\
+           placement == 'top'    ? { top: pos.top - actualHeight, left: pos.left + pos.width / 2 - actualWidth / 2  } :\n\
+           placement == 'left'   ? { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left - actualWidth } :\n\
+        /* placement == 'right' */ { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left + pos.width   }\n\
+\n\
+  }\n\
+\n\
+  Tooltip.prototype.getViewportAdjustedDelta = function (placement, pos, actualWidth, actualHeight) {\n\
+    var delta = { top: 0, left: 0 }\n\
+    if (!this.$viewport) return delta\n\
+\n\
+    var viewportPadding = this.options.viewport && this.options.viewport.padding || 0\n\
+    var viewportDimensions = this.getPosition(this.$viewport)\n\
+\n\
+    if (/right|left/.test(placement)) {\n\
+      var topEdgeOffset    = pos.top - viewportPadding - viewportDimensions.scroll\n\
+      var bottomEdgeOffset = pos.top + viewportPadding - viewportDimensions.scroll + actualHeight\n\
+      if (topEdgeOffset < viewportDimensions.top) { // top overflow\n\
+        delta.top = viewportDimensions.top - topEdgeOffset\n\
+      } else if (bottomEdgeOffset > viewportDimensions.top + viewportDimensions.height) { // bottom overflow\n\
+        delta.top = viewportDimensions.top + viewportDimensions.height - bottomEdgeOffset\n\
+      }\n\
+    } else {\n\
+      var leftEdgeOffset  = pos.left - viewportPadding\n\
+      var rightEdgeOffset = pos.left + viewportPadding + actualWidth\n\
+      if (leftEdgeOffset < viewportDimensions.left) { // left overflow\n\
+        delta.left = viewportDimensions.left - leftEdgeOffset\n\
+      } else if (rightEdgeOffset > viewportDimensions.width) { // right overflow\n\
+        delta.left = viewportDimensions.left + viewportDimensions.width - rightEdgeOffset\n\
+      }\n\
+    }\n\
+\n\
+    return delta\n\
+  }\n\
+\n\
+  Tooltip.prototype.getTitle = function () {\n\
+    var title\n\
+    var $e = this.$element\n\
+    var o  = this.options\n\
+\n\
+    title = $e.attr('data-original-title')\n\
+      || (typeof o.title == 'function' ? o.title.call($e[0]) :  o.title)\n\
+\n\
+    return title\n\
+  }\n\
+\n\
+  Tooltip.prototype.getUID = function (prefix) {\n\
+    do prefix += ~~(Math.random() * 1000000)\n\
+    while (document.getElementById(prefix))\n\
+    return prefix\n\
+  }\n\
+\n\
+  Tooltip.prototype.tip = function () {\n\
+    return (this.$tip = this.$tip || $(this.options.template))\n\
+  }\n\
+\n\
+  Tooltip.prototype.arrow = function () {\n\
+    return (this.$arrow = this.$arrow || this.tip().find('.tooltip-arrow'))\n\
+  }\n\
+\n\
+  Tooltip.prototype.enable = function () {\n\
+    this.enabled = true\n\
+  }\n\
+\n\
+  Tooltip.prototype.disable = function () {\n\
+    this.enabled = false\n\
+  }\n\
+\n\
+  Tooltip.prototype.toggleEnabled = function () {\n\
+    this.enabled = !this.enabled\n\
+  }\n\
+\n\
+  Tooltip.prototype.toggle = function (e) {\n\
+    var self = this\n\
+    if (e) {\n\
+      self = $(e.currentTarget).data('bs.' + this.type)\n\
+      if (!self) {\n\
+        self = new this.constructor(e.currentTarget, this.getDelegateOptions())\n\
+        $(e.currentTarget).data('bs.' + this.type, self)\n\
+      }\n\
+    }\n\
+\n\
+    self.tip().hasClass('in') ? self.leave(self) : self.enter(self)\n\
+  }\n\
+\n\
+  Tooltip.prototype.destroy = function () {\n\
+    var that = this\n\
+    clearTimeout(this.timeout)\n\
+    this.hide(function () {\n\
+      that.$element.off('.' + that.type).removeData('bs.' + that.type)\n\
+    })\n\
+  }\n\
+\n\
+\n\
+  // TOOLTIP PLUGIN DEFINITION\n\
+  // =========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this    = $(this)\n\
+      var data     = $this.data('bs.tooltip')\n\
+      var options  = typeof option == 'object' && option\n\
+      var selector = options && options.selector\n\
+\n\
+      if (!data && option == 'destroy') return\n\
+      if (selector) {\n\
+        if (!data) $this.data('bs.tooltip', (data = {}))\n\
+        if (!data[selector]) data[selector] = new Tooltip(this, options)\n\
+      } else {\n\
+        if (!data) $this.data('bs.tooltip', (data = new Tooltip(this, options)))\n\
+      }\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.tooltip\n\
+\n\
+  $.fn.tooltip             = Plugin\n\
+  $.fn.tooltip.Constructor = Tooltip\n\
+\n\
+\n\
+  // TOOLTIP NO CONFLICT\n\
+  // ===================\n\
+\n\
+  $.fn.tooltip.noConflict = function () {\n\
+    $.fn.tooltip = old\n\
+    return this\n\
+  }\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: popover.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#popovers\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // POPOVER PUBLIC CLASS DEFINITION\n\
+  // ===============================\n\
+\n\
+  var Popover = function (element, options) {\n\
+    this.init('popover', element, options)\n\
+  }\n\
+\n\
+  if (!$.fn.tooltip) throw new Error('Popover requires tooltip.js')\n\
+\n\
+  Popover.VERSION  = '3.3.1'\n\
+\n\
+  Popover.DEFAULTS = $.extend({}, $.fn.tooltip.Constructor.DEFAULTS, {\n\
+    placement: 'right',\n\
+    trigger: 'click',\n\
+    content: '',\n\
+    template: '<div class=\"popover\" role=\"tooltip\"><div class=\"arrow\"></div><h3 class=\"popover-title\"></h3><div class=\"popover-content\"></div></div>'\n\
+  })\n\
+\n\
+\n\
+  // NOTE: POPOVER EXTENDS tooltip.js\n\
+  // ================================\n\
+\n\
+  Popover.prototype = $.extend({}, $.fn.tooltip.Constructor.prototype)\n\
+\n\
+  Popover.prototype.constructor = Popover\n\
+\n\
+  Popover.prototype.getDefaults = function () {\n\
+    return Popover.DEFAULTS\n\
+  }\n\
+\n\
+  Popover.prototype.setContent = function () {\n\
+    var $tip    = this.tip()\n\
+    var title   = this.getTitle()\n\
+    var content = this.getContent()\n\
+\n\
+    $tip.find('.popover-title')[this.options.html ? 'html' : 'text'](title)\n\
+    $tip.find('.popover-content').children().detach().end()[ // we use append for html objects to maintain js events\n\
+      this.options.html ? (typeof content == 'string' ? 'html' : 'append') : 'text'\n\
+    ](content)\n\
+\n\
+    $tip.removeClass('fade top bottom left right in')\n\
+\n\
+    // IE8 doesn't accept hiding via the `:empty` pseudo selector, we have to do\n\
+    // this manually by checking the contents.\n\
+    if (!$tip.find('.popover-title').html()) $tip.find('.popover-title').hide()\n\
+  }\n\
+\n\
+  Popover.prototype.hasContent = function () {\n\
+    return this.getTitle() || this.getContent()\n\
+  }\n\
+\n\
+  Popover.prototype.getContent = function () {\n\
+    var $e = this.$element\n\
+    var o  = this.options\n\
+\n\
+    return $e.attr('data-content')\n\
+      || (typeof o.content == 'function' ?\n\
+            o.content.call($e[0]) :\n\
+            o.content)\n\
+  }\n\
+\n\
+  Popover.prototype.arrow = function () {\n\
+    return (this.$arrow = this.$arrow || this.tip().find('.arrow'))\n\
+  }\n\
+\n\
+  Popover.prototype.tip = function () {\n\
+    if (!this.$tip) this.$tip = $(this.options.template)\n\
+    return this.$tip\n\
+  }\n\
+\n\
+\n\
+  // POPOVER PLUGIN DEFINITION\n\
+  // =========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this    = $(this)\n\
+      var data     = $this.data('bs.popover')\n\
+      var options  = typeof option == 'object' && option\n\
+      var selector = options && options.selector\n\
+\n\
+      if (!data && option == 'destroy') return\n\
+      if (selector) {\n\
+        if (!data) $this.data('bs.popover', (data = {}))\n\
+        if (!data[selector]) data[selector] = new Popover(this, options)\n\
+      } else {\n\
+        if (!data) $this.data('bs.popover', (data = new Popover(this, options)))\n\
+      }\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.popover\n\
+\n\
+  $.fn.popover             = Plugin\n\
+  $.fn.popover.Constructor = Popover\n\
+\n\
+\n\
+  // POPOVER NO CONFLICT\n\
+  // ===================\n\
+\n\
+  $.fn.popover.noConflict = function () {\n\
+    $.fn.popover = old\n\
+    return this\n\
+  }\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: scrollspy.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#scrollspy\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // SCROLLSPY CLASS DEFINITION\n\
+  // ==========================\n\
+\n\
+  function ScrollSpy(element, options) {\n\
+    var process  = $.proxy(this.process, this)\n\
+\n\
+    this.$body          = $('body')\n\
+    this.$scrollElement = $(element).is('body') ? $(window) : $(element)\n\
+    this.options        = $.extend({}, ScrollSpy.DEFAULTS, options)\n\
+    this.selector       = (this.options.target || '') + ' .nav li > a'\n\
+    this.offsets        = []\n\
+    this.targets        = []\n\
+    this.activeTarget   = null\n\
+    this.scrollHeight   = 0\n\
+\n\
+    this.$scrollElement.on('scroll.bs.scrollspy', process)\n\
+    this.refresh()\n\
+    this.process()\n\
+  }\n\
+\n\
+  ScrollSpy.VERSION  = '3.3.1'\n\
+\n\
+  ScrollSpy.DEFAULTS = {\n\
+    offset: 10\n\
+  }\n\
+\n\
+  ScrollSpy.prototype.getScrollHeight = function () {\n\
+    return this.$scrollElement[0].scrollHeight || Math.max(this.$body[0].scrollHeight, document.documentElement.scrollHeight)\n\
+  }\n\
+\n\
+  ScrollSpy.prototype.refresh = function () {\n\
+    var offsetMethod = 'offset'\n\
+    var offsetBase   = 0\n\
+\n\
+    if (!$.isWindow(this.$scrollElement[0])) {\n\
+      offsetMethod = 'position'\n\
+      offsetBase   = this.$scrollElement.scrollTop()\n\
+    }\n\
+\n\
+    this.offsets = []\n\
+    this.targets = []\n\
+    this.scrollHeight = this.getScrollHeight()\n\
+\n\
+    var self     = this\n\
+\n\
+    this.$body\n\
+      .find(this.selector)\n\
+      .map(function () {\n\
+        var $el   = $(this)\n\
+        var href  = $el.data('target') || $el.attr('href')\n\
+        var $href = /^#./.test(href) && $(href)\n\
+\n\
+        return ($href\n\
+          && $href.length\n\
+          && $href.is(':visible')\n\
+          && [[$href[offsetMethod]().top + offsetBase, href]]) || null\n\
+      })\n\
+      .sort(function (a, b) { return a[0] - b[0] })\n\
+      .each(function () {\n\
+        self.offsets.push(this[0])\n\
+        self.targets.push(this[1])\n\
+      })\n\
+  }\n\
+\n\
+  ScrollSpy.prototype.process = function () {\n\
+    var scrollTop    = this.$scrollElement.scrollTop() + this.options.offset\n\
+    var scrollHeight = this.getScrollHeight()\n\
+    var maxScroll    = this.options.offset + scrollHeight - this.$scrollElement.height()\n\
+    var offsets      = this.offsets\n\
+    var targets      = this.targets\n\
+    var activeTarget = this.activeTarget\n\
+    var i\n\
+\n\
+    if (this.scrollHeight != scrollHeight) {\n\
+      this.refresh()\n\
+    }\n\
+\n\
+    if (scrollTop >= maxScroll) {\n\
+      return activeTarget != (i = targets[targets.length - 1]) && this.activate(i)\n\
+    }\n\
+\n\
+    if (activeTarget && scrollTop < offsets[0]) {\n\
+      this.activeTarget = null\n\
+      return this.clear()\n\
+    }\n\
+\n\
+    for (i = offsets.length; i--;) {\n\
+      activeTarget != targets[i]\n\
+        && scrollTop >= offsets[i]\n\
+        && (!offsets[i + 1] || scrollTop <= offsets[i + 1])\n\
+        && this.activate(targets[i])\n\
+    }\n\
+  }\n\
+\n\
+  ScrollSpy.prototype.activate = function (target) {\n\
+    this.activeTarget = target\n\
+\n\
+    this.clear()\n\
+\n\
+    var selector = this.selector +\n\
+        '[data-target=\"' + target + '\"],' +\n\
+        this.selector + '[href=\"' + target + '\"]'\n\
+\n\
+    var active = $(selector)\n\
+      .parents('li')\n\
+      .addClass('active')\n\
+\n\
+    if (active.parent('.dropdown-menu').length) {\n\
+      active = active\n\
+        .closest('li.dropdown')\n\
+        .addClass('active')\n\
+    }\n\
+\n\
+    active.trigger('activate.bs.scrollspy')\n\
+  }\n\
+\n\
+  ScrollSpy.prototype.clear = function () {\n\
+    $(this.selector)\n\
+      .parentsUntil(this.options.target, '.active')\n\
+      .removeClass('active')\n\
+  }\n\
+\n\
+\n\
+  // SCROLLSPY PLUGIN DEFINITION\n\
+  // ===========================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.scrollspy')\n\
+      var options = typeof option == 'object' && option\n\
+\n\
+      if (!data) $this.data('bs.scrollspy', (data = new ScrollSpy(this, options)))\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.scrollspy\n\
+\n\
+  $.fn.scrollspy             = Plugin\n\
+  $.fn.scrollspy.Constructor = ScrollSpy\n\
+\n\
+\n\
+  // SCROLLSPY NO CONFLICT\n\
+  // =====================\n\
+\n\
+  $.fn.scrollspy.noConflict = function () {\n\
+    $.fn.scrollspy = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // SCROLLSPY DATA-API\n\
+  // ==================\n\
+\n\
+  $(window).on('load.bs.scrollspy.data-api', function () {\n\
+    $('[data-spy=\"scroll\"]').each(function () {\n\
+      var $spy = $(this)\n\
+      Plugin.call($spy, $spy.data())\n\
+    })\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: tab.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#tabs\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // TAB CLASS DEFINITION\n\
+  // ====================\n\
+\n\
+  var Tab = function (element) {\n\
+    this.element = $(element)\n\
+  }\n\
+\n\
+  Tab.VERSION = '3.3.1'\n\
+\n\
+  Tab.TRANSITION_DURATION = 150\n\
+\n\
+  Tab.prototype.show = function () {\n\
+    var $this    = this.element\n\
+    var $ul      = $this.closest('ul:not(.dropdown-menu)')\n\
+    var selector = $this.data('target')\n\
+\n\
+    if (!selector) {\n\
+      selector = $this.attr('href')\n\
+      selector = selector && selector.replace(/.*(?=#[^\\s]*$)/, '') // strip for ie7\n\
+    }\n\
+\n\
+    if ($this.parent('li').hasClass('active')) return\n\
+\n\
+    var $previous = $ul.find('.active:last a')\n\
+    var hideEvent = $.Event('hide.bs.tab', {\n\
+      relatedTarget: $this[0]\n\
+    })\n\
+    var showEvent = $.Event('show.bs.tab', {\n\
+      relatedTarget: $previous[0]\n\
+    })\n\
+\n\
+    $previous.trigger(hideEvent)\n\
+    $this.trigger(showEvent)\n\
+\n\
+    if (showEvent.isDefaultPrevented() || hideEvent.isDefaultPrevented()) return\n\
+\n\
+    var $target = $(selector)\n\
+\n\
+    this.activate($this.closest('li'), $ul)\n\
+    this.activate($target, $target.parent(), function () {\n\
+      $previous.trigger({\n\
+        type: 'hidden.bs.tab',\n\
+        relatedTarget: $this[0]\n\
+      })\n\
+      $this.trigger({\n\
+        type: 'shown.bs.tab',\n\
+        relatedTarget: $previous[0]\n\
+      })\n\
+    })\n\
+  }\n\
+\n\
+  Tab.prototype.activate = function (element, container, callback) {\n\
+    var $active    = container.find('> .active')\n\
+    var transition = callback\n\
+      && $.support.transition\n\
+      && (($active.length && $active.hasClass('fade')) || !!container.find('> .fade').length)\n\
+\n\
+    function next() {\n\
+      $active\n\
+        .removeClass('active')\n\
+        .find('> .dropdown-menu > .active')\n\
+          .removeClass('active')\n\
+        .end()\n\
+        .find('[data-toggle=\"tab\"]')\n\
+          .attr('aria-expanded', false)\n\
+\n\
+      element\n\
+        .addClass('active')\n\
+        .find('[data-toggle=\"tab\"]')\n\
+          .attr('aria-expanded', true)\n\
+\n\
+      if (transition) {\n\
+        element[0].offsetWidth // reflow for transition\n\
+        element.addClass('in')\n\
+      } else {\n\
+        element.removeClass('fade')\n\
+      }\n\
+\n\
+      if (element.parent('.dropdown-menu')) {\n\
+        element\n\
+          .closest('li.dropdown')\n\
+            .addClass('active')\n\
+          .end()\n\
+          .find('[data-toggle=\"tab\"]')\n\
+            .attr('aria-expanded', true)\n\
+      }\n\
+\n\
+      callback && callback()\n\
+    }\n\
+\n\
+    $active.length && transition ?\n\
+      $active\n\
+        .one('bsTransitionEnd', next)\n\
+        .emulateTransitionEnd(Tab.TRANSITION_DURATION) :\n\
+      next()\n\
+\n\
+    $active.removeClass('in')\n\
+  }\n\
+\n\
+\n\
+  // TAB PLUGIN DEFINITION\n\
+  // =====================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this = $(this)\n\
+      var data  = $this.data('bs.tab')\n\
+\n\
+      if (!data) $this.data('bs.tab', (data = new Tab(this)))\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.tab\n\
+\n\
+  $.fn.tab             = Plugin\n\
+  $.fn.tab.Constructor = Tab\n\
+\n\
+\n\
+  // TAB NO CONFLICT\n\
+  // ===============\n\
+\n\
+  $.fn.tab.noConflict = function () {\n\
+    $.fn.tab = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // TAB DATA-API\n\
+  // ============\n\
+\n\
+  var clickHandler = function (e) {\n\
+    e.preventDefault()\n\
+    Plugin.call($(this), 'show')\n\
+  }\n\
+\n\
+  $(document)\n\
+    .on('click.bs.tab.data-api', '[data-toggle=\"tab\"]', clickHandler)\n\
+    .on('click.bs.tab.data-api', '[data-toggle=\"pill\"]', clickHandler)\n\
+\n\
+}(jQuery);\n\
+\n\
+/* ========================================================================\n\
+ * Bootstrap: affix.js v3.3.1\n\
+ * http://getbootstrap.com/javascript/#affix\n\
+ * ========================================================================\n\
+ * Copyright 2011-2014 Twitter, Inc.\n\
+ * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)\n\
+ * ======================================================================== */\n\
+\n\
+\n\
++function ($) {\n\
+  'use strict';\n\
+\n\
+  // AFFIX CLASS DEFINITION\n\
+  // ======================\n\
+\n\
+  var Affix = function (element, options) {\n\
+    this.options = $.extend({}, Affix.DEFAULTS, options)\n\
+\n\
+    this.$target = $(this.options.target)\n\
+      .on('scroll.bs.affix.data-api', $.proxy(this.checkPosition, this))\n\
+      .on('click.bs.affix.data-api',  $.proxy(this.checkPositionWithEventLoop, this))\n\
+\n\
+    this.$element     = $(element)\n\
+    this.affixed      =\n\
+    this.unpin        =\n\
+    this.pinnedOffset = null\n\
+\n\
+    this.checkPosition()\n\
+  }\n\
+\n\
+  Affix.VERSION  = '3.3.1'\n\
+\n\
+  Affix.RESET    = 'affix affix-top affix-bottom'\n\
+\n\
+  Affix.DEFAULTS = {\n\
+    offset: 0,\n\
+    target: window\n\
+  }\n\
+\n\
+  Affix.prototype.getState = function (scrollHeight, height, offsetTop, offsetBottom) {\n\
+    var scrollTop    = this.$target.scrollTop()\n\
+    var position     = this.$element.offset()\n\
+    var targetHeight = this.$target.height()\n\
+\n\
+    if (offsetTop != null && this.affixed == 'top') return scrollTop < offsetTop ? 'top' : false\n\
+\n\
+    if (this.affixed == 'bottom') {\n\
+      if (offsetTop != null) return (scrollTop + this.unpin <= position.top) ? false : 'bottom'\n\
+      return (scrollTop + targetHeight <= scrollHeight - offsetBottom) ? false : 'bottom'\n\
+    }\n\
+\n\
+    var initializing   = this.affixed == null\n\
+    var colliderTop    = initializing ? scrollTop : position.top\n\
+    var colliderHeight = initializing ? targetHeight : height\n\
+\n\
+    if (offsetTop != null && colliderTop <= offsetTop) return 'top'\n\
+    if (offsetBottom != null && (colliderTop + colliderHeight >= scrollHeight - offsetBottom)) return 'bottom'\n\
+\n\
+    return false\n\
+  }\n\
+\n\
+  Affix.prototype.getPinnedOffset = function () {\n\
+    if (this.pinnedOffset) return this.pinnedOffset\n\
+    this.$element.removeClass(Affix.RESET).addClass('affix')\n\
+    var scrollTop = this.$target.scrollTop()\n\
+    var position  = this.$element.offset()\n\
+    return (this.pinnedOffset = position.top - scrollTop)\n\
+  }\n\
+\n\
+  Affix.prototype.checkPositionWithEventLoop = function () {\n\
+    setTimeout($.proxy(this.checkPosition, this), 1)\n\
+  }\n\
+\n\
+  Affix.prototype.checkPosition = function () {\n\
+    if (!this.$element.is(':visible')) return\n\
+\n\
+    var height       = this.$element.height()\n\
+    var offset       = this.options.offset\n\
+    var offsetTop    = offset.top\n\
+    var offsetBottom = offset.bottom\n\
+    var scrollHeight = $('body').height()\n\
+\n\
+    if (typeof offset != 'object')         offsetBottom = offsetTop = offset\n\
+    if (typeof offsetTop == 'function')    offsetTop    = offset.top(this.$element)\n\
+    if (typeof offsetBottom == 'function') offsetBottom = offset.bottom(this.$element)\n\
+\n\
+    var affix = this.getState(scrollHeight, height, offsetTop, offsetBottom)\n\
+\n\
+    if (this.affixed != affix) {\n\
+      if (this.unpin != null) this.$element.css('top', '')\n\
+\n\
+      var affixType = 'affix' + (affix ? '-' + affix : '')\n\
+      var e         = $.Event(affixType + '.bs.affix')\n\
+\n\
+      this.$element.trigger(e)\n\
+\n\
+      if (e.isDefaultPrevented()) return\n\
+\n\
+      this.affixed = affix\n\
+      this.unpin = affix == 'bottom' ? this.getPinnedOffset() : null\n\
+\n\
+      this.$element\n\
+        .removeClass(Affix.RESET)\n\
+        .addClass(affixType)\n\
+        .trigger(affixType.replace('affix', 'affixed') + '.bs.affix')\n\
+    }\n\
+\n\
+    if (affix == 'bottom') {\n\
+      this.$element.offset({\n\
+        top: scrollHeight - height - offsetBottom\n\
+      })\n\
+    }\n\
+  }\n\
+\n\
+\n\
+  // AFFIX PLUGIN DEFINITION\n\
+  // =======================\n\
+\n\
+  function Plugin(option) {\n\
+    return this.each(function () {\n\
+      var $this   = $(this)\n\
+      var data    = $this.data('bs.affix')\n\
+      var options = typeof option == 'object' && option\n\
+\n\
+      if (!data) $this.data('bs.affix', (data = new Affix(this, options)))\n\
+      if (typeof option == 'string') data[option]()\n\
+    })\n\
+  }\n\
+\n\
+  var old = $.fn.affix\n\
+\n\
+  $.fn.affix             = Plugin\n\
+  $.fn.affix.Constructor = Affix\n\
+\n\
+\n\
+  // AFFIX NO CONFLICT\n\
+  // =================\n\
+\n\
+  $.fn.affix.noConflict = function () {\n\
+    $.fn.affix = old\n\
+    return this\n\
+  }\n\
+\n\
+\n\
+  // AFFIX DATA-API\n\
+  // ==============\n\
+\n\
+  $(window).on('load', function () {\n\
+    $('[data-spy=\"affix\"]').each(function () {\n\
+      var $spy = $(this)\n\
+      var data = $spy.data()\n\
+\n\
+      data.offset = data.offset || {}\n\
+\n\
+      if (data.offsetBottom != null) data.offset.bottom = data.offsetBottom\n\
+      if (data.offsetTop    != null) data.offset.top    = data.offsetTop\n\
+\n\
+      Plugin.call($spy, data)\n\
+    })\n\
+  })\n\
+\n\
+}(jQuery);\n\
+\n\
+//# sourceURL=components/components/bootstrap/3.3.1/js/bootstrap.js"
 ));
-require.register("leaflet.label/leaflet.label-src.js", Function("exports, require, module",
+
+require.modules["components-bootstrap"] = require.modules["components~bootstrap@3.3.1"];
+require.modules["components~bootstrap"] = require.modules["components~bootstrap@3.3.1"];
+require.modules["bootstrap"] = require.modules["components~bootstrap@3.3.1"];
+
+
+require.register("./local/leaflet.label", Function("exports, module",
 "/*\n\
 \tLeaflet.label, a plugin that adds labels to markers and vectors for Leaflet powered maps.\n\
 \t(c) 2012-2013, Jacob Toye, Smartrak\n\
@@ -20329,9 +23842,14 @@ L.FeatureGroup.include({\n\
 \t}\n\
 });\n\
 \n\
-}(this, document));//@ sourceURL=leaflet.label/leaflet.label-src.js"
+}(this, document));\n\
+//# sourceURL=local/leaflet.label/leaflet.label-src.js"
 ));
-require.register("handlebars/handlebars-v1.1.2.js", Function("exports, require, module",
+
+require.modules["leaflet.label"] = require.modules["./local/leaflet.label"];
+
+
+require.register("./local/handlebars", Function("exports, module",
 "/*!\n\
 \n\
  handlebars v1.1.2\n\
@@ -22963,9 +26481,14 @@ var __module0__ = (function(__dependency1__, __dependency2__, __dependency3__, _
   return __module0__;\n\
 })();\n\
 \n\
-module.exports = Handlebars;//@ sourceURL=handlebars/handlebars-v1.1.2.js"
+module.exports = Handlebars;\n\
+//# sourceURL=local/handlebars/handlebars-v1.1.2.js"
 ));
-require.register("raphael/raphael.js", Function("exports, require, module",
+
+require.modules["handlebars"] = require.modules["./local/handlebars"];
+
+
+require.register("./local/raphael", Function("exports, module",
 "// ┌────────────────────────────────────────────────────────────────────┐ \\\\\n\
 // │ Raphaël 2.1.2 - JavaScript Vector Library                          │ \\\\\n\
 // ├────────────────────────────────────────────────────────────────────┤ \\\\\n\
@@ -31093,26 +34616,16 @@ You are running Rapha\\xebl \" + this.version;\n\
 \n\
     return R;\n\
 }));\n\
-//@ sourceURL=raphael/raphael.js"
-));
-require.register("bootstrap/js/bootstrap.min.js", Function("exports, require, module",
-"/*!\n\
- * Bootstrap v3.0.0\n\
- *\n\
- * Copyright 2013 Twitter, Inc\n\
- * Licensed under the Apache License v2.0\n\
- * http://www.apache.org/licenses/LICENSE-2.0\n\
- *\n\
- * Designed and built with all the love in the world @twitter by @mdo and @fat.\n\
- */\n\
 \n\
-+function(a){\"use strict\";var b='[data-dismiss=\"alert\"]',c=function(c){a(c).on(\"click\",b,this.close)};c.prototype.close=function(b){function f(){e.trigger(\"closed.bs.alert\").remove()}var c=a(this),d=c.attr(\"data-target\");d||(d=c.attr(\"href\"),d=d&&d.replace(/.*(?=#[^\\s]*$)/,\"\"));var e=a(d);b&&b.preventDefault(),e.length||(e=c.hasClass(\"alert\")?c:c.parent()),e.trigger(b=a.Event(\"close.bs.alert\"));if(b.isDefaultPrevented())return;e.removeClass(\"in\"),a.support.transition&&e.hasClass(\"fade\")?e.one(a.support.transition.end,f).emulateTransitionEnd(150):f()};var d=a.fn.alert;a.fn.alert=function(b){return this.each(function(){var d=a(this),e=d.data(\"bs.alert\");e||d.data(\"bs.alert\",e=new c(this)),typeof b==\"string\"&&e[b].call(d)})},a.fn.alert.Constructor=c,a.fn.alert.noConflict=function(){return a.fn.alert=d,this},a(document).on(\"click.bs.alert.data-api\",b,c.prototype.close)}(window.jQuery),+function(a){\"use strict\";var b=function(c,d){this.$element=a(c),this.options=a.extend({},b.DEFAULTS,d)};b.DEFAULTS={loadingText:\"loading...\"},b.prototype.setState=function(a){var b=\"disabled\",c=this.$element,d=c.is(\"input\")?\"val\":\"html\",e=c.data();a+=\"Text\",e.resetText||c.data(\"resetText\",c[d]()),c[d](e[a]||this.options[a]),setTimeout(function(){a==\"loadingText\"?c.addClass(b).attr(b,b):c.removeClass(b).removeAttr(b)},0)},b.prototype.toggle=function(){var a=this.$element.closest('[data-toggle=\"buttons\"]');if(a.length){var b=this.$element.find(\"input\").prop(\"checked\",!this.$element.hasClass(\"active\")).trigger(\"change\");b.prop(\"type\")===\"radio\"&&a.find(\".active\").removeClass(\"active\")}this.$element.toggleClass(\"active\")};var c=a.fn.button;a.fn.button=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.button\"),f=typeof c==\"object\"&&c;e||d.data(\"bs.button\",e=new b(this,f)),c==\"toggle\"?e.toggle():c&&e.setState(c)})},a.fn.button.Constructor=b,a.fn.button.noConflict=function(){return a.fn.button=c,this},a(document).on(\"click.bs.button.data-api\",\"[data-toggle^=button]\",function(b){var c=a(b.target);c.hasClass(\"btn\")||(c=c.closest(\".btn\")),c.button(\"toggle\"),b.preventDefault()})}(window.jQuery),+function(a){\"use strict\";var b=function(b,c){this.$element=a(b),this.$indicators=this.$element.find(\".carousel-indicators\"),this.options=c,this.paused=this.sliding=this.interval=this.$active=this.$items=null,this.options.pause==\"hover\"&&this.$element.on(\"mouseenter\",a.proxy(this.pause,this)).on(\"mouseleave\",a.proxy(this.cycle,this))};b.DEFAULTS={interval:5e3,pause:\"hover\",wrap:!0},b.prototype.cycle=function(b){return b||(this.paused=!1),this.interval&&clearInterval(this.interval),this.options.interval&&!this.paused&&(this.interval=setInterval(a.proxy(this.next,this),this.options.interval)),this},b.prototype.getActiveIndex=function(){return this.$active=this.$element.find(\".item.active\"),this.$items=this.$active.parent().children(),this.$items.index(this.$active)},b.prototype.to=function(b){var c=this,d=this.getActiveIndex();if(b>this.$items.length-1||b<0)return;return this.sliding?this.$element.one(\"slid\",function(){c.to(b)}):d==b?this.pause().cycle():this.slide(b>d?\"next\":\"prev\",a(this.$items[b]))},b.prototype.pause=function(b){return b||(this.paused=!0),this.$element.find(\".next, .prev\").length&&a.support.transition.end&&(this.$element.trigger(a.support.transition.end),this.cycle(!0)),this.interval=clearInterval(this.interval),this},b.prototype.next=function(){if(this.sliding)return;return this.slide(\"next\")},b.prototype.prev=function(){if(this.sliding)return;return this.slide(\"prev\")},b.prototype.slide=function(b,c){var d=this.$element.find(\".item.active\"),e=c||d[b](),f=this.interval,g=b==\"next\"?\"left\":\"right\",h=b==\"next\"?\"first\":\"last\",i=this;if(!e.length){if(!this.options.wrap)return;e=this.$element.find(\".item\")[h]()}this.sliding=!0,f&&this.pause();var j=a.Event(\"slide.bs.carousel\",{relatedTarget:e[0],direction:g});if(e.hasClass(\"active\"))return;this.$indicators.length&&(this.$indicators.find(\".active\").removeClass(\"active\"),this.$element.one(\"slid\",function(){var b=a(i.$indicators.children()[i.getActiveIndex()]);b&&b.addClass(\"active\")}));if(a.support.transition&&this.$element.hasClass(\"slide\")){this.$element.trigger(j);if(j.isDefaultPrevented())return;e.addClass(b),e[0].offsetWidth,d.addClass(g),e.addClass(g),d.one(a.support.transition.end,function(){e.removeClass([b,g].join(\" \")).addClass(\"active\"),d.removeClass([\"active\",g].join(\" \")),i.sliding=!1,setTimeout(function(){i.$element.trigger(\"slid\")},0)}).emulateTransitionEnd(600)}else{this.$element.trigger(j);if(j.isDefaultPrevented())return;d.removeClass(\"active\"),e.addClass(\"active\"),this.sliding=!1,this.$element.trigger(\"slid\")}return f&&this.cycle(),this};var c=a.fn.carousel;a.fn.carousel=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.carousel\"),f=a.extend({},b.DEFAULTS,d.data(),typeof c==\"object\"&&c),g=typeof c==\"string\"?c:f.slide;e||d.data(\"bs.carousel\",e=new b(this,f)),typeof c==\"number\"?e.to(c):g?e[g]():f.interval&&e.pause().cycle()})},a.fn.carousel.Constructor=b,a.fn.carousel.noConflict=function(){return a.fn.carousel=c,this},a(document).on(\"click.bs.carousel.data-api\",\"[data-slide], [data-slide-to]\",function(b){var c=a(this),d,e=a(c.attr(\"data-target\")||(d=c.attr(\"href\"))&&d.replace(/.*(?=#[^\\s]+$)/,\"\")),f=a.extend({},e.data(),c.data()),g=c.attr(\"data-slide-to\");g&&(f.interval=!1),e.carousel(f),(g=c.attr(\"data-slide-to\"))&&e.data(\"bs.carousel\").to(g),b.preventDefault()}),a(window).on(\"load\",function(){a('[data-ride=\"carousel\"]').each(function(){var b=a(this);b.carousel(b.data())})})}(window.jQuery),+function(a){function e(){a(b).remove(),a(c).each(function(b){var c=f(a(this));if(!c.hasClass(\"open\"))return;c.trigger(b=a.Event(\"hide.bs.dropdown\"));if(b.isDefaultPrevented())return;c.removeClass(\"open\").trigger(\"hidden.bs.dropdown\")})}function f(b){var c=b.attr(\"data-target\");c||(c=b.attr(\"href\"),c=c&&/#/.test(c)&&c.replace(/.*(?=#[^\\s]*$)/,\"\"));var d=c&&a(c);return d&&d.length?d:b.parent()}\"use strict\";var b=\".dropdown-backdrop\",c=\"[data-toggle=dropdown]\",d=function(b){var c=a(b).on(\"click.bs.dropdown\",this.toggle)};d.prototype.toggle=function(b){var c=a(this);if(c.is(\".disabled, :disabled\"))return;var d=f(c),g=d.hasClass(\"open\");e();if(!g){\"ontouchstart\"in document.documentElement&&!d.closest(\".navbar-nav\").length&&a('<div class=\"dropdown-backdrop\"/>').insertAfter(a(this)).on(\"click\",e),d.trigger(b=a.Event(\"show.bs.dropdown\"));if(b.isDefaultPrevented())return;d.toggleClass(\"open\").trigger(\"shown.bs.dropdown\"),c.focus()}return!1},d.prototype.keydown=function(b){if(!/(38|40|27)/.test(b.keyCode))return;var d=a(this);b.preventDefault(),b.stopPropagation();if(d.is(\".disabled, :disabled\"))return;var e=f(d),g=e.hasClass(\"open\");if(!g||g&&b.keyCode==27)return b.which==27&&e.find(c).focus(),d.click();var h=a(\"[role=menu] li:not(.divider):visible a\",e);if(!h.length)return;var i=h.index(h.filter(\":focus\"));b.keyCode==38&&i>0&&i--,b.keyCode==40&&i<h.length-1&&i++,~i||(i=0),h.eq(i).focus()};var g=a.fn.dropdown;a.fn.dropdown=function(b){return this.each(function(){var c=a(this),e=c.data(\"dropdown\");e||c.data(\"dropdown\",e=new d(this)),typeof b==\"string\"&&e[b].call(c)})},a.fn.dropdown.Constructor=d,a.fn.dropdown.noConflict=function(){return a.fn.dropdown=g,this},a(document).on(\"click.bs.dropdown.data-api\",e).on(\"click.bs.dropdown.data-api\",\".dropdown form\",function(a){a.stopPropagation()}).on(\"click.bs.dropdown.data-api\",c,d.prototype.toggle).on(\"keydown.bs.dropdown.data-api\",c+\", [role=menu]\",d.prototype.keydown)}(window.jQuery),+function(a){\"use strict\";var b=function(b,c){this.options=c,this.$element=a(b),this.$backdrop=this.isShown=null,this.options.remote&&this.$element.load(this.options.remote)};b.DEFAULTS={backdrop:!0,keyboard:!0,show:!0},b.prototype.toggle=function(a){return this[this.isShown?\"hide\":\"show\"](a)},b.prototype.show=function(b){var c=this,d=a.Event(\"show.bs.modal\",{relatedTarget:b});this.$element.trigger(d);if(this.isShown||d.isDefaultPrevented())return;this.isShown=!0,this.escape(),this.$element.on(\"click.dismiss.modal\",'[data-dismiss=\"modal\"]',a.proxy(this.hide,this)),this.backdrop(function(){var d=a.support.transition&&c.$element.hasClass(\"fade\");c.$element.parent().length||c.$element.appendTo(document.body),c.$element.show(),d&&c.$element[0].offsetWidth,c.$element.addClass(\"in\").attr(\"aria-hidden\",!1),c.enforceFocus();var e=a.Event(\"shown.bs.modal\",{relatedTarget:b});d?c.$element.find(\".modal-dialog\").one(a.support.transition.end,function(){c.$element.focus().trigger(e)}).emulateTransitionEnd(300):c.$element.focus().trigger(e)})},b.prototype.hide=function(b){b&&b.preventDefault(),b=a.Event(\"hide.bs.modal\"),this.$element.trigger(b);if(!this.isShown||b.isDefaultPrevented())return;this.isShown=!1,this.escape(),a(document).off(\"focusin.bs.modal\"),this.$element.removeClass(\"in\").attr(\"aria-hidden\",!0).off(\"click.dismiss.modal\"),a.support.transition&&this.$element.hasClass(\"fade\")?this.$element.one(a.support.transition.end,a.proxy(this.hideModal,this)).emulateTransitionEnd(300):this.hideModal()},b.prototype.enforceFocus=function(){a(document).off(\"focusin.bs.modal\").on(\"focusin.bs.modal\",a.proxy(function(a){this.$element[0]!==a.target&&!this.$element.has(a.target).length&&this.$element.focus()},this))},b.prototype.escape=function(){this.isShown&&this.options.keyboard?this.$element.on(\"keyup.dismiss.bs.modal\",a.proxy(function(a){a.which==27&&this.hide()},this)):this.isShown||this.$element.off(\"keyup.dismiss.bs.modal\")},b.prototype.hideModal=function(){var a=this;this.$element.hide(),this.backdrop(function(){a.removeBackdrop(),a.$element.trigger(\"hidden.bs.modal\")})},b.prototype.removeBackdrop=function(){this.$backdrop&&this.$backdrop.remove(),this.$backdrop=null},b.prototype.backdrop=function(b){var c=this,d=this.$element.hasClass(\"fade\")?\"fade\":\"\";if(this.isShown&&this.options.backdrop){var e=a.support.transition&&d;this.$backdrop=a('<div class=\"modal-backdrop '+d+'\" />').appendTo(document.body),this.$element.on(\"click.dismiss.modal\",a.proxy(function(a){if(a.target!==a.currentTarget)return;this.options.backdrop==\"static\"?this.$element[0].focus.call(this.$element[0]):this.hide.call(this)},this)),e&&this.$backdrop[0].offsetWidth,this.$backdrop.addClass(\"in\");if(!b)return;e?this.$backdrop.one(a.support.transition.end,b).emulateTransitionEnd(150):b()}else!this.isShown&&this.$backdrop?(this.$backdrop.removeClass(\"in\"),a.support.transition&&this.$element.hasClass(\"fade\")?this.$backdrop.one(a.support.transition.end,b).emulateTransitionEnd(150):b()):b&&b()};var c=a.fn.modal;a.fn.modal=function(c,d){return this.each(function(){var e=a(this),f=e.data(\"bs.modal\"),g=a.extend({},b.DEFAULTS,e.data(),typeof c==\"object\"&&c);f||e.data(\"bs.modal\",f=new b(this,g)),typeof c==\"string\"?f[c](d):g.show&&f.show(d)})},a.fn.modal.Constructor=b,a.fn.modal.noConflict=function(){return a.fn.modal=c,this},a(document).on(\"click.bs.modal.data-api\",'[data-toggle=\"modal\"]',function(b){var c=a(this),d=c.attr(\"href\"),e=a(c.attr(\"data-target\")||d&&d.replace(/.*(?=#[^\\s]+$)/,\"\")),f=e.data(\"modal\")?\"toggle\":a.extend({remote:!/#/.test(d)&&d},e.data(),c.data());b.preventDefault(),e.modal(f,this).one(\"hide\",function(){c.is(\":visible\")&&c.focus()})}),a(document).on(\"show.bs.modal\",\".modal\",function(){a(document.body).addClass(\"modal-open\")}).on(\"hidden.bs.modal\",\".modal\",function(){a(document.body).removeClass(\"modal-open\")})}(window.jQuery),+function(a){\"use strict\";var b=function(a,b){this.type=this.options=this.enabled=this.timeout=this.hoverState=this.$element=null,this.init(\"tooltip\",a,b)};b.DEFAULTS={animation:!0,placement:\"top\",selector:!1,template:'<div class=\"tooltip\"><div class=\"tooltip-arrow\"></div><div class=\"tooltip-inner\"></div></div>',trigger:\"hover focus\",title:\"\",delay:0,html:!1,container:!1},b.prototype.init=function(b,c,d){this.enabled=!0,this.type=b,this.$element=a(c),this.options=this.getOptions(d);var e=this.options.trigger.split(\" \");for(var f=e.length;f--;){var g=e[f];if(g==\"click\")this.$element.on(\"click.\"+this.type,this.options.selector,a.proxy(this.toggle,this));else if(g!=\"manual\"){var h=g==\"hover\"?\"mouseenter\":\"focus\",i=g==\"hover\"?\"mouseleave\":\"blur\";this.$element.on(h+\".\"+this.type,this.options.selector,a.proxy(this.enter,this)),this.$element.on(i+\".\"+this.type,this.options.selector,a.proxy(this.leave,this))}}this.options.selector?this._options=a.extend({},this.options,{trigger:\"manual\",selector:\"\"}):this.fixTitle()},b.prototype.getDefaults=function(){return b.DEFAULTS},b.prototype.getOptions=function(b){return b=a.extend({},this.getDefaults(),this.$element.data(),b),b.delay&&typeof b.delay==\"number\"&&(b.delay={show:b.delay,hide:b.delay}),b},b.prototype.getDelegateOptions=function(){var b={},c=this.getDefaults();return this._options&&a.each(this._options,function(a,d){c[a]!=d&&(b[a]=d)}),b},b.prototype.enter=function(b){var c=b instanceof this.constructor?b:a(b.currentTarget)[this.type](this.getDelegateOptions()).data(\"bs.\"+this.type);clearTimeout(c.timeout),c.hoverState=\"in\";if(!c.options.delay||!c.options.delay.show)return c.show();c.timeout=setTimeout(function(){c.hoverState==\"in\"&&c.show()},c.options.delay.show)},b.prototype.leave=function(b){var c=b instanceof this.constructor?b:a(b.currentTarget)[this.type](this.getDelegateOptions()).data(\"bs.\"+this.type);clearTimeout(c.timeout),c.hoverState=\"out\";if(!c.options.delay||!c.options.delay.hide)return c.hide();c.timeout=setTimeout(function(){c.hoverState==\"out\"&&c.hide()},c.options.delay.hide)},b.prototype.show=function(){var b=a.Event(\"show.bs.\"+this.type);if(this.hasContent()&&this.enabled){this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.tip();this.setContent(),this.options.animation&&c.addClass(\"fade\");var d=typeof this.options.placement==\"function\"?this.options.placement.call(this,c[0],this.$element[0]):this.options.placement,e=/\\s?auto?\\s?/i,f=e.test(d);f&&(d=d.replace(e,\"\")||\"top\"),c.detach().css({top:0,left:0,display:\"block\"}).addClass(d),this.options.container?c.appendTo(this.options.container):c.insertAfter(this.$element);var g=this.getPosition(),h=c[0].offsetWidth,i=c[0].offsetHeight;if(f){var j=this.$element.parent(),k=d,l=document.documentElement.scrollTop||document.body.scrollTop,m=this.options.container==\"body\"?window.innerWidth:j.outerWidth(),n=this.options.container==\"body\"?window.innerHeight:j.outerHeight(),o=this.options.container==\"body\"?0:j.offset().left;d=d==\"bottom\"&&g.top+g.height+i-l>n?\"top\":d==\"top\"&&g.top-l-i<0?\"bottom\":d==\"right\"&&g.right+h>m?\"left\":d==\"left\"&&g.left-h<o?\"right\":d,c.removeClass(k).addClass(d)}var p=this.getCalculatedOffset(d,g,h,i);this.applyPlacement(p,d),this.$element.trigger(\"shown.bs.\"+this.type)}},b.prototype.applyPlacement=function(a,b){var c,d=this.tip(),e=d[0].offsetWidth,f=d[0].offsetHeight,g=parseInt(d.css(\"margin-top\"),10),h=parseInt(d.css(\"margin-left\"),10);isNaN(g)&&(g=0),isNaN(h)&&(h=0),a.top=a.top+g,a.left=a.left+h,d.offset(a).addClass(\"in\");var i=d[0].offsetWidth,j=d[0].offsetHeight;b==\"top\"&&j!=f&&(c=!0,a.top=a.top+f-j);if(/bottom|top/.test(b)){var k=0;a.left<0&&(k=a.left*-2,a.left=0,d.offset(a),i=d[0].offsetWidth,j=d[0].offsetHeight),this.replaceArrow(k-e+i,i,\"left\")}else this.replaceArrow(j-f,j,\"top\");c&&d.offset(a)},b.prototype.replaceArrow=function(a,b,c){this.arrow().css(c,a?50*(1-a/b)+\"%\":\"\")},b.prototype.setContent=function(){var a=this.tip(),b=this.getTitle();a.find(\".tooltip-inner\")[this.options.html?\"html\":\"text\"](b),a.removeClass(\"fade in top bottom left right\")},b.prototype.hide=function(){function e(){b.hoverState!=\"in\"&&c.detach()}var b=this,c=this.tip(),d=a.Event(\"hide.bs.\"+this.type);this.$element.trigger(d);if(d.isDefaultPrevented())return;return c.removeClass(\"in\"),a.support.transition&&this.$tip.hasClass(\"fade\")?c.one(a.support.transition.end,e).emulateTransitionEnd(150):e(),this.$element.trigger(\"hidden.bs.\"+this.type),this},b.prototype.fixTitle=function(){var a=this.$element;(a.attr(\"title\")||typeof a.attr(\"data-original-title\")!=\"string\")&&a.attr(\"data-original-title\",a.attr(\"title\")||\"\").attr(\"title\",\"\")},b.prototype.hasContent=function(){return this.getTitle()},b.prototype.getPosition=function(){var b=this.$element[0];return a.extend({},typeof b.getBoundingClientRect==\"function\"?b.getBoundingClientRect():{width:b.offsetWidth,height:b.offsetHeight},this.$element.offset())},b.prototype.getCalculatedOffset=function(a,b,c,d){return a==\"bottom\"?{top:b.top+b.height,left:b.left+b.width/2-c/2}:a==\"top\"?{top:b.top-d,left:b.left+b.width/2-c/2}:a==\"left\"?{top:b.top+b.height/2-d/2,left:b.left-c}:{top:b.top+b.height/2-d/2,left:b.left+b.width}},b.prototype.getTitle=function(){var a,b=this.$element,c=this.options;return a=b.attr(\"data-original-title\")||(typeof c.title==\"function\"?c.title.call(b[0]):c.title),a},b.prototype.tip=function(){return this.$tip=this.$tip||a(this.options.template)},b.prototype.arrow=function(){return this.$arrow=this.$arrow||this.tip().find(\".tooltip-arrow\")},b.prototype.validate=function(){this.$element[0].parentNode||(this.hide(),this.$element=null,this.options=null)},b.prototype.enable=function(){this.enabled=!0},b.prototype.disable=function(){this.enabled=!1},b.prototype.toggleEnabled=function(){this.enabled=!this.enabled},b.prototype.toggle=function(b){var c=b?a(b.currentTarget)[this.type](this.getDelegateOptions()).data(\"bs.\"+this.type):this;c.tip().hasClass(\"in\")?c.leave(c):c.enter(c)},b.prototype.destroy=function(){this.hide().$element.off(\".\"+this.type).removeData(\"bs.\"+this.type)};var c=a.fn.tooltip;a.fn.tooltip=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.tooltip\"),f=typeof c==\"object\"&&c;e||d.data(\"bs.tooltip\",e=new b(this,f)),typeof c==\"string\"&&e[c]()})},a.fn.tooltip.Constructor=b,a.fn.tooltip.noConflict=function(){return a.fn.tooltip=c,this}}(window.jQuery),+function(a){\"use strict\";var b=function(a,b){this.init(\"popover\",a,b)};if(!a.fn.tooltip)throw new Error(\"Popover requires tooltip.js\");b.DEFAULTS=a.extend({},a.fn.tooltip.Constructor.DEFAULTS,{placement:\"right\",trigger:\"click\",content:\"\",template:'<div class=\"popover\"><div class=\"arrow\"></div><h3 class=\"popover-title\"></h3><div class=\"popover-content\"></div></div>'}),b.prototype=a.extend({},a.fn.tooltip.Constructor.prototype),b.prototype.constructor=b,b.prototype.getDefaults=function(){return b.DEFAULTS},b.prototype.setContent=function(){var a=this.tip(),b=this.getTitle(),c=this.getContent();a.find(\".popover-title\")[this.options.html?\"html\":\"text\"](b),a.find(\".popover-content\")[this.options.html?\"html\":\"text\"](c),a.removeClass(\"fade top bottom left right in\"),a.find(\".popover-title\").html()||a.find(\".popover-title\").hide()},b.prototype.hasContent=function(){return this.getTitle()||this.getContent()},b.prototype.getContent=function(){var a=this.$element,b=this.options;return a.attr(\"data-content\")||(typeof b.content==\"function\"?b.content.call(a[0]):b.content)},b.prototype.arrow=function(){return this.$arrow=this.$arrow||this.tip().find(\".arrow\")},b.prototype.tip=function(){return this.$tip||(this.$tip=a(this.options.template)),this.$tip};var c=a.fn.popover;a.fn.popover=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.popover\"),f=typeof c==\"object\"&&c;e||d.data(\"bs.popover\",e=new b(this,f)),typeof c==\"string\"&&e[c]()})},a.fn.popover.Constructor=b,a.fn.popover.noConflict=function(){return a.fn.popover=c,this}}(window.jQuery),+function(a){\"use strict\";var b=function(b){this.element=a(b)};b.prototype.show=function(){var b=this.element,c=b.closest(\"ul:not(.dropdown-menu)\"),d=b.attr(\"data-target\");d||(d=b.attr(\"href\"),d=d&&d.replace(/.*(?=#[^\\s]*$)/,\"\"));if(b.parent(\"li\").hasClass(\"active\"))return;var e=c.find(\".active:last a\")[0],f=a.Event(\"show.bs.tab\",{relatedTarget:e});b.trigger(f);if(f.isDefaultPrevented())return;var g=a(d);this.activate(b.parent(\"li\"),c),this.activate(g,g.parent(),function(){b.trigger({type:\"shown.bs.tab\",relatedTarget:e})})},b.prototype.activate=function(b,c,d){function g(){e.removeClass(\"active\").find(\"> .dropdown-menu > .active\").removeClass(\"active\"),b.addClass(\"active\"),f?(b[0].offsetWidth,b.addClass(\"in\")):b.removeClass(\"fade\"),b.parent(\".dropdown-menu\")&&b.closest(\"li.dropdown\").addClass(\"active\"),d&&d()}var e=c.find(\"> .active\"),f=d&&a.support.transition&&e.hasClass(\"fade\");f?e.one(a.support.transition.end,g).emulateTransitionEnd(150):g(),e.removeClass(\"in\")};var c=a.fn.tab;a.fn.tab=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.tab\");e||d.data(\"bs.tab\",e=new b(this)),typeof c==\"string\"&&e[c]()})},a.fn.tab.Constructor=b,a.fn.tab.noConflict=function(){return a.fn.tab=c,this},a(document).on(\"click.bs.tab.data-api\",'[data-toggle=\"tab\"], [data-toggle=\"pill\"]',function(b){b.preventDefault(),a(this).tab(\"show\")})}(window.jQuery),+function(a){\"use strict\";var b=function(c,d){this.options=a.extend({},b.DEFAULTS,d),this.$window=a(window).on(\"scroll.bs.affix.data-api\",a.proxy(this.checkPosition,this)).on(\"click.bs.affix.data-api\",a.proxy(this.checkPositionWithEventLoop,this)),this.$element=a(c),this.affixed=this.unpin=null,this.checkPosition()};b.RESET=\"affix affix-top affix-bottom\",b.DEFAULTS={offset:0},b.prototype.checkPositionWithEventLoop=function(){setTimeout(a.proxy(this.checkPosition,this),1)},b.prototype.checkPosition=function(){if(!this.$element.is(\":visible\"))return;var c=a(document).height(),d=this.$window.scrollTop(),e=this.$element.offset(),f=this.options.offset,g=f.top,h=f.bottom;typeof f!=\"object\"&&(h=g=f),typeof g==\"function\"&&(g=f.top()),typeof h==\"function\"&&(h=f.bottom());var i=this.unpin!=null&&d+this.unpin<=e.top?!1:h!=null&&e.top+this.$element.height()>=c-h?\"bottom\":g!=null&&d<=g?\"top\":!1;if(this.affixed===i)return;this.unpin&&this.$element.css(\"top\",\"\"),this.affixed=i,this.unpin=i==\"bottom\"?e.top-d:null,this.$element.removeClass(b.RESET).addClass(\"affix\"+(i?\"-\"+i:\"\")),i==\"bottom\"&&this.$element.offset({top:document.body.offsetHeight-h-this.$element.height()})};var c=a.fn.affix;a.fn.affix=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.affix\"),f=typeof c==\"object\"&&c;e||d.data(\"bs.affix\",e=new b(this,f)),typeof c==\"string\"&&e[c]()})},a.fn.affix.Constructor=b,a.fn.affix.noConflict=function(){return a.fn.affix=c,this},a(window).on(\"load\",function(){a('[data-spy=\"affix\"]').each(function(){var b=a(this),c=b.data();c.offset=c.offset||{},c.offsetBottom&&(c.offset.bottom=c.offsetBottom),c.offsetTop&&(c.offset.top=c.offsetTop),b.affix(c)})})}(window.jQuery),+function(a){\"use strict\";var b=function(c,d){this.$element=a(c),this.options=a.extend({},b.DEFAULTS,d),this.transitioning=null,this.options.parent&&(this.$parent=a(this.options.parent)),this.options.toggle&&this.toggle()};b.DEFAULTS={toggle:!0},b.prototype.dimension=function(){var a=this.$element.hasClass(\"width\");return a?\"width\":\"height\"},b.prototype.show=function(){if(this.transitioning||this.$element.hasClass(\"in\"))return;var b=a.Event(\"show.bs.collapse\");this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.$parent&&this.$parent.find(\"> .panel > .in\");if(c&&c.length){var d=c.data(\"bs.collapse\");if(d&&d.transitioning)return;c.collapse(\"hide\"),d||c.data(\"bs.collapse\",null)}var e=this.dimension();this.$element.removeClass(\"collapse\").addClass(\"collapsing\")[e](0),this.transitioning=1;var f=function(){this.$element.removeClass(\"collapsing\").addClass(\"in\")[e](\"auto\"),this.transitioning=0,this.$element.trigger(\"shown.bs.collapse\")};if(!a.support.transition)return f.call(this);var g=a.camelCase([\"scroll\",e].join(\"-\"));this.$element.one(a.support.transition.end,a.proxy(f,this)).emulateTransitionEnd(350)[e](this.$element[0][g])},b.prototype.hide=function(){if(this.transitioning||!this.$element.hasClass(\"in\"))return;var b=a.Event(\"hide.bs.collapse\");this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.dimension();this.$element[c](this.$element[c]())[0].offsetHeight,this.$element.addClass(\"collapsing\").removeClass(\"collapse\").removeClass(\"in\"),this.transitioning=1;var d=function(){this.transitioning=0,this.$element.trigger(\"hidden.bs.collapse\").removeClass(\"collapsing\").addClass(\"collapse\")};if(!a.support.transition)return d.call(this);this.$element[c](0).one(a.support.transition.end,a.proxy(d,this)).emulateTransitionEnd(350)},b.prototype.toggle=function(){this[this.$element.hasClass(\"in\")?\"hide\":\"show\"]()};var c=a.fn.collapse;a.fn.collapse=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.collapse\"),f=a.extend({},b.DEFAULTS,d.data(),typeof c==\"object\"&&c);e||d.data(\"bs.collapse\",e=new b(this,f)),typeof c==\"string\"&&e[c]()})},a.fn.collapse.Constructor=b,a.fn.collapse.noConflict=function(){return a.fn.collapse=c,this},a(document).on(\"click.bs.collapse.data-api\",\"[data-toggle=collapse]\",function(b){var c=a(this),d,e=c.attr(\"data-target\")||b.preventDefault()||(d=c.attr(\"href\"))&&d.replace(/.*(?=#[^\\s]+$)/,\"\"),f=a(e),g=f.data(\"bs.collapse\"),h=g?\"toggle\":c.data(),i=c.attr(\"data-parent\"),j=i&&a(i);if(!g||!g.transitioning)j&&j.find('[data-toggle=collapse][data-parent=\"'+i+'\"]').not(c).addClass(\"collapsed\"),c[f.hasClass(\"in\")?\"addClass\":\"removeClass\"](\"collapsed\");f.collapse(h)})}(window.jQuery),+function(a){function b(c,d){var e,f=a.proxy(this.process,this);this.$element=a(c).is(\"body\")?a(window):a(c),this.$body=a(\"body\"),this.$scrollElement=this.$element.on(\"scroll.bs.scroll-spy.data-api\",f),this.options=a.extend({},b.DEFAULTS,d),this.selector=(this.options.target||(e=a(c).attr(\"href\"))&&e.replace(/.*(?=#[^\\s]+$)/,\"\")||\"\")+\" .nav li > a\",this.offsets=a([]),this.targets=a([]),this.activeTarget=null,this.refresh(),this.process()}\"use strict\",b.DEFAULTS={offset:10},b.prototype.refresh=function(){var b=this.$element[0]==window?\"offset\":\"position\";this.offsets=a([]),this.targets=a([]);var c=this,d=this.$body.find(this.selector).map(function(){var d=a(this),e=d.data(\"target\")||d.attr(\"href\"),f=/^#\\w/.test(e)&&a(e);return f&&f.length&&[[f[b]().top+(!a.isWindow(c.$scrollElement.get(0))&&c.$scrollElement.scrollTop()),e]]||null}).sort(function(a,b){return a[0]-b[0]}).each(function(){c.offsets.push(this[0]),c.targets.push(this[1])})},b.prototype.process=function(){var a=this.$scrollElement.scrollTop()+this.options.offset,b=this.$scrollElement[0].scrollHeight||this.$body[0].scrollHeight,c=b-this.$scrollElement.height(),d=this.offsets,e=this.targets,f=this.activeTarget,g;if(a>=c)return f!=(g=e.last()[0])&&this.activate(g);for(g=d.length;g--;)f!=e[g]&&a>=d[g]&&(!d[g+1]||a<=d[g+1])&&this.activate(e[g])},b.prototype.activate=function(b){this.activeTarget=b,a(this.selector).parents(\".active\").removeClass(\"active\");var c=this.selector+'[data-target=\"'+b+'\"],'+this.selector+'[href=\"'+b+'\"]',d=a(c).parents(\"li\").addClass(\"active\");d.parent(\".dropdown-menu\").length&&(d=d.closest(\"li.dropdown\").addClass(\"active\")),d.trigger(\"activate\")};var c=a.fn.scrollspy;a.fn.scrollspy=function(c){return this.each(function(){var d=a(this),e=d.data(\"bs.scrollspy\"),f=typeof c==\"object\"&&c;e||d.data(\"bs.scrollspy\",e=new b(this,f)),typeof c==\"string\"&&e[c]()})},a.fn.scrollspy.Constructor=b,a.fn.scrollspy.noConflict=function(){return a.fn.scrollspy=c,this},a(window).on(\"load\",function(){a('[data-spy=\"scroll\"]').each(function(){var b=a(this);b.scrollspy(b.data())})})}(window.jQuery),+function(a){function b(){var a=document.createElement(\"bootstrap\"),b={WebkitTransition:\"webkitTransitionEnd\",MozTransition:\"transitionend\",OTransition:\"oTransitionEnd otransitionend\",transition:\"transitionend\"};for(var c in b)if(a.style[c]!==undefined)return{end:b[c]}}\"use strict\",a.fn.emulateTransitionEnd=function(b){var c=!1,d=this;a(this).one(a.support.transition.end,function(){c=!0});var e=function(){c||a(d).trigger(a.support.transition.end)};return setTimeout(e,b),this},a(function(){a.support.transition=b()})}(window.jQuery)//@ sourceURL=bootstrap/js/bootstrap.min.js"
+//# sourceURL=local/raphael/raphael.js"
 ));
-require.register("datetimepicker/bootstrap-datetimepicker.js", Function("exports, require, module",
-"var moment = require('moment');\n\
-\n\
-/*\n\
-Version 3.0.0\n\
+
+require.modules["raphael"] = require.modules["./local/raphael"];
+
+
+require.register("./local/datetimepicker", Function("exports, module",
+"/*\n\
+//! version : 3.1.3\n\
 =========================================================\n\
 bootstrap-datetimepicker.js\n\
 https://github.com/Eonasdan/bootstrap-datetimepicker\n\
@@ -31139,29 +34652,1392 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n\
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n\
 THE SOFTWARE.\n\
 */\n\
-(function(n){if(typeof define==\"function\"&&define.amd)define([\"jquery\",\"moment\"],n);else if(jQuery)if(moment)n(jQuery,moment);else throw\"bootstrap-datetimepicker requires moment.js to be loaded first\";else throw\"bootstrap-datetimepicker requires jQuery to be loaded first\";})(function(n,t){if(typeof t==\"undefined\"){alert(\"momentjs is requried\");throw new Error(\"momentjs is required\");}var u=0,r=t,f=function(t,f){var st={pickDate:!0,pickTime:!0,useMinutes:!0,useSeconds:!1,useCurrent:!0,minuteStepping:1,minDate:new r({y:1900}),maxDate:(new r).add(100,\"y\"),showToday:!0,collapse:!0,language:\"en\",defaultDate:\"\",disabledDates:!1,enabledDates:!1,icons:{},useStrict:!1,direction:\"auto\",sideBySide:!1,daysOfWeekDisabled:!1},ht={time:\"glyphicon glyphicon-time\",date:\"glyphicon glyphicon-calendar\",up:\"glyphicon glyphicon-chevron-up\",down:\"glyphicon glyphicon-chevron-down\"},e=this,ct=function(){var i=!1,o,h,s;if(e.options=n.extend({},st,f),e.options.icons=n.extend({},ht,e.options.icons),e.element=n(t),lt(),!(e.options.pickTime||e.options.pickDate))throw new Error(\"Must choose at least one picker\");if(e.id=u++,r.lang(e.options.language),e.date=r(),e.unset=!1,e.isInput=e.element.is(\"input\"),e.component=!1,e.element.hasClass(\"input-group\")&&(e.component=e.element.find(\".datepickerbutton\").size()==0?e.element.find(\"[class^='input-group-']\"):e.element.find(\".datepickerbutton\")),e.format=e.options.format,o=r()._lang._longDateFormat,e.format||(e.format=e.options.pickDate?o.L:\"\",e.options.pickDate&&e.options.pickTime&&(e.format+=\" \"),e.format+=e.options.pickTime?o.LT:\"\",e.options.useSeconds&&(~o.LT.indexOf(\" A\")?e.format=e.format.split(\" A\")[0]+\":ss A\":e.format+=\":ss\")),e.use24hours=e.format.toLowerCase().indexOf(\"a\")<1,e.component&&(i=e.component.find(\"span\")),e.options.pickTime&&i&&i.addClass(e.options.icons.time),e.options.pickDate&&i&&(i.removeClass(e.options.icons.time),i.addClass(e.options.icons.date)),e.widget=n(ni()).appendTo(\"body\"),e.options.useSeconds&&!e.use24hours&&e.widget.width(300),e.minViewMode=e.options.minViewMode||0,typeof e.minViewMode==\"string\")switch(e.minViewMode){case\"months\":e.minViewMode=1;break;case\"years\":e.minViewMode=2;break;default:e.minViewMode=0}if(e.viewMode=e.options.viewMode||0,typeof e.viewMode==\"string\")switch(e.viewMode){case\"months\":e.viewMode=1;break;case\"years\":e.viewMode=2;break;default:e.viewMode=0}e.options.disabledDates=d(e.options.disabledDates);e.options.enabledDates=d(e.options.enabledDates);e.startViewMode=e.viewMode;e.setMinDate(e.options.minDate);e.setMaxDate(e.options.maxDate);at();vt();yt();pt();wt();l();b();ut();e.options.defaultDate!==\"\"&&p().val()==\"\"&&e.setValue(e.options.defaultDate);e.options.minuteStepping!==1&&(h=e.date.minutes(),s=e.options.minuteStepping,e.date.minutes(Math.round(h/s)*s%60).seconds(0))},p=function(){return e.isInput?e.element:dateStr=e.element.find(\"input\")},lt=function(){var n;n=e.element.is(\"input\")?e.element.data():e.element.data();n.dateFormat!==undefined&&(e.options.format=n.dateFormat);n.datePickdate!==undefined&&(e.options.pickDate=n.datePickdate);n.datePicktime!==undefined&&(e.options.pickTime=n.datePicktime);n.dateUseminutes!==undefined&&(e.options.useMinutes=n.dateUseminutes);n.dateUseseconds!==undefined&&(e.options.useSeconds=n.dateUseseconds);n.dateUsecurrent!==undefined&&(e.options.useCurrent=n.dateUsecurrent);n.dateMinutestepping!==undefined&&(e.options.minuteStepping=n.dateMinutestepping);n.dateMindate!==undefined&&(e.options.minDate=n.dateMindate);n.dateMaxdate!==undefined&&(e.options.maxDate=n.dateMaxdate);n.dateShowtoday!==undefined&&(e.options.showToday=n.dateShowtoday);n.dateCollapse!==undefined&&(e.options.collapse=n.dateCollapse);n.dateLanguage!==undefined&&(e.options.language=n.dateLanguage);n.dateDefaultdate!==undefined&&(e.options.defaultDate=n.dateDefaultdate);n.dateDisableddates!==undefined&&(e.options.disabledDates=n.dateDisableddates);n.dateEnableddates!==undefined&&(e.options.enabledDates=n.dateEnableddates);n.dateIcons!==undefined&&(e.options.icons=n.dateIcons);n.dateUsestrict!==undefined&&(e.options.useStrict=n.dateUsestrict);n.dateDirection!==undefined&&(e.options.direction=n.dateDirection);n.dateSidebyside!==undefined&&(e.options.sideBySide=n.dateSidebyside)},it=function(){var u=\"absolute\",t=e.component?e.component.offset():e.element.offset(),i=n(window),r;e.width=e.component?e.component.outerWidth():e.element.outerWidth();t.top=t.top+e.element.outerHeight();e.options.direction===\"up\"?r=\"top\":e.options.direction===\"bottom\"?r=\"bottom\":e.options.direction===\"auto\"&&(r=t.top+e.widget.height()>i.height()+i.scrollTop()&&e.widget.height()+e.element.outerHeight()<t.top?\"top\":\"bottom\");r===\"top\"?(t.top-=e.widget.height()+e.element.outerHeight()+15,e.widget.addClass(\"top\").removeClass(\"bottom\")):(t.top+=1,e.widget.addClass(\"bottom\").removeClass(\"top\"));e.options.width!==undefined&&e.widget.width(e.options.width);e.options.orientation===\"left\"&&(e.widget.addClass(\"left-oriented\"),t.left=t.left-e.widget.width()+20);gt()&&(u=\"fixed\",t.top-=i.scrollTop(),t.left-=i.scrollLeft());i.width()<t.left+e.widget.outerWidth()?(t.right=i.width()-t.left-e.width,t.left=\"auto\",e.widget.addClass(\"pull-right\")):(t.right=\"auto\",e.widget.removeClass(\"pull-right\"));e.widget.css({position:u,top:t.top,left:t.left,right:t.right})},c=function(n,t){r(e.date).isSame(r(n))||(e.element.trigger({type:\"dp.change\",date:r(e.date),oldDate:r(n)}),t!==\"change\"&&e.element.change())},g=function(n){e.element.trigger({type:\"dp.error\",date:r(n)})},l=function(n){r.lang(e.options.language);var t=n;t||(t=p().val(),t&&(e.date=r(t,e.format,e.options.useStrict)),e.date||(e.date=r()));e.viewDate=r(e.date).startOf(\"month\");y();nt()},at=function(){r.lang(e.options.language);var i=n(\"<tr>\"),u=r.weekdaysMin(),t;if(r()._lang._week.dow==0)for(t=0;t<7;t++)i.append('<th class=\"dow\">'+u[t]+\"<\\/th>\");else for(t=1;t<8;t++)t==7?i.append('<th class=\"dow\">'+u[0]+\"<\\/th>\"):i.append('<th class=\"dow\">'+u[t]+\"<\\/th>\");e.widget.find(\".datepicker-days thead\").append(i)},vt=function(){r.lang(e.options.language);for(var n=\"\",t=0,i=r.monthsShort();t<12;)n+='<span class=\"month\">'+i[t++]+\"<\\/span>\";e.widget.find(\".datepicker-months td\").append(n)},y=function(){r.lang(e.options.language);var t=e.viewDate.year(),h=e.viewDate.month(),o=e.options.minDate.year(),y=e.options.minDate.month(),s=e.options.maxDate.year(),p=e.options.maxDate.month(),i,w,c=[],v,f,u,b,d,l,a=r.months();for(e.widget.find(\".datepicker-days\").find(\".disabled\").removeClass(\"disabled\"),e.widget.find(\".datepicker-months\").find(\".disabled\").removeClass(\"disabled\"),e.widget.find(\".datepicker-years\").find(\".disabled\").removeClass(\"disabled\"),e.widget.find(\".datepicker-days th:eq(1)\").text(a[h]+\" \"+t),i=r(e.viewDate).subtract(\"months\",1),b=i.daysInMonth(),i.date(b).startOf(\"week\"),(t==o&&h<=y||t<o)&&e.widget.find(\".datepicker-days th:eq(0)\").addClass(\"disabled\"),(t==s&&h>=p||t>s)&&e.widget.find(\".datepicker-days th:eq(2)\").addClass(\"disabled\"),w=r(i).add(42,\"d\");i.isBefore(w);){if(i.weekday()===r().startOf(\"week\").weekday()&&(v=n(\"<tr>\"),c.push(v)),f=\"\",i.year()<t||i.year()==t&&i.month()<h?f+=\" old\":(i.year()>t||i.year()==t&&i.month()>h)&&(f+=\" new\"),i.isSame(r({y:e.date.year(),M:e.date.month(),d:e.date.date()}))&&(f+=\" active\"),(k(i)||!ot(i))&&(f+=\" disabled\"),e.options.showToday===!0&&i.isSame(r(),\"day\")&&(f+=\" today\"),e.options.daysOfWeekDisabled)for(u in e.options.daysOfWeekDisabled)if(i.day()==e.options.daysOfWeekDisabled[u]){f+=\" disabled\";break}v.append('<td class=\"day'+f+'\">'+i.date()+\"<\\/td>\");i.add(1,\"d\")}for(e.widget.find(\".datepicker-days tbody\").empty().append(c),l=e.date.year(),a=e.widget.find(\".datepicker-months\").find(\"th:eq(1)\").text(t).end().find(\"span\").removeClass(\"active\"),l===t&&a.eq(e.date.month()).addClass(\"active\"),l-1<o&&e.widget.find(\".datepicker-months th:eq(0)\").addClass(\"disabled\"),l+1>s&&e.widget.find(\".datepicker-months th:eq(2)\").addClass(\"disabled\"),u=0;u<12;u++)t==o&&y>u||t<o?n(a[u]).addClass(\"disabled\"):(t==s&&p<u||t>s)&&n(a[u]).addClass(\"disabled\");for(c=\"\",t=parseInt(t/10,10)*10,d=e.widget.find(\".datepicker-years\").find(\"th:eq(1)\").text(t+\"-\"+(t+9)).end().find(\"td\"),e.widget.find(\".datepicker-years\").find(\"th\").removeClass(\"disabled\"),o>t&&e.widget.find(\".datepicker-years\").find(\"th:eq(0)\").addClass(\"disabled\"),s<t+9&&e.widget.find(\".datepicker-years\").find(\"th:eq(2)\").addClass(\"disabled\"),t-=1,u=-1;u<11;u++)c+='<span class=\"year'+(u===-1||u===10?\" old\":\"\")+(l===t?\" active\":\"\")+(t<o||t>s?\" disabled\":\"\")+'\">'+t+\"<\\/span>\",t+=1;d.html(c)},yt=function(){r.lang(e.options.language);var f=e.widget.find(\".timepicker .timepicker-hours table\"),n=\"\",t,i,u;if(f.parent().hide(),e.use24hours)for(t=0,i=0;i<6;i+=1){for(n+=\"<tr>\",u=0;u<4;u+=1)n+='<td class=\"hour\">'+s(t.toString())+\"<\\/td>\",t++;n+=\"<\\/tr>\"}else for(t=1,i=0;i<3;i+=1){for(n+=\"<tr>\",u=0;u<4;u+=1)n+='<td class=\"hour\">'+s(t.toString())+\"<\\/td>\",t++;n+=\"<\\/tr>\"}f.html(n)},pt=function(){var f=e.widget.find(\".timepicker .timepicker-minutes table\"),n=\"\",i=0,r,u,t=e.options.minuteStepping;for(f.parent().hide(),(t=1)&&(t=5),r=0;r<Math.ceil(15/t);r++){for(n+=\"<tr>\",u=0;u<4;u+=1)i<60?(n+='<td class=\"minute\">'+s(i.toString())+\"<\\/td>\",i+=t):n+=\"<td><\\/td>\";n+=\"<\\/tr>\"}f.html(n)},wt=function(){var r=e.widget.find(\".timepicker .timepicker-seconds table\"),n=\"\",u=0,t,i;for(r.parent().hide(),t=0;t<3;t++){for(n+=\"<tr>\",i=0;i<4;i+=1)n+='<td class=\"second\">'+s(u.toString())+\"<\\/td>\",u+=5;n+=\"<\\/tr>\"}r.html(n)},nt=function(){if(e.date){var t=e.widget.find(\".timepicker span[data-time-component]\"),n=e.date.hours(),i=\"AM\";e.use24hours||(n>=12&&(i=\"PM\"),n===0?n=12:n!=12&&(n=n%12),e.widget.find(\".timepicker [data-action=togglePeriod]\").text(i));t.filter(\"[data-time-component=hours]\").text(s(n));t.filter(\"[data-time-component=minutes]\").text(s(e.date.minutes()));t.filter(\"[data-time-component=seconds]\").text(s(e.date.second()))}},bt=function(t){t.stopPropagation();t.preventDefault();e.unset=!1;var i=n(t.target).closest(\"span, td, th\"),u,f,s,h,l=r(e.date);if(i.length===1&&!i.is(\".disabled\"))switch(i[0].nodeName.toLowerCase()){case\"th\":switch(i[0].className){case\"switch\":b(1);break;case\"prev\":case\"next\":s=o.modes[e.viewMode].navStep;i[0].className===\"prev\"&&(s=s*-1);e.viewDate.add(s,o.modes[e.viewMode].navFnc);y()}break;case\"span\":i.is(\".month\")?(u=i.parent().find(\"span\").index(i),e.viewDate.month(u)):(f=parseInt(i.text(),10)||0,e.viewDate.year(f));e.viewMode===e.minViewMode&&(e.date=r({y:e.viewDate.year(),M:e.viewDate.month(),d:e.viewDate.date(),h:e.date.hours(),m:e.date.minutes(),s:e.date.seconds()}),c(l,t.type),a());b(-1);y();break;case\"td\":i.is(\".day\")&&(h=parseInt(i.text(),10)||1,u=e.viewDate.month(),f=e.viewDate.year(),i.is(\".old\")?u===0?(u=11,f-=1):u-=1:i.is(\".new\")&&(u==11?(u=0,f+=1):u+=1),e.date=r({y:f,M:u,d:h,h:e.date.hours(),m:e.date.minutes(),s:e.date.seconds()}),e.viewDate=r({y:f,M:u,d:Math.min(28,h)}),y(),a(),c(l,t.type))}},w={incrementHours:function(){v(\"add\",\"hours\",1)},incrementMinutes:function(){v(\"add\",\"minutes\",e.options.minuteStepping)},incrementSeconds:function(){v(\"add\",\"seconds\",1)},decrementHours:function(){v(\"subtract\",\"hours\",1)},decrementMinutes:function(){v(\"subtract\",\"minutes\",e.options.minuteStepping)},decrementSeconds:function(){v(\"subtract\",\"seconds\",1)},togglePeriod:function(){var n=e.date.hours();n>=12?n-=12:n+=12;e.date.hours(n)},showPicker:function(){e.widget.find(\".timepicker > div:not(.timepicker-picker)\").hide();e.widget.find(\".timepicker .timepicker-picker\").show()},showHours:function(){e.widget.find(\".timepicker .timepicker-picker\").hide();e.widget.find(\".timepicker .timepicker-hours\").show()},showMinutes:function(){e.widget.find(\".timepicker .timepicker-picker\").hide();e.widget.find(\".timepicker .timepicker-minutes\").show()},showSeconds:function(){e.widget.find(\".timepicker .timepicker-picker\").hide();e.widget.find(\".timepicker .timepicker-seconds\").show()},selectHour:function(t){var r=e.widget.find(\".timepicker [data-action=togglePeriod]\").text(),i=parseInt(n(t.target).text(),10);r==\"PM\"&&(i+=12);e.date.hours(i);w.showPicker.call(e)},selectMinute:function(t){e.date.minutes(parseInt(n(t.target).text(),10));w.showPicker.call(e)},selectSecond:function(t){e.date.seconds(parseInt(n(t.target).text(),10));w.showPicker.call(e)}},kt=function(t){var i=r(e.date),u=n(t.currentTarget).data(\"action\"),f=w[u].apply(e,arguments);return tt(t),e.date||(e.date=r({y:1970})),a(),nt(),c(i,t.type),f},tt=function(n){n.stopPropagation();n.preventDefault()},rt=function(t){r.lang(e.options.language);var f=n(t.target),u=r(e.date),i=r(f.val(),e.format,e.options.useStrict);i.isValid()&&!k(i)&&ot(i)?(l(),e.setValue(i),c(u,t.type),a()):(e.viewDate=u,c(u,t.type),g(i),e.unset=!0)},b=function(n){n&&(e.viewMode=Math.max(e.minViewMode,Math.min(2,e.viewMode+n)));var t=o.modes[e.viewMode].clsName;e.widget.find(\".datepicker > div\").hide().filter(\".datepicker-\"+o.modes[e.viewMode].clsName).show()},ut=function(){var i,r,t,f,u;e.widget.on(\"click\",\".datepicker *\",n.proxy(bt,this));e.widget.on(\"click\",\"[data-action]\",n.proxy(kt,this));e.widget.on(\"mousedown\",n.proxy(tt,this));if(e.options.pickDate&&e.options.pickTime)e.widget.on(\"click.togglePicker\",\".accordion-toggle\",function(o){if(o.stopPropagation(),i=n(this),r=i.closest(\"ul\"),t=r.find(\".in\"),f=r.find(\".collapse:not(.in)\"),t&&t.length){if(u=t.data(\"collapse\"),u&&u.date-transitioning)return;t.collapse(\"hide\");f.collapse(\"show\");i.find(\"span\").toggleClass(e.options.icons.time+\" \"+e.options.icons.date);e.element.find(\".input-group-addon span\").toggleClass(e.options.icons.time+\" \"+e.options.icons.date)}});if(e.isInput)e.element.on({focus:n.proxy(e.show,this),change:n.proxy(rt,this),blur:n.proxy(e.hide,this)});else{e.element.on({change:n.proxy(rt,this)},\"input\");if(e.component)e.component.on(\"click\",n.proxy(e.show,this));else e.element.on(\"click\",n.proxy(e.show,this))}},dt=function(){n(window).on(\"resize.datetimepicker\"+e.id,n.proxy(it,this));if(!e.isInput)n(document).on(\"mousedown.datetimepicker\"+e.id,n.proxy(e.hide,this))},ft=function(){e.widget.off(\"click\",\".datepicker *\",e.click);e.widget.off(\"click\",\"[data-action]\");e.widget.off(\"mousedown\",e.stopEvent);e.options.pickDate&&e.options.pickTime&&e.widget.off(\"click.togglePicker\");e.isInput?e.element.off({focus:e.show,change:e.change}):(e.element.off({change:e.change},\"input\"),e.component?e.component.off(\"click\",e.show):e.element.off(\"click\",e.show))},et=function(){n(window).off(\"resize.datetimepicker\"+e.id);e.isInput||n(document).off(\"mousedown.datetimepicker\"+e.id)},gt=function(){if(e.element){for(var i=e.element.parents(),r=!1,t=0;t<i.length;t++)if(n(i[t]).css(\"position\")==\"fixed\"){r=!0;break}return r}return!1},a=function(){r.lang(e.options.language);var n=\"\";e.unset||(n=r(e.date).format(e.format));p().val(n);e.element.data(\"date\",n);e.options.pickTime||e.hide()},v=function(n,t,i){r.lang(e.options.language);var u;if(n==\"add\"?(u=r(e.date),u.hours()==23&&u.add(i,t),u.add(i,t)):u=r(e.date).subtract(i,t),k(r(u.subtract(i,t)))||k(u)){g(u.format(e.format));return}n==\"add\"?e.date.add(i,t):e.date.subtract(i,t);e.unset=!1},k=function(n){return(r.lang(e.options.language),n.isAfter(e.options.maxDate)||n.isBefore(e.options.minDate))?!0:e.options.disabledDates===!1?!1:e.options.disabledDates[r(n).format(\"YYYY-MM-DD\")]===!0},ot=function(n){return(r.lang(e.options.language),e.options.enabledDates===!1)?!0:e.options.enabledDates[r(n).format(\"YYYY-MM-DD\")]===!0},d=function(n){var t={},u=0;for(i=0;i<n.length;i++)dDate=r(n[i]),dDate.isValid()&&(t[dDate.format(\"YYYY-MM-DD\")]=!0,u++);return u>0?t:!1},s=function(n){return n=n.toString(),n.length>=2?n:\"0\"+n},ni=function(){if(e.options.pickDate&&e.options.pickTime){var n=\"\";return n='<div class=\"bootstrap-datetimepicker-widget'+(e.options.sideBySide?\" timepicker-sbs\":\"\")+' dropdown-menu\" style=\"z-index:9999 !important;\">',n+=e.options.sideBySide?'<div class=\"row\"><div class=\"col-sm-6 datepicker\">'+o.template+'<\\/div><div class=\"col-sm-6 timepicker\">'+h.getTemplate()+\"<\\/div><\\/div>\":'<ul class=\"list-unstyled\"><li'+(e.options.collapse?' class=\"collapse in\"':\"\")+'><div class=\"datepicker\">'+o.template+'<\\/div><\\/li><li class=\"picker-switch accordion-toggle\"><a class=\"btn\" style=\"width:100%\"><span class=\"'+e.options.icons.time+'\"><\\/span><\\/a><\\/li><li'+(e.options.collapse?' class=\"collapse\"':\"\")+'><div class=\"timepicker\">'+h.getTemplate()+\"<\\/div><\\/li><\\/ul>\",n+\"<\\/div>\"}return e.options.pickTime?'<div class=\"bootstrap-datetimepicker-widget dropdown-menu\"><div class=\"timepicker\">'+h.getTemplate()+\"<\\/div><\\/div>\":'<div class=\"bootstrap-datetimepicker-widget dropdown-menu\"><div class=\"datepicker\">'+o.template+\"<\\/div><\\/div>\"},o={modes:[{clsName:\"days\",navFnc:\"month\",navStep:1},{clsName:\"months\",navFnc:\"year\",navStep:1},{clsName:\"years\",navFnc:\"year\",navStep:10}],headTemplate:'<thead><tr><th class=\"prev\">&lsaquo;<\\/th><th colspan=\"5\" class=\"switch\"><\\/th><th class=\"next\">&rsaquo;<\\/th><\\/tr><\\/thead>',contTemplate:'<tbody><tr><td colspan=\"7\"><\\/td><\\/tr><\\/tbody>'},h={hourTemplate:'<span data-action=\"showHours\"   data-time-component=\"hours\"   class=\"timepicker-hour\"><\\/span>',minuteTemplate:'<span data-action=\"showMinutes\" data-time-component=\"minutes\" class=\"timepicker-minute\"><\\/span>',secondTemplate:'<span data-action=\"showSeconds\"  data-time-component=\"seconds\" class=\"timepicker-second\"><\\/span>'};o.template='<div class=\"datepicker-days\"><table class=\"table-condensed\">'+o.headTemplate+'<tbody><\\/tbody><\\/table><\\/div><div class=\"datepicker-months\"><table class=\"table-condensed\">'+o.headTemplate+o.contTemplate+'<\\/table><\\/div><div class=\"datepicker-years\"><table class=\"table-condensed\">'+o.headTemplate+o.contTemplate+\"<\\/table><\\/div>\";h.getTemplate=function(){return'<div class=\"timepicker-picker\"><table class=\"table-condensed\"><tr><td><a href=\"#\" class=\"btn\" data-action=\"incrementHours\"><span class=\"'+e.options.icons.up+'\"><\\/span><\\/a><\\/td><td class=\"separator\"><\\/td><td>'+(e.options.useMinutes?'<a href=\"#\" class=\"btn\" data-action=\"incrementMinutes\"><span class=\"'+e.options.icons.up+'\"><\\/span><\\/a>':\"\")+\"<\\/td>\"+(e.options.useSeconds?'<td class=\"separator\"><\\/td><td><a href=\"#\" class=\"btn\" data-action=\"incrementSeconds\"><span class=\"'+e.options.icons.up+'\"><\\/span><\\/a><\\/td>':\"\")+(e.use24hours?\"\":'<td class=\"separator\"><\\/td>')+\"<\\/tr><tr><td>\"+h.hourTemplate+'<\\/td> <td class=\"separator\">:<\\/td><td>'+(e.options.useMinutes?h.minuteTemplate:'<span class=\"timepicker-minute\">00<\\/span>')+\"<\\/td> \"+(e.options.useSeconds?'<td class=\"separator\">:<\\/td><td>'+h.secondTemplate+\"<\\/td>\":\"\")+(e.use24hours?\"\":'<td class=\"separator\"><\\/td><td><button type=\"button\" class=\"btn btn-primary\" data-action=\"togglePeriod\"><\\/button><\\/td>')+'<\\/tr><tr><td><a href=\"#\" class=\"btn\" data-action=\"decrementHours\"><span class=\"'+e.options.icons.down+'\"><\\/span><\\/a><\\/td><td class=\"separator\"><\\/td><td>'+(e.options.useMinutes?'<a href=\"#\" class=\"btn\" data-action=\"decrementMinutes\"><span class=\"'+e.options.icons.down+'\"><\\/span><\\/a>':\"\")+\"<\\/td>\"+(e.options.useSeconds?'<td class=\"separator\"><\\/td><td><a href=\"#\" class=\"btn\" data-action=\"decrementSeconds\"><span class=\"'+e.options.icons.down+'\"><\\/span><\\/a><\\/td>':\"\")+(e.use24hours?\"\":'<td class=\"separator\"><\\/td>')+'<\\/tr><\\/table><\\/div><div class=\"timepicker-hours\" data-action=\"selectHour\"><table class=\"table-condensed\"><\\/table><\\/div><div class=\"timepicker-minutes\" data-action=\"selectMinute\"><table class=\"table-condensed\"><\\/table><\\/div>'+(e.options.useSeconds?'<div class=\"timepicker-seconds\" data-action=\"selectSecond\"><table class=\"table-condensed\"><\\/table><\\/div>':\"\")};e.destroy=function(){ft();et();e.widget.remove();e.element.removeData(\"DateTimePicker\");e.component&&e.component.removeData(\"DateTimePicker\")};e.show=function(n){e.options.useCurrent===!0&&p().val()==\"\"&&e.setValue(r().format(e.format));e.widget.show();e.height=e.component?e.component.outerHeight():e.element.outerHeight();it();e.element.trigger({type:\"dp.show\",date:r(e.date)});dt();n&&tt(n)};e.disable=function(){var n=e.element.find(\"input\");n.prop(\"disabled\")||(n.prop(\"disabled\",!0),ft())};e.enable=function(){var n=e.element.find(\"input\");n.prop(\"disabled\")&&(n.prop(\"disabled\",!1),ut())};e.hide=function(t){if(!t||!n(t.target).is(e.element.attr(\"id\"))){for(var f=e.widget.find(\".collapse\"),u,i=0;i<f.length;i++)if(u=f.eq(i).data(\"collapse\"),u&&u.date-transitioning)return;e.widget.hide();e.viewMode=e.startViewMode;b();e.element.trigger({type:\"dp.hide\",date:r(e.date)});et()}};e.setValue=function(n){r.lang(e.options.language);n?e.unset=!1:(e.unset=!0,a());r.isMoment(n)||(n=r(n));n.isValid()?(e.date=n,a(),e.viewDate=r({y:e.date.year(),M:e.date.month()}),y(),nt()):g(n)};e.getDate=function(){return e.unset?null:e.date};e.setDate=function(n){var t=r(e.date);n?e.setValue(n):e.setValue(null);c(t,\"function\")};e.setDisabledDates=function(n){e.options.disabledDates=d(n);e.viewDate&&l()};e.setEnabledDates=function(n){e.options.enabledDates=d(n);e.viewDate&&l()};e.setMaxDate=function(n){n!=undefined&&(e.options.maxDate=r(n),e.viewDate&&l())};e.setMinDate=function(n){n!=undefined&&(e.options.minDate=r(n),e.viewDate&&l())};ct()};n.fn.datetimepicker=function(t){return this.each(function(){var i=n(this),r=i.data(\"DateTimePicker\");r||i.data(\"DateTimePicker\",new f(this,t))})}});//@ sourceURL=datetimepicker/bootstrap-datetimepicker.js"
+;(function (root, factory) {\n\
+    'use strict';\n\
+    if (typeof define === 'function' && define.amd) {\n\
+        // AMD is used - Register as an anonymous module.\n\
+        define(['jquery', 'moment'], factory);\n\
+    } else if (typeof exports === 'object') {\n\
+        factory(require('components~jquery@1.11.1'), require('moment~moment@2.8.4'));\n\
+    }\n\
+    else {\n\
+        // Neither AMD or CommonJS used. Use global variables.\n\
+        if (!jQuery) {\n\
+            throw new Error('bootstrap-datetimepicker requires jQuery to be loaded first');\n\
+        }\n\
+        if (!moment) {\n\
+            throw new Error('bootstrap-datetimepicker requires moment.js to be loaded first');\n\
+        }\n\
+        factory(root.jQuery, moment);\n\
+    }\n\
+}(this, function ($, moment) {\n\
+    'use strict';\n\
+    if (typeof moment === 'undefined') {\n\
+        throw new Error('momentjs is required');\n\
+    }\n\
+\n\
+    var dpgId = 0,\n\
+\n\
+    DateTimePicker = function (element, options) {\n\
+        var defaults = $.fn.datetimepicker.defaults,\n\
+\n\
+            icons = {\n\
+                time: 'glyphicon glyphicon-time',\n\
+                date: 'glyphicon glyphicon-calendar',\n\
+                up: 'glyphicon glyphicon-chevron-up',\n\
+                down: 'glyphicon glyphicon-chevron-down'\n\
+            },\n\
+\n\
+            picker = this,\n\
+            errored = false,\n\
+            dDate,\n\
+\n\
+        init = function () {\n\
+            var icon = false, localeData, rInterval;\n\
+            picker.options = $.extend({}, defaults, options);\n\
+            picker.options.icons = $.extend({}, icons, picker.options.icons);\n\
+\n\
+            picker.element = $(element);\n\
+\n\
+            dataToOptions();\n\
+\n\
+            if (!(picker.options.pickTime || picker.options.pickDate)) {\n\
+                throw new Error('Must choose at least one picker');\n\
+            }\n\
+\n\
+            picker.id = dpgId++;\n\
+            moment.locale(picker.options.language);\n\
+            picker.date = moment();\n\
+            picker.unset = false;\n\
+            picker.isInput = picker.element.is('input');\n\
+            picker.component = false;\n\
+\n\
+            if (picker.element.hasClass('input-group')) {\n\
+                if (picker.element.find('.datepickerbutton').size() === 0) {//in case there is more then one 'input-group-addon' Issue #48\n\
+                    picker.component = picker.element.find('[class^=\"input-group-\"]');\n\
+                }\n\
+                else {\n\
+                    picker.component = picker.element.find('.datepickerbutton');\n\
+                }\n\
+            }\n\
+            picker.format = picker.options.format;\n\
+\n\
+            localeData = moment().localeData();\n\
+\n\
+            if (!picker.format) {\n\
+                picker.format = (picker.options.pickDate ? localeData.longDateFormat('L') : '');\n\
+                if (picker.options.pickDate && picker.options.pickTime) {\n\
+                    picker.format += ' ';\n\
+                }\n\
+                picker.format += (picker.options.pickTime ? localeData.longDateFormat('LT') : '');\n\
+                if (picker.options.useSeconds) {\n\
+                    if (localeData.longDateFormat('LT').indexOf(' A') !== -1) {\n\
+                        picker.format = picker.format.split(' A')[0] + ':ss A';\n\
+                    }\n\
+                    else {\n\
+                        picker.format += ':ss';\n\
+                    }\n\
+                }\n\
+            }\n\
+            picker.use24hours = (picker.format.toLowerCase().indexOf('a') < 0 && picker.format.indexOf('h') < 0);\n\
+\n\
+            if (picker.component) {\n\
+                icon = picker.component.find('span');\n\
+            }\n\
+\n\
+            if (picker.options.pickTime) {\n\
+                if (icon) {\n\
+                    icon.addClass(picker.options.icons.time);\n\
+                }\n\
+            }\n\
+            if (picker.options.pickDate) {\n\
+                if (icon) {\n\
+                    icon.removeClass(picker.options.icons.time);\n\
+                    icon.addClass(picker.options.icons.date);\n\
+                }\n\
+            }\n\
+\n\
+            picker.options.widgetParent =\n\
+                typeof picker.options.widgetParent === 'string' && picker.options.widgetParent ||\n\
+                picker.element.parents().filter(function () {\n\
+                    return 'scroll' === $(this).css('overflow-y');\n\
+                }).get(0) ||\n\
+                'body';\n\
+\n\
+            picker.widget = $(getTemplate()).appendTo(picker.options.widgetParent);\n\
+\n\
+            picker.minViewMode = picker.options.minViewMode || 0;\n\
+            if (typeof picker.minViewMode === 'string') {\n\
+                switch (picker.minViewMode) {\n\
+                    case 'months':\n\
+                        picker.minViewMode = 1;\n\
+                        break;\n\
+                    case 'years':\n\
+                        picker.minViewMode = 2;\n\
+                        break;\n\
+                    default:\n\
+                        picker.minViewMode = 0;\n\
+                        break;\n\
+                }\n\
+            }\n\
+            picker.viewMode = picker.options.viewMode || 0;\n\
+            if (typeof picker.viewMode === 'string') {\n\
+                switch (picker.viewMode) {\n\
+                    case 'months':\n\
+                        picker.viewMode = 1;\n\
+                        break;\n\
+                    case 'years':\n\
+                        picker.viewMode = 2;\n\
+                        break;\n\
+                    default:\n\
+                        picker.viewMode = 0;\n\
+                        break;\n\
+                }\n\
+            }\n\
+\n\
+            picker.viewMode = Math.max(picker.viewMode, picker.minViewMode);\n\
+\n\
+            picker.options.disabledDates = indexGivenDates(picker.options.disabledDates);\n\
+            picker.options.enabledDates = indexGivenDates(picker.options.enabledDates);\n\
+\n\
+            picker.startViewMode = picker.viewMode;\n\
+            picker.setMinDate(picker.options.minDate);\n\
+            picker.setMaxDate(picker.options.maxDate);\n\
+            fillDow();\n\
+            fillMonths();\n\
+            fillHours();\n\
+            fillMinutes();\n\
+            fillSeconds();\n\
+            update();\n\
+            showMode();\n\
+            if (!getPickerInput().prop('disabled')) {\n\
+                attachDatePickerEvents();\n\
+            }\n\
+            if (picker.options.defaultDate !== '' && getPickerInput().val() === '') {\n\
+                picker.setValue(picker.options.defaultDate);\n\
+            }\n\
+            if (picker.options.minuteStepping !== 1) {\n\
+                rInterval = picker.options.minuteStepping;\n\
+                picker.date.minutes((Math.round(picker.date.minutes() / rInterval) * rInterval) % 60).seconds(0);\n\
+            }\n\
+        },\n\
+\n\
+        getPickerInput = function () {\n\
+            var input;\n\
+\n\
+            if (picker.isInput) {\n\
+                return picker.element;\n\
+            }\n\
+            input = picker.element.find('.datepickerinput');\n\
+            if (input.size() === 0) {\n\
+                input = picker.element.find('input');\n\
+            }\n\
+            else if (!input.is('input')) {\n\
+                throw new Error('CSS class \"datepickerinput\" cannot be applied to non input element');\n\
+            }\n\
+            return input;\n\
+        },\n\
+\n\
+        dataToOptions = function () {\n\
+            var eData;\n\
+            if (picker.element.is('input')) {\n\
+                eData = picker.element.data();\n\
+            }\n\
+            else {\n\
+                eData = picker.element.find('input').data();\n\
+            }\n\
+            if (eData.dateFormat !== undefined) {\n\
+                picker.options.format = eData.dateFormat;\n\
+            }\n\
+            if (eData.datePickdate !== undefined) {\n\
+                picker.options.pickDate = eData.datePickdate;\n\
+            }\n\
+            if (eData.datePicktime !== undefined) {\n\
+                picker.options.pickTime = eData.datePicktime;\n\
+            }\n\
+            if (eData.dateUseminutes !== undefined) {\n\
+                picker.options.useMinutes = eData.dateUseminutes;\n\
+            }\n\
+            if (eData.dateUseseconds !== undefined) {\n\
+                picker.options.useSeconds = eData.dateUseseconds;\n\
+            }\n\
+            if (eData.dateUsecurrent !== undefined) {\n\
+                picker.options.useCurrent = eData.dateUsecurrent;\n\
+            }\n\
+            if (eData.calendarWeeks !== undefined) {\n\
+                picker.options.calendarWeeks = eData.calendarWeeks;\n\
+            }\n\
+            if (eData.dateMinutestepping !== undefined) {\n\
+                picker.options.minuteStepping = eData.dateMinutestepping;\n\
+            }\n\
+            if (eData.dateMindate !== undefined) {\n\
+                picker.options.minDate = eData.dateMindate;\n\
+            }\n\
+            if (eData.dateMaxdate !== undefined) {\n\
+                picker.options.maxDate = eData.dateMaxdate;\n\
+            }\n\
+            if (eData.dateShowtoday !== undefined) {\n\
+                picker.options.showToday = eData.dateShowtoday;\n\
+            }\n\
+            if (eData.dateCollapse !== undefined) {\n\
+                picker.options.collapse = eData.dateCollapse;\n\
+            }\n\
+            if (eData.dateLanguage !== undefined) {\n\
+                picker.options.language = eData.dateLanguage;\n\
+            }\n\
+            if (eData.dateDefaultdate !== undefined) {\n\
+                picker.options.defaultDate = eData.dateDefaultdate;\n\
+            }\n\
+            if (eData.dateDisableddates !== undefined) {\n\
+                picker.options.disabledDates = eData.dateDisableddates;\n\
+            }\n\
+            if (eData.dateEnableddates !== undefined) {\n\
+                picker.options.enabledDates = eData.dateEnableddates;\n\
+            }\n\
+            if (eData.dateIcons !== undefined) {\n\
+                picker.options.icons = eData.dateIcons;\n\
+            }\n\
+            if (eData.dateUsestrict !== undefined) {\n\
+                picker.options.useStrict = eData.dateUsestrict;\n\
+            }\n\
+            if (eData.dateDirection !== undefined) {\n\
+                picker.options.direction = eData.dateDirection;\n\
+            }\n\
+            if (eData.dateSidebyside !== undefined) {\n\
+                picker.options.sideBySide = eData.dateSidebyside;\n\
+            }\n\
+            if (eData.dateDaysofweekdisabled !== undefined) {\n\
+                picker.options.daysOfWeekDisabled = eData.dateDaysofweekdisabled;\n\
+            }\n\
+        },\n\
+\n\
+        place = function () {\n\
+            var position = 'absolute',\n\
+                offset = picker.component ? picker.component.offset() : picker.element.offset(),\n\
+                $window = $(window),\n\
+                placePosition;\n\
+\n\
+            picker.width = picker.component ? picker.component.outerWidth() : picker.element.outerWidth();\n\
+            offset.top = offset.top + picker.element.outerHeight();\n\
+\n\
+            if (picker.options.direction === 'up') {\n\
+                placePosition = 'top';\n\
+            } else if (picker.options.direction === 'bottom') {\n\
+                placePosition = 'bottom';\n\
+            } else if (picker.options.direction === 'auto') {\n\
+                if (offset.top + picker.widget.height() > $window.height() + $window.scrollTop() && picker.widget.height() + picker.element.outerHeight() < offset.top) {\n\
+                    placePosition = 'top';\n\
+                } else {\n\
+                    placePosition = 'bottom';\n\
+                }\n\
+            }\n\
+            if (placePosition === 'top') {\n\
+                offset.bottom = $window.height() - offset.top + picker.element.outerHeight() + 3;\n\
+                picker.widget.addClass('top').removeClass('bottom');\n\
+            } else {\n\
+                offset.top += 1;\n\
+                picker.widget.addClass('bottom').removeClass('top');\n\
+            }\n\
+\n\
+            if (picker.options.width !== undefined) {\n\
+                picker.widget.width(picker.options.width);\n\
+            }\n\
+\n\
+            if (picker.options.orientation === 'left') {\n\
+                picker.widget.addClass('left-oriented');\n\
+                offset.left = offset.left - picker.widget.width() + 20;\n\
+            }\n\
+\n\
+            if (isInFixed()) {\n\
+                position = 'fixed';\n\
+                offset.top -= $window.scrollTop();\n\
+                offset.left -= $window.scrollLeft();\n\
+            }\n\
+\n\
+            if ($window.width() < offset.left + picker.widget.outerWidth()) {\n\
+                offset.right = $window.width() - offset.left - picker.width;\n\
+                offset.left = 'auto';\n\
+                picker.widget.addClass('pull-right');\n\
+            } else {\n\
+                offset.right = 'auto';\n\
+                picker.widget.removeClass('pull-right');\n\
+            }\n\
+\n\
+            if (placePosition === 'top') {\n\
+                picker.widget.css({\n\
+                    position: position,\n\
+                    bottom: offset.bottom,\n\
+                    top: 'auto',\n\
+                    left: offset.left,\n\
+                    right: offset.right\n\
+                });\n\
+            } else {\n\
+                picker.widget.css({\n\
+                    position: position,\n\
+                    top: offset.top,\n\
+                    bottom: 'auto',\n\
+                    left: offset.left,\n\
+                    right: offset.right\n\
+                });\n\
+            }\n\
+        },\n\
+\n\
+        notifyChange = function (oldDate, eventType) {\n\
+            if (moment(picker.date).isSame(moment(oldDate)) && !errored) {\n\
+                return;\n\
+            }\n\
+            errored = false;\n\
+            picker.element.trigger({\n\
+                type: 'dp.change',\n\
+                date: moment(picker.date),\n\
+                oldDate: moment(oldDate)\n\
+            });\n\
+\n\
+            if (eventType !== 'change') {\n\
+                picker.element.change();\n\
+            }\n\
+        },\n\
+\n\
+        notifyError = function (date) {\n\
+            errored = true;\n\
+            picker.element.trigger({\n\
+                type: 'dp.error',\n\
+                date: moment(date, picker.format, picker.options.useStrict)\n\
+            });\n\
+        },\n\
+\n\
+        update = function (newDate) {\n\
+            moment.locale(picker.options.language);\n\
+            var dateStr = newDate;\n\
+            if (!dateStr) {\n\
+                dateStr = getPickerInput().val();\n\
+                if (dateStr) {\n\
+                    picker.date = moment(dateStr, picker.format, picker.options.useStrict);\n\
+                }\n\
+                if (!picker.date) {\n\
+                    picker.date = moment();\n\
+                }\n\
+            }\n\
+            picker.viewDate = moment(picker.date).startOf('month');\n\
+            fillDate();\n\
+            fillTime();\n\
+        },\n\
+\n\
+        fillDow = function () {\n\
+            moment.locale(picker.options.language);\n\
+            var html = $('<tr>'), weekdaysMin = moment.weekdaysMin(), i;\n\
+            if (picker.options.calendarWeeks === true) {\n\
+                html.append('<th class=\"cw\">#</th>');\n\
+            }\n\
+            if (moment().localeData()._week.dow === 0) { // starts on Sunday\n\
+                for (i = 0; i < 7; i++) {\n\
+                    html.append('<th class=\"dow\">' + weekdaysMin[i] + '</th>');\n\
+                }\n\
+            } else {\n\
+                for (i = 1; i < 8; i++) {\n\
+                    if (i === 7) {\n\
+                        html.append('<th class=\"dow\">' + weekdaysMin[0] + '</th>');\n\
+                    } else {\n\
+                        html.append('<th class=\"dow\">' + weekdaysMin[i] + '</th>');\n\
+                    }\n\
+                }\n\
+            }\n\
+            picker.widget.find('.datepicker-days thead').append(html);\n\
+        },\n\
+\n\
+        fillMonths = function () {\n\
+            moment.locale(picker.options.language);\n\
+            var html = '', i, monthsShort = moment.monthsShort();\n\
+            for (i = 0; i < 12; i++) {\n\
+                html += '<span class=\"month\">' + monthsShort[i] + '</span>';\n\
+            }\n\
+            picker.widget.find('.datepicker-months td').append(html);\n\
+        },\n\
+\n\
+        fillDate = function () {\n\
+            if (!picker.options.pickDate) {\n\
+                return;\n\
+            }\n\
+            moment.locale(picker.options.language);\n\
+            var year = picker.viewDate.year(),\n\
+                month = picker.viewDate.month(),\n\
+                startYear = picker.options.minDate.year(),\n\
+                startMonth = picker.options.minDate.month(),\n\
+                endYear = picker.options.maxDate.year(),\n\
+                endMonth = picker.options.maxDate.month(),\n\
+                currentDate,\n\
+                prevMonth, nextMonth, html = [], row, clsName, i, days, yearCont, currentYear, months = moment.months();\n\
+\n\
+            picker.widget.find('.datepicker-days').find('.disabled').removeClass('disabled');\n\
+            picker.widget.find('.datepicker-months').find('.disabled').removeClass('disabled');\n\
+            picker.widget.find('.datepicker-years').find('.disabled').removeClass('disabled');\n\
+\n\
+            picker.widget.find('.datepicker-days th:eq(1)').text(\n\
+                months[month] + ' ' + year);\n\
+\n\
+            prevMonth = moment(picker.viewDate, picker.format, picker.options.useStrict).subtract(1, 'months');\n\
+            days = prevMonth.daysInMonth();\n\
+            prevMonth.date(days).startOf('week');\n\
+            if ((year === startYear && month <= startMonth) || year < startYear) {\n\
+                picker.widget.find('.datepicker-days th:eq(0)').addClass('disabled');\n\
+            }\n\
+            if ((year === endYear && month >= endMonth) || year > endYear) {\n\
+                picker.widget.find('.datepicker-days th:eq(2)').addClass('disabled');\n\
+            }\n\
+\n\
+            nextMonth = moment(prevMonth).add(42, 'd');\n\
+            while (prevMonth.isBefore(nextMonth)) {\n\
+                if (prevMonth.weekday() === moment().startOf('week').weekday()) {\n\
+                    row = $('<tr>');\n\
+                    html.push(row);\n\
+                    if (picker.options.calendarWeeks === true) {\n\
+                        row.append('<td class=\"cw\">' + prevMonth.week() + '</td>');\n\
+                    }\n\
+                }\n\
+                clsName = '';\n\
+                if (prevMonth.year() < year || (prevMonth.year() === year && prevMonth.month() < month)) {\n\
+                    clsName += ' old';\n\
+                } else if (prevMonth.year() > year || (prevMonth.year() === year && prevMonth.month() > month)) {\n\
+                    clsName += ' new';\n\
+                }\n\
+                if (prevMonth.isSame(moment({y: picker.date.year(), M: picker.date.month(), d: picker.date.date()}))) {\n\
+                    clsName += ' active';\n\
+                }\n\
+                if (isInDisableDates(prevMonth, 'day') || !isInEnableDates(prevMonth)) {\n\
+                    clsName += ' disabled';\n\
+                }\n\
+                if (picker.options.showToday === true) {\n\
+                    if (prevMonth.isSame(moment(), 'day')) {\n\
+                        clsName += ' today';\n\
+                    }\n\
+                }\n\
+                if (picker.options.daysOfWeekDisabled) {\n\
+                    for (i = 0; i < picker.options.daysOfWeekDisabled.length; i++) {\n\
+                        if (prevMonth.day() === picker.options.daysOfWeekDisabled[i]) {\n\
+                            clsName += ' disabled';\n\
+                            break;\n\
+                        }\n\
+                    }\n\
+                }\n\
+                row.append('<td class=\"day' + clsName + '\">' + prevMonth.date() + '</td>');\n\
+\n\
+                currentDate = prevMonth.date();\n\
+                prevMonth.add(1, 'd');\n\
+\n\
+                if (currentDate === prevMonth.date()) {\n\
+                    prevMonth.add(1, 'd');\n\
+                }\n\
+            }\n\
+            picker.widget.find('.datepicker-days tbody').empty().append(html);\n\
+            currentYear = picker.date.year();\n\
+            months = picker.widget.find('.datepicker-months').find('th:eq(1)').text(year).end().find('span').removeClass('active');\n\
+            if (currentYear === year) {\n\
+                months.eq(picker.date.month()).addClass('active');\n\
+            }\n\
+            if (year - 1 < startYear) {\n\
+                picker.widget.find('.datepicker-months th:eq(0)').addClass('disabled');\n\
+            }\n\
+            if (year + 1 > endYear) {\n\
+                picker.widget.find('.datepicker-months th:eq(2)').addClass('disabled');\n\
+            }\n\
+            for (i = 0; i < 12; i++) {\n\
+                if ((year === startYear && startMonth > i) || (year < startYear)) {\n\
+                    $(months[i]).addClass('disabled');\n\
+                } else if ((year === endYear && endMonth < i) || (year > endYear)) {\n\
+                    $(months[i]).addClass('disabled');\n\
+                }\n\
+            }\n\
+\n\
+            html = '';\n\
+            year = parseInt(year / 10, 10) * 10;\n\
+            yearCont = picker.widget.find('.datepicker-years').find(\n\
+                'th:eq(1)').text(year + '-' + (year + 9)).parents('table').find('td');\n\
+            picker.widget.find('.datepicker-years').find('th').removeClass('disabled');\n\
+            if (startYear > year) {\n\
+                picker.widget.find('.datepicker-years').find('th:eq(0)').addClass('disabled');\n\
+            }\n\
+            if (endYear < year + 9) {\n\
+                picker.widget.find('.datepicker-years').find('th:eq(2)').addClass('disabled');\n\
+            }\n\
+            year -= 1;\n\
+            for (i = -1; i < 11; i++) {\n\
+                html += '<span class=\"year' + (i === -1 || i === 10 ? ' old' : '') + (currentYear === year ? ' active' : '') + ((year < startYear || year > endYear) ? ' disabled' : '') + '\">' + year + '</span>';\n\
+                year += 1;\n\
+            }\n\
+            yearCont.html(html);\n\
+        },\n\
+\n\
+        fillHours = function () {\n\
+            moment.locale(picker.options.language);\n\
+            var table = picker.widget.find('.timepicker .timepicker-hours table'), html = '', current, i, j;\n\
+            table.parent().hide();\n\
+            if (picker.use24hours) {\n\
+                current = 0;\n\
+                for (i = 0; i < 6; i += 1) {\n\
+                    html += '<tr>';\n\
+                    for (j = 0; j < 4; j += 1) {\n\
+                        html += '<td class=\"hour\">' + padLeft(current.toString()) + '</td>';\n\
+                        current++;\n\
+                    }\n\
+                    html += '</tr>';\n\
+                }\n\
+            }\n\
+            else {\n\
+                current = 1;\n\
+                for (i = 0; i < 3; i += 1) {\n\
+                    html += '<tr>';\n\
+                    for (j = 0; j < 4; j += 1) {\n\
+                        html += '<td class=\"hour\">' + padLeft(current.toString()) + '</td>';\n\
+                        current++;\n\
+                    }\n\
+                    html += '</tr>';\n\
+                }\n\
+            }\n\
+            table.html(html);\n\
+        },\n\
+\n\
+        fillMinutes = function () {\n\
+            var table = picker.widget.find('.timepicker .timepicker-minutes table'), html = '', current = 0, i, j, step = picker.options.minuteStepping;\n\
+            table.parent().hide();\n\
+            if (step === 1)  {\n\
+                step = 5;\n\
+            }\n\
+            for (i = 0; i < Math.ceil(60 / step / 4) ; i++) {\n\
+                html += '<tr>';\n\
+                for (j = 0; j < 4; j += 1) {\n\
+                    if (current < 60) {\n\
+                        html += '<td class=\"minute\">' + padLeft(current.toString()) + '</td>';\n\
+                        current += step;\n\
+                    } else {\n\
+                        html += '<td></td>';\n\
+                    }\n\
+                }\n\
+                html += '</tr>';\n\
+            }\n\
+            table.html(html);\n\
+        },\n\
+\n\
+        fillSeconds = function () {\n\
+            var table = picker.widget.find('.timepicker .timepicker-seconds table'), html = '', current = 0, i, j;\n\
+            table.parent().hide();\n\
+            for (i = 0; i < 3; i++) {\n\
+                html += '<tr>';\n\
+                for (j = 0; j < 4; j += 1) {\n\
+                    html += '<td class=\"second\">' + padLeft(current.toString()) + '</td>';\n\
+                    current += 5;\n\
+                }\n\
+                html += '</tr>';\n\
+            }\n\
+            table.html(html);\n\
+        },\n\
+\n\
+        fillTime = function () {\n\
+            if (!picker.date) {\n\
+                return;\n\
+            }\n\
+            var timeComponents = picker.widget.find('.timepicker span[data-time-component]'),\n\
+                hour = picker.date.hours(),\n\
+                period = picker.date.format('A');\n\
+            if (!picker.use24hours) {\n\
+                if (hour === 0) {\n\
+                    hour = 12;\n\
+                } else if (hour !== 12) {\n\
+                    hour = hour % 12;\n\
+                }\n\
+                picker.widget.find('.timepicker [data-action=togglePeriod]').text(period);\n\
+            }\n\
+            timeComponents.filter('[data-time-component=hours]').text(padLeft(hour));\n\
+            timeComponents.filter('[data-time-component=minutes]').text(padLeft(picker.date.minutes()));\n\
+            timeComponents.filter('[data-time-component=seconds]').text(padLeft(picker.date.second()));\n\
+        },\n\
+\n\
+        click = function (e) {\n\
+            e.stopPropagation();\n\
+            e.preventDefault();\n\
+            picker.unset = false;\n\
+            var target = $(e.target).closest('span, td, th'), month, year, step, day, oldDate = moment(picker.date);\n\
+            if (target.length === 1) {\n\
+                if (!target.is('.disabled')) {\n\
+                    switch (target[0].nodeName.toLowerCase()) {\n\
+                        case 'th':\n\
+                            switch (target[0].className) {\n\
+                                case 'picker-switch':\n\
+                                    showMode(1);\n\
+                                    break;\n\
+                                case 'prev':\n\
+                                case 'next':\n\
+                                    step = dpGlobal.modes[picker.viewMode].navStep;\n\
+                                    if (target[0].className === 'prev') {\n\
+                                        step = step * -1;\n\
+                                    }\n\
+                                    picker.viewDate.add(step, dpGlobal.modes[picker.viewMode].navFnc);\n\
+                                    fillDate();\n\
+                                    break;\n\
+                            }\n\
+                            break;\n\
+                        case 'span':\n\
+                            if (target.is('.month')) {\n\
+                                month = target.parent().find('span').index(target);\n\
+                                picker.viewDate.month(month);\n\
+                            } else {\n\
+                                year = parseInt(target.text(), 10) || 0;\n\
+                                picker.viewDate.year(year);\n\
+                            }\n\
+                            if (picker.viewMode === picker.minViewMode) {\n\
+                                picker.date = moment({\n\
+                                    y: picker.viewDate.year(),\n\
+                                    M: picker.viewDate.month(),\n\
+                                    d: picker.viewDate.date(),\n\
+                                    h: picker.date.hours(),\n\
+                                    m: picker.date.minutes(),\n\
+                                    s: picker.date.seconds()\n\
+                                });\n\
+                                set();\n\
+                                notifyChange(oldDate, e.type);\n\
+                            }\n\
+                            showMode(-1);\n\
+                            fillDate();\n\
+                            break;\n\
+                        case 'td':\n\
+                            if (target.is('.day')) {\n\
+                                day = parseInt(target.text(), 10) || 1;\n\
+                                month = picker.viewDate.month();\n\
+                                year = picker.viewDate.year();\n\
+                                if (target.is('.old')) {\n\
+                                    if (month === 0) {\n\
+                                        month = 11;\n\
+                                        year -= 1;\n\
+                                    } else {\n\
+                                        month -= 1;\n\
+                                    }\n\
+                                } else if (target.is('.new')) {\n\
+                                    if (month === 11) {\n\
+                                        month = 0;\n\
+                                        year += 1;\n\
+                                    } else {\n\
+                                        month += 1;\n\
+                                    }\n\
+                                }\n\
+                                picker.date = moment({\n\
+                                    y: year,\n\
+                                    M: month,\n\
+                                    d: day,\n\
+                                    h: picker.date.hours(),\n\
+                                    m: picker.date.minutes(),\n\
+                                    s: picker.date.seconds()\n\
+                                }\n\
+                                );\n\
+                                picker.viewDate = moment({\n\
+                                    y: year, M: month, d: Math.min(28, day)\n\
+                                });\n\
+                                fillDate();\n\
+                                set();\n\
+                                notifyChange(oldDate, e.type);\n\
+                            }\n\
+                            break;\n\
+                    }\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        actions = {\n\
+            incrementHours: function () {\n\
+                checkDate('add', 'hours', 1);\n\
+            },\n\
+\n\
+            incrementMinutes: function () {\n\
+                checkDate('add', 'minutes', picker.options.minuteStepping);\n\
+            },\n\
+\n\
+            incrementSeconds: function () {\n\
+                checkDate('add', 'seconds', 1);\n\
+            },\n\
+\n\
+            decrementHours: function () {\n\
+                checkDate('subtract', 'hours', 1);\n\
+            },\n\
+\n\
+            decrementMinutes: function () {\n\
+                checkDate('subtract', 'minutes', picker.options.minuteStepping);\n\
+            },\n\
+\n\
+            decrementSeconds: function () {\n\
+                checkDate('subtract', 'seconds', 1);\n\
+            },\n\
+\n\
+            togglePeriod: function () {\n\
+                var hour = picker.date.hours();\n\
+                if (hour >= 12) {\n\
+                    hour -= 12;\n\
+                } else {\n\
+                    hour += 12;\n\
+                }\n\
+                picker.date.hours(hour);\n\
+            },\n\
+\n\
+            showPicker: function () {\n\
+                picker.widget.find('.timepicker > div:not(.timepicker-picker)').hide();\n\
+                picker.widget.find('.timepicker .timepicker-picker').show();\n\
+            },\n\
+\n\
+            showHours: function () {\n\
+                picker.widget.find('.timepicker .timepicker-picker').hide();\n\
+                picker.widget.find('.timepicker .timepicker-hours').show();\n\
+            },\n\
+\n\
+            showMinutes: function () {\n\
+                picker.widget.find('.timepicker .timepicker-picker').hide();\n\
+                picker.widget.find('.timepicker .timepicker-minutes').show();\n\
+            },\n\
+\n\
+            showSeconds: function () {\n\
+                picker.widget.find('.timepicker .timepicker-picker').hide();\n\
+                picker.widget.find('.timepicker .timepicker-seconds').show();\n\
+            },\n\
+\n\
+            selectHour: function (e) {\n\
+                var hour = parseInt($(e.target).text(), 10);\n\
+                if (!picker.use24hours) {\n\
+                    if (picker.date.hours() >= 12) {\n\
+                        if (hour !== 12) {\n\
+                            hour += 12;\n\
+                        }\n\
+                    } else {\n\
+                        if (hour === 12) {\n\
+                            hour = 0;\n\
+                        }\n\
+                    }\n\
+                }\n\
+                picker.date.hours(hour);\n\
+                actions.showPicker.call(picker);\n\
+            },\n\
+\n\
+            selectMinute: function (e) {\n\
+                picker.date.minutes(parseInt($(e.target).text(), 10));\n\
+                actions.showPicker.call(picker);\n\
+            },\n\
+\n\
+            selectSecond: function (e) {\n\
+                picker.date.seconds(parseInt($(e.target).text(), 10));\n\
+                actions.showPicker.call(picker);\n\
+            }\n\
+        },\n\
+\n\
+        doAction = function (e) {\n\
+            var oldDate = moment(picker.date),\n\
+                action = $(e.currentTarget).data('action'),\n\
+                rv = actions[action].apply(picker, arguments);\n\
+            stopEvent(e);\n\
+            if (!picker.date) {\n\
+                picker.date = moment({y: 1970});\n\
+            }\n\
+            set();\n\
+            fillTime();\n\
+            notifyChange(oldDate, e.type);\n\
+            return rv;\n\
+        },\n\
+\n\
+        stopEvent = function (e) {\n\
+            e.stopPropagation();\n\
+            e.preventDefault();\n\
+        },\n\
+\n\
+        keydown = function (e) {\n\
+            if (e.keyCode === 27) { // allow escape to hide picker\n\
+                picker.hide();\n\
+            }\n\
+        },\n\
+\n\
+        change = function (e) {\n\
+            moment.locale(picker.options.language);\n\
+            var input = $(e.target), oldDate = moment(picker.date), newDate = moment(input.val(), picker.format, picker.options.useStrict);\n\
+            if (newDate.isValid() && !isInDisableDates(newDate) && isInEnableDates(newDate)) {\n\
+                update();\n\
+                picker.setValue(newDate);\n\
+                notifyChange(oldDate, e.type);\n\
+                set();\n\
+            }\n\
+            else {\n\
+                picker.viewDate = oldDate;\n\
+                picker.unset = true;\n\
+                notifyChange(oldDate, e.type);\n\
+                notifyError(newDate);\n\
+            }\n\
+        },\n\
+\n\
+        showMode = function (dir) {\n\
+            if (dir) {\n\
+                picker.viewMode = Math.max(picker.minViewMode, Math.min(2, picker.viewMode + dir));\n\
+            }\n\
+            picker.widget.find('.datepicker > div').hide().filter('.datepicker-' + dpGlobal.modes[picker.viewMode].clsName).show();\n\
+        },\n\
+\n\
+        attachDatePickerEvents = function () {\n\
+            var $this, $parent, expanded, closed, collapseData;\n\
+            picker.widget.on('click', '.datepicker *', $.proxy(click, this)); // this handles date picker clicks\n\
+            picker.widget.on('click', '[data-action]', $.proxy(doAction, this)); // this handles time picker clicks\n\
+            picker.widget.on('mousedown', $.proxy(stopEvent, this));\n\
+            picker.element.on('keydown', $.proxy(keydown, this));\n\
+            if (picker.options.pickDate && picker.options.pickTime) {\n\
+                picker.widget.on('click.togglePicker', '.accordion-toggle', function (e) {\n\
+                    e.stopPropagation();\n\
+                    $this = $(this);\n\
+                    $parent = $this.closest('ul');\n\
+                    expanded = $parent.find('.in');\n\
+                    closed = $parent.find('.collapse:not(.in)');\n\
+\n\
+                    if (expanded && expanded.length) {\n\
+                        collapseData = expanded.data('collapse');\n\
+                        if (collapseData && collapseData.transitioning) {\n\
+                            return;\n\
+                        }\n\
+                        expanded.collapse('hide');\n\
+                        closed.collapse('show');\n\
+                        $this.find('span').toggleClass(picker.options.icons.time + ' ' + picker.options.icons.date);\n\
+                        if (picker.component) {\n\
+                            picker.component.find('span').toggleClass(picker.options.icons.time + ' ' + picker.options.icons.date);\n\
+                        }\n\
+                    }\n\
+                });\n\
+            }\n\
+            if (picker.isInput) {\n\
+                picker.element.on({\n\
+                    'click': $.proxy(picker.show, this),\n\
+                    'focus': $.proxy(picker.show, this),\n\
+                    'change': $.proxy(change, this),\n\
+                    'blur': $.proxy(picker.hide, this)\n\
+                });\n\
+            } else {\n\
+                picker.element.on({\n\
+                    'change': $.proxy(change, this)\n\
+                }, 'input');\n\
+                if (picker.component) {\n\
+                    picker.component.on('click', $.proxy(picker.show, this));\n\
+                    picker.component.on('mousedown', $.proxy(stopEvent, this));\n\
+                } else {\n\
+                    picker.element.on('click', $.proxy(picker.show, this));\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        attachDatePickerGlobalEvents = function () {\n\
+            $(window).on(\n\
+                'resize.datetimepicker' + picker.id, $.proxy(place, this));\n\
+            if (!picker.isInput) {\n\
+                $(document).on(\n\
+                    'mousedown.datetimepicker' + picker.id, $.proxy(picker.hide, this));\n\
+            }\n\
+        },\n\
+\n\
+        detachDatePickerEvents = function () {\n\
+            picker.widget.off('click', '.datepicker *', picker.click);\n\
+            picker.widget.off('click', '[data-action]');\n\
+            picker.widget.off('mousedown', picker.stopEvent);\n\
+            if (picker.options.pickDate && picker.options.pickTime) {\n\
+                picker.widget.off('click.togglePicker');\n\
+            }\n\
+            if (picker.isInput) {\n\
+                picker.element.off({\n\
+                    'focus': picker.show,\n\
+                    'change': change,\n\
+                    'click': picker.show,\n\
+                    'blur' : picker.hide\n\
+                });\n\
+            } else {\n\
+                picker.element.off({\n\
+                    'change': change\n\
+                }, 'input');\n\
+                if (picker.component) {\n\
+                    picker.component.off('click', picker.show);\n\
+                    picker.component.off('mousedown', picker.stopEvent);\n\
+                } else {\n\
+                    picker.element.off('click', picker.show);\n\
+                }\n\
+            }\n\
+        },\n\
+\n\
+        detachDatePickerGlobalEvents = function () {\n\
+            $(window).off('resize.datetimepicker' + picker.id);\n\
+            if (!picker.isInput) {\n\
+                $(document).off('mousedown.datetimepicker' + picker.id);\n\
+            }\n\
+        },\n\
+\n\
+        isInFixed = function () {\n\
+            if (picker.element) {\n\
+                var parents = picker.element.parents(), inFixed = false, i;\n\
+                for (i = 0; i < parents.length; i++) {\n\
+                    if ($(parents[i]).css('position') === 'fixed') {\n\
+                        inFixed = true;\n\
+                        break;\n\
+                    }\n\
+                }\n\
+                return inFixed;\n\
+            } else {\n\
+                return false;\n\
+            }\n\
+        },\n\
+\n\
+        set = function () {\n\
+            moment.locale(picker.options.language);\n\
+            var formatted = '';\n\
+            if (!picker.unset) {\n\
+                formatted = moment(picker.date).format(picker.format);\n\
+            }\n\
+            getPickerInput().val(formatted);\n\
+            picker.element.data('date', formatted);\n\
+            if (!picker.options.pickTime) {\n\
+                picker.hide();\n\
+            }\n\
+        },\n\
+\n\
+        checkDate = function (direction, unit, amount) {\n\
+            moment.locale(picker.options.language);\n\
+            var newDate;\n\
+            if (direction === 'add') {\n\
+                newDate = moment(picker.date);\n\
+                if (newDate.hours() === 23) {\n\
+                    newDate.add(amount, unit);\n\
+                }\n\
+                newDate.add(amount, unit);\n\
+            }\n\
+            else {\n\
+                newDate = moment(picker.date).subtract(amount, unit);\n\
+            }\n\
+            if (isInDisableDates(moment(newDate.subtract(amount, unit))) || isInDisableDates(newDate)) {\n\
+                notifyError(newDate.format(picker.format));\n\
+                return;\n\
+            }\n\
+\n\
+            if (direction === 'add') {\n\
+                picker.date.add(amount, unit);\n\
+            }\n\
+            else {\n\
+                picker.date.subtract(amount, unit);\n\
+            }\n\
+            picker.unset = false;\n\
+        },\n\
+\n\
+        isInDisableDates = function (date, timeUnit) {\n\
+            moment.locale(picker.options.language);\n\
+            var maxDate = moment(picker.options.maxDate, picker.format, picker.options.useStrict),\n\
+                minDate = moment(picker.options.minDate, picker.format, picker.options.useStrict);\n\
+\n\
+            if (timeUnit) {\n\
+                maxDate = maxDate.endOf(timeUnit);\n\
+                minDate = minDate.startOf(timeUnit);\n\
+            }\n\
+\n\
+            if (date.isAfter(maxDate) || date.isBefore(minDate)) {\n\
+                return true;\n\
+            }\n\
+            if (picker.options.disabledDates === false) {\n\
+                return false;\n\
+            }\n\
+            return picker.options.disabledDates[date.format('YYYY-MM-DD')] === true;\n\
+        },\n\
+        isInEnableDates = function (date) {\n\
+            moment.locale(picker.options.language);\n\
+            if (picker.options.enabledDates === false) {\n\
+                return true;\n\
+            }\n\
+            return picker.options.enabledDates[date.format('YYYY-MM-DD')] === true;\n\
+        },\n\
+\n\
+        indexGivenDates = function (givenDatesArray) {\n\
+            // Store given enabledDates and disabledDates as keys.\n\
+            // This way we can check their existence in O(1) time instead of looping through whole array.\n\
+            // (for example: picker.options.enabledDates['2014-02-27'] === true)\n\
+            var givenDatesIndexed = {}, givenDatesCount = 0, i;\n\
+            for (i = 0; i < givenDatesArray.length; i++) {\n\
+                if (moment.isMoment(givenDatesArray[i]) || givenDatesArray[i] instanceof Date) {\n\
+                    dDate = moment(givenDatesArray[i]);\n\
+                } else {\n\
+                    dDate = moment(givenDatesArray[i], picker.format, picker.options.useStrict);\n\
+                }\n\
+                if (dDate.isValid()) {\n\
+                    givenDatesIndexed[dDate.format('YYYY-MM-DD')] = true;\n\
+                    givenDatesCount++;\n\
+                }\n\
+            }\n\
+            if (givenDatesCount > 0) {\n\
+                return givenDatesIndexed;\n\
+            }\n\
+            return false;\n\
+        },\n\
+\n\
+        padLeft = function (string) {\n\
+            string = string.toString();\n\
+            if (string.length >= 2) {\n\
+                return string;\n\
+            }\n\
+            return '0' + string;\n\
+        },\n\
+\n\
+        getTemplate = function () {\n\
+            var\n\
+                headTemplate =\n\
+                        '<thead>' +\n\
+                            '<tr>' +\n\
+                                '<th class=\"prev\">&lsaquo;</th><th colspan=\"' + (picker.options.calendarWeeks ? '6' : '5') + '\" class=\"picker-switch\"></th><th class=\"next\">&rsaquo;</th>' +\n\
+                            '</tr>' +\n\
+                        '</thead>',\n\
+                contTemplate =\n\
+                        '<tbody><tr><td colspan=\"' + (picker.options.calendarWeeks ? '8' : '7') + '\"></td></tr></tbody>',\n\
+                template = '<div class=\"datepicker-days\">' +\n\
+                    '<table class=\"table-condensed\">' + headTemplate + '<tbody></tbody></table>' +\n\
+                '</div>' +\n\
+                '<div class=\"datepicker-months\">' +\n\
+                    '<table class=\"table-condensed\">' + headTemplate + contTemplate + '</table>' +\n\
+                '</div>' +\n\
+                '<div class=\"datepicker-years\">' +\n\
+                    '<table class=\"table-condensed\">' + headTemplate + contTemplate + '</table>' +\n\
+                '</div>',\n\
+                ret = '';\n\
+            if (picker.options.pickDate && picker.options.pickTime) {\n\
+                ret = '<div class=\"bootstrap-datetimepicker-widget' + (picker.options.sideBySide ? ' timepicker-sbs' : '') + (picker.use24hours ? ' usetwentyfour' : '') + ' dropdown-menu\" style=\"z-index:9999 !important;\">';\n\
+                if (picker.options.sideBySide) {\n\
+                    ret += '<div class=\"row\">' +\n\
+                       '<div class=\"col-sm-6 datepicker\">' + template + '</div>' +\n\
+                       '<div class=\"col-sm-6 timepicker\">' + tpGlobal.getTemplate() + '</div>' +\n\
+                     '</div>';\n\
+                } else {\n\
+                    ret += '<ul class=\"list-unstyled\">' +\n\
+                        '<li' + (picker.options.collapse ? ' class=\"collapse in\"' : '') + '>' +\n\
+                            '<div class=\"datepicker\">' + template + '</div>' +\n\
+                        '</li>' +\n\
+                        '<li class=\"picker-switch accordion-toggle\"><a class=\"btn\" style=\"width:100%\"><span class=\"' + picker.options.icons.time + '\"></span></a></li>' +\n\
+                        '<li' + (picker.options.collapse ? ' class=\"collapse\"' : '') + '>' +\n\
+                            '<div class=\"timepicker\">' + tpGlobal.getTemplate() + '</div>' +\n\
+                        '</li>' +\n\
+                   '</ul>';\n\
+                }\n\
+                ret += '</div>';\n\
+                return ret;\n\
+            }\n\
+            if (picker.options.pickTime) {\n\
+                return (\n\
+                    '<div class=\"bootstrap-datetimepicker-widget dropdown-menu\">' +\n\
+                        '<div class=\"timepicker\">' + tpGlobal.getTemplate() + '</div>' +\n\
+                    '</div>'\n\
+                );\n\
+            }\n\
+            return (\n\
+                '<div class=\"bootstrap-datetimepicker-widget dropdown-menu\">' +\n\
+                    '<div class=\"datepicker\">' + template + '</div>' +\n\
+                '</div>'\n\
+            );\n\
+        },\n\
+\n\
+        dpGlobal = {\n\
+            modes: [\n\
+                {\n\
+                    clsName: 'days',\n\
+                    navFnc: 'month',\n\
+                    navStep: 1\n\
+                },\n\
+                {\n\
+                    clsName: 'months',\n\
+                    navFnc: 'year',\n\
+                    navStep: 1\n\
+                },\n\
+                {\n\
+                    clsName: 'years',\n\
+                    navFnc: 'year',\n\
+                    navStep: 10\n\
+                }\n\
+            ]\n\
+        },\n\
+\n\
+        tpGlobal = {\n\
+            hourTemplate: '<span data-action=\"showHours\"   data-time-component=\"hours\"   class=\"timepicker-hour\"></span>',\n\
+            minuteTemplate: '<span data-action=\"showMinutes\" data-time-component=\"minutes\" class=\"timepicker-minute\"></span>',\n\
+            secondTemplate: '<span data-action=\"showSeconds\"  data-time-component=\"seconds\" class=\"timepicker-second\"></span>'\n\
+        };\n\
+\n\
+        tpGlobal.getTemplate = function () {\n\
+            return (\n\
+                '<div class=\"timepicker-picker\">' +\n\
+                    '<table class=\"table-condensed\">' +\n\
+                        '<tr>' +\n\
+                            '<td><a href=\"#\" class=\"btn\" data-action=\"incrementHours\"><span class=\"' + picker.options.icons.up + '\"></span></a></td>' +\n\
+                            '<td class=\"separator\"></td>' +\n\
+                            '<td>' + (picker.options.useMinutes ? '<a href=\"#\" class=\"btn\" data-action=\"incrementMinutes\"><span class=\"' + picker.options.icons.up + '\"></span></a>' : '') + '</td>' +\n\
+                            (picker.options.useSeconds ?\n\
+                                '<td class=\"separator\"></td><td><a href=\"#\" class=\"btn\" data-action=\"incrementSeconds\"><span class=\"' + picker.options.icons.up + '\"></span></a></td>' : '') +\n\
+                            (picker.use24hours ? '' : '<td class=\"separator\"></td>') +\n\
+                        '</tr>' +\n\
+                        '<tr>' +\n\
+                            '<td>' + tpGlobal.hourTemplate + '</td> ' +\n\
+                            '<td class=\"separator\">:</td>' +\n\
+                            '<td>' + (picker.options.useMinutes ? tpGlobal.minuteTemplate : '<span class=\"timepicker-minute\">00</span>') + '</td> ' +\n\
+                            (picker.options.useSeconds ?\n\
+                                '<td class=\"separator\">:</td><td>' + tpGlobal.secondTemplate + '</td>' : '') +\n\
+                            (picker.use24hours ? '' : '<td class=\"separator\"></td>' +\n\
+                            '<td><button type=\"button\" class=\"btn btn-primary\" data-action=\"togglePeriod\"></button></td>') +\n\
+                        '</tr>' +\n\
+                        '<tr>' +\n\
+                            '<td><a href=\"#\" class=\"btn\" data-action=\"decrementHours\"><span class=\"' + picker.options.icons.down + '\"></span></a></td>' +\n\
+                            '<td class=\"separator\"></td>' +\n\
+                            '<td>' + (picker.options.useMinutes ? '<a href=\"#\" class=\"btn\" data-action=\"decrementMinutes\"><span class=\"' + picker.options.icons.down + '\"></span></a>' : '') + '</td>' +\n\
+                            (picker.options.useSeconds ?\n\
+                                '<td class=\"separator\"></td><td><a href=\"#\" class=\"btn\" data-action=\"decrementSeconds\"><span class=\"' + picker.options.icons.down + '\"></span></a></td>' : '') +\n\
+                            (picker.use24hours ? '' : '<td class=\"separator\"></td>') +\n\
+                        '</tr>' +\n\
+                    '</table>' +\n\
+                '</div>' +\n\
+                '<div class=\"timepicker-hours\" data-action=\"selectHour\">' +\n\
+                    '<table class=\"table-condensed\"></table>' +\n\
+                '</div>' +\n\
+                '<div class=\"timepicker-minutes\" data-action=\"selectMinute\">' +\n\
+                    '<table class=\"table-condensed\"></table>' +\n\
+                '</div>' +\n\
+                (picker.options.useSeconds ?\n\
+                    '<div class=\"timepicker-seconds\" data-action=\"selectSecond\"><table class=\"table-condensed\"></table></div>' : '')\n\
+            );\n\
+        };\n\
+\n\
+        picker.destroy = function () {\n\
+            detachDatePickerEvents();\n\
+            detachDatePickerGlobalEvents();\n\
+            picker.widget.remove();\n\
+            picker.element.removeData('DateTimePicker');\n\
+            if (picker.component) {\n\
+                picker.component.removeData('DateTimePicker');\n\
+            }\n\
+        };\n\
+\n\
+        picker.show = function (e) {\n\
+            if (getPickerInput().prop('disabled')) {\n\
+                return;\n\
+            }\n\
+            if (picker.options.useCurrent) {\n\
+                if (getPickerInput().val() === '') {\n\
+                    if (picker.options.minuteStepping !== 1) {\n\
+                        var mDate = moment(),\n\
+                        rInterval = picker.options.minuteStepping;\n\
+                        mDate.minutes((Math.round(mDate.minutes() / rInterval) * rInterval) % 60).seconds(0);\n\
+                        picker.setValue(mDate.format(picker.format));\n\
+                    } else {\n\
+                        picker.setValue(moment().format(picker.format));\n\
+                    }\n\
+                    notifyChange('', e.type);\n\
+                }\n\
+            }\n\
+            // if this is a click event on the input field and picker is already open don't hide it\n\
+            if (e && e.type === 'click' && picker.isInput && picker.widget.hasClass('picker-open')) {\n\
+                return;\n\
+            }\n\
+            if (picker.widget.hasClass('picker-open')) {\n\
+                picker.widget.hide();\n\
+                picker.widget.removeClass('picker-open');\n\
+            }\n\
+            else {\n\
+                picker.widget.show();\n\
+                picker.widget.addClass('picker-open');\n\
+            }\n\
+            picker.height = picker.component ? picker.component.outerHeight() : picker.element.outerHeight();\n\
+            place();\n\
+            picker.element.trigger({\n\
+                type: 'dp.show',\n\
+                date: moment(picker.date)\n\
+            });\n\
+            attachDatePickerGlobalEvents();\n\
+            if (e) {\n\
+                stopEvent(e);\n\
+            }\n\
+        };\n\
+\n\
+        picker.disable = function () {\n\
+            var input = getPickerInput();\n\
+            if (input.prop('disabled')) {\n\
+                return;\n\
+            }\n\
+            input.prop('disabled', true);\n\
+            detachDatePickerEvents();\n\
+        };\n\
+\n\
+        picker.enable = function () {\n\
+            var input = getPickerInput();\n\
+            if (!input.prop('disabled')) {\n\
+                return;\n\
+            }\n\
+            input.prop('disabled', false);\n\
+            attachDatePickerEvents();\n\
+        };\n\
+\n\
+        picker.hide = function () {\n\
+            // Ignore event if in the middle of a picker transition\n\
+            var collapse = picker.widget.find('.collapse'), i, collapseData;\n\
+            for (i = 0; i < collapse.length; i++) {\n\
+                collapseData = collapse.eq(i).data('collapse');\n\
+                if (collapseData && collapseData.transitioning) {\n\
+                    return;\n\
+                }\n\
+            }\n\
+            picker.widget.hide();\n\
+            picker.widget.removeClass('picker-open');\n\
+            picker.viewMode = picker.startViewMode;\n\
+            showMode();\n\
+            picker.element.trigger({\n\
+                type: 'dp.hide',\n\
+                date: moment(picker.date)\n\
+            });\n\
+            detachDatePickerGlobalEvents();\n\
+        };\n\
+\n\
+        picker.setValue = function (newDate) {\n\
+            moment.locale(picker.options.language);\n\
+            if (!newDate) {\n\
+                picker.unset = true;\n\
+                set();\n\
+            } else {\n\
+                picker.unset = false;\n\
+            }\n\
+            if (!moment.isMoment(newDate)) {\n\
+                newDate = (newDate instanceof Date) ? moment(newDate) : moment(newDate, picker.format, picker.options.useStrict);\n\
+            } else {\n\
+                newDate = newDate.locale(picker.options.language);\n\
+            }\n\
+            if (newDate.isValid()) {\n\
+                picker.date = newDate;\n\
+                set();\n\
+                picker.viewDate = moment({y: picker.date.year(), M: picker.date.month()});\n\
+                fillDate();\n\
+                fillTime();\n\
+            }\n\
+            else {\n\
+                notifyError(newDate);\n\
+            }\n\
+        };\n\
+\n\
+        picker.getDate = function () {\n\
+            if (picker.unset) {\n\
+                return null;\n\
+            }\n\
+            return moment(picker.date);\n\
+        };\n\
+\n\
+        picker.setDate = function (date) {\n\
+            var oldDate = moment(picker.date);\n\
+            if (!date) {\n\
+                picker.setValue(null);\n\
+            } else {\n\
+                picker.setValue(date);\n\
+            }\n\
+            notifyChange(oldDate, 'function');\n\
+        };\n\
+\n\
+        picker.setDisabledDates = function (dates) {\n\
+            picker.options.disabledDates = indexGivenDates(dates);\n\
+            if (picker.viewDate) {\n\
+                update();\n\
+            }\n\
+        };\n\
+\n\
+        picker.setEnabledDates = function (dates) {\n\
+            picker.options.enabledDates = indexGivenDates(dates);\n\
+            if (picker.viewDate) {\n\
+                update();\n\
+            }\n\
+        };\n\
+\n\
+        picker.setMaxDate = function (date) {\n\
+            if (date === undefined) {\n\
+                return;\n\
+            }\n\
+            if (moment.isMoment(date) || date instanceof Date) {\n\
+                picker.options.maxDate = moment(date);\n\
+            } else {\n\
+                picker.options.maxDate = moment(date, picker.format, picker.options.useStrict);\n\
+            }\n\
+            if (picker.viewDate) {\n\
+                update();\n\
+            }\n\
+        };\n\
+\n\
+        picker.setMinDate = function (date) {\n\
+            if (date === undefined) {\n\
+                return;\n\
+            }\n\
+            if (moment.isMoment(date) || date instanceof Date) {\n\
+                picker.options.minDate = moment(date);\n\
+            } else {\n\
+                picker.options.minDate = moment(date, picker.format, picker.options.useStrict);\n\
+            }\n\
+            if (picker.viewDate) {\n\
+                update();\n\
+            }\n\
+        };\n\
+\n\
+        init();\n\
+    };\n\
+\n\
+    $.fn.datetimepicker = function (options) {\n\
+        return this.each(function () {\n\
+            var $this = $(this),\n\
+                data = $this.data('DateTimePicker');\n\
+            if (!data) {\n\
+                $this.data('DateTimePicker', new DateTimePicker(this, options));\n\
+            }\n\
+        });\n\
+    };\n\
+\n\
+    $.fn.datetimepicker.defaults = {\n\
+        format: false,\n\
+        pickDate: true,\n\
+        pickTime: true,\n\
+        useMinutes: true,\n\
+        useSeconds: false,\n\
+        useCurrent: true,\n\
+        calendarWeeks: false,\n\
+        minuteStepping: 1,\n\
+        minDate: moment({y: 1900}),\n\
+        maxDate: moment().add(100, 'y'),\n\
+        showToday: true,\n\
+        collapse: true,\n\
+        language: moment.locale(),\n\
+        defaultDate: '',\n\
+        disabledDates: false,\n\
+        enabledDates: false,\n\
+        icons: {},\n\
+        useStrict: false,\n\
+        direction: 'auto',\n\
+        sideBySide: false,\n\
+        daysOfWeekDisabled: [],\n\
+        widgetParent: false\n\
+    };\n\
+}));\n\
+\n\
+//# sourceURL=local/datetimepicker/bootstrap-datetimepicker.js"
 ));
-require.register("otpjs/lib/index.js", Function("exports, require, module",
-"module.exports.models = require('./models');\n\
-module.exports.views = require('./views');\n\
-module.exports.map_views = require('./map_views');\n\
-module.exports.request_views = require('./request_views');\n\
-module.exports.narrative_views = require('./narrative_views');\n\
-module.exports.topo_views = require('./topo_views');\n\
-module.exports.bike_views = require('./bike_views');\n\
-module.exports.utils = require('./utils');\t//@ sourceURL=otpjs/lib/index.js"
+
+require.modules["datetimepicker"] = require.modules["./local/datetimepicker"];
+
+
+require.register("otpjs", Function("exports, module",
+"module.exports.models = require('otpjs/lib/models.js');\n\
+module.exports.views = require('otpjs/lib/views.js');\n\
+module.exports.map_views = require('otpjs/lib/map_views.js');\n\
+module.exports.request_views = require('otpjs/lib/request_views.js');\n\
+module.exports.narrative_views = require('otpjs/lib/narrative_views.js');\n\
+module.exports.topo_views = require('otpjs/lib/topo_views.js');\n\
+module.exports.bike_views = require('otpjs/lib/bike_views.js');\n\
+module.exports.utils = require('otpjs/lib/utils.js');\t\n\
+//# sourceURL=lib/index.js"
 ));
-require.register("otpjs/lib/models.js", Function("exports, require, module",
+
+require.register("otpjs/lib/models.js", Function("exports, module",
 "'use strict';\n\
 \n\
-var _ = require('underscore');\n\
-var Backbone = require('backbone');\n\
-var $ = require('jquery');\n\
-var moment = require('moment');\n\
+var _ = require('jashkenas~underscore@1.7.0');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var moment = require('moment~moment@2.8.4');\n\
 \n\
-var utils = require('./utils');\n\
+var utils = require('otpjs/lib/utils.js');\n\
 \n\
-module.exports.OtpPlanRequest = Backbone.Model.extend({\n\
+var PlanRequest = module.exports.OtpPlanRequest = Backbone.Model.extend({\n\
 \n\
       initialize: function(opts) {\n\
 \n\
@@ -31225,7 +36101,7 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({\n\
 \n\
       processRequest: function(data) {\n\
 \n\
-        var response = new OTP.models.OtpPlanResponse(data);\n\
+        var response = new PlanResponse(data);\n\
 \n\
         response.set('request', this);\n\
 \n\
@@ -31253,28 +36129,28 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({\n\
 \n\
         var params = _.map(this.attributes, function(value, key) {\n\
           if(value) {\n\
-            return key + \"=\" + value;\n\
+            return key + '=' + value;\n\
           }\n\
           else\n\
-            return \"\";\n\
+            return '';\n\
         });\n\
 \n\
         params = _.filter(params, function(val) {\n\
-          return val != \"\";\n\
+          return val !== '';\n\
         });\n\
 \n\
-        return \"?\" + params.join(\"&\");\n\
+        return '?' + params.join('&');\n\
       },\n\
 \n\
       fromQueryString: function(queryString) {\n\
 \n\
-        var params = queryString.split(\"&\");\n\
+        var params = queryString.split('&');\n\
 \n\
         var data = {};\n\
 \n\
         _.each(params, function(param) {\n\
 \n\
-          var keyValue = param.split(\"=\");\n\
+          var keyValue = param.split('=');\n\
 \n\
           if(keyValue.lengh = 2) {\n\
             data[keyValue[0]] = keyValue[1];\n\
@@ -31287,24 +36163,24 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({\n\
 });\n\
 \n\
 \n\
-module.exports.OtpPlanResponse = Backbone.Model.extend({\n\
+var PlanResponse = module.exports.OtpPlanResponse = Backbone.Model.extend({\n\
 \n\
       initialize: function(opts){\n\
 \n\
         // need this or need to move init code to constructor?\n\
         this.unset('plan');\n\
 \n\
-        var rawAttributes = arguments[0]['plan'];\n\
+        var rawAttributes = arguments[0].plan;\n\
 \n\
         if(rawAttributes) {\n\
 \n\
           var processedAttributes = _.omit(rawAttributes, ['itineraries', 'to', 'from']);\n\
 \n\
-          processedAttributes.to = new OTP.models.OtpItineraryStop(rawAttributes['to']);\n\
-          processedAttributes.from = new OTP.models.OtpItineraryStop(rawAttributes['from']);\n\
+          processedAttributes.to = new ItineraryStop(rawAttributes.to);\n\
+          processedAttributes.from = new ItineraryStop(rawAttributes.from);\n\
 \n\
-          processedAttributes.itineraries = new OTP.models.OtpItineraries();\n\
-          processedAttributes.itineraries.add(rawAttributes['itineraries']);\n\
+          processedAttributes.itineraries = new Itineraries();\n\
+          processedAttributes.itineraries.add(rawAttributes.itineraries);\n\
           //processedAttributes.itineraries.initListeners();\n\
 \n\
           this.set(processedAttributes);\n\
@@ -31322,7 +36198,7 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({\n\
       },\n\
 \n\
       getTimeOffset: function() {\n\
-        var queryDate = moment(this.get('request').get('date') + \" \" + this.get('request').get('time'), \"MM-DD-YYYY h:mm a\");\n\
+        var queryDate = moment(this.get('request').get('date') + ' ' + this.get('request').get('time'), 'MM-DD-YYYY h:mm a');\n\
         var responseDate = moment(this.get('date'));\n\
         var offset = (queryDate - responseDate)/3600000;\n\
         return offset;\n\
@@ -31330,15 +36206,15 @@ module.exports.OtpPlanResponse = Backbone.Model.extend({\n\
 });\n\
 \n\
 \n\
-module.exports.OtpItinerary = Backbone.Model.extend({\n\
+var Itinerary = module.exports.OtpItinerary = Backbone.Model.extend({\n\
 \n\
       initialize: function(opts){\n\
 \n\
         var rawAttributes = arguments[0];\n\
         var processedAttributes = _.omit(rawAttributes, ['legs']);\n\
 \n\
-        processedAttributes.legs = new OTP.models.OtpItineraryLegs();\n\
-        processedAttributes.legs.add(rawAttributes['legs']);\n\
+        processedAttributes.legs = new ItineraryLegs();\n\
+        processedAttributes.legs.add(rawAttributes.legs);\n\
 \n\
         this.set(processedAttributes);\n\
 \n\
@@ -31369,21 +36245,21 @@ module.exports.OtpItinerary = Backbone.Model.extend({\n\
                   [Math.max(start.lat, end.lat), Math.max(start.lon, end.lon)]];\n\
       },\n\
 \n\
-      /* returns the \"full\" duration of a trip, including the duration of the\n\
+      /* returns the 'full' duration of a trip, including the duration of the\n\
        * trip itself plus any time between the trip and the requested departure/\n\
        * arrival time. Requires the request model as a parameter.\n\
        */\n\
 \n\
       getFullDuration : function(request, offset) {\n\
-        var queryDateTime = moment(request.get('date') + \" \" + request.get('time'), \"MM-DD-YYYY h:mma\");\n\
+        var queryDateTime = moment(request.get('date') + ' ' + request.get('time'), 'MM-DD-YYYY h:mma');\n\
         var startTime = moment(this.get('startTime')), endTime = moment(this.get('endTime'));\n\
 \n\
         if(offset) {\n\
-          startTime = startTime.add(\"hours\", offset);\n\
-          endTime = endTime.add(\"hours\", offset);\n\
+          startTime = startTime.add('hours', offset);\n\
+          endTime = endTime.add('hours', offset);\n\
         }\n\
 \n\
-        if(request.get('arriveBy') === \"true\" || request.get('arriveBy') === true) {\n\
+        if(request.get('arriveBy') === 'true' || request.get('arriveBy') === true) {\n\
           return queryDateTime - startTime;\n\
         }\n\
         return endTime - queryDateTime;\n\
@@ -31391,35 +36267,35 @@ module.exports.OtpItinerary = Backbone.Model.extend({\n\
 \n\
   });\n\
 \n\
-module.exports.OtpItineraries = Backbone.Collection.extend({\n\
+var Itineraries = module.exports.OtpItineraries = Backbone.Collection.extend({\n\
 \n\
       type: 'OtpItineraries',\n\
-      model: module.exports.OtpItinerary,\n\
+      model: Itinerary,\n\
 \n\
       initialize : function() {\n\
         // for any itin added to this collection..\n\
-        this.on(\"add\", function(itin) {\n\
-          // ..wire its \"activate\" event to trigger a \"deactivate\" on the collection's previously active itin (if any exists)\n\
-          this.listenTo(itin, \"activate\", function() {\n\
-            if(this.activeItinerary) this.activeItinerary.trigger(\"deactivate\");\n\
+        this.on('add', function(itin) {\n\
+          // ..wire its 'activate' event to trigger a 'deactivate' on the collection's previously active itin (if any exists)\n\
+          this.listenTo(itin, 'activate', function() {\n\
+            if(this.activeItinerary) this.activeItinerary.trigger('deactivate');\n\
             // ..and set the collection's active itin to the newly activated one\n\
             this.activeItinerary = itin;\n\
-          })\n\
+          });\n\
         });\n\
       },\n\
 \n\
   });\n\
 \n\
 \n\
-module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
+var ItineraryLeg = module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
 \n\
       initialize: function(){\n\
 \n\
         var rawAttributes = arguments[0];\n\
         var processedAttributes = _.omit(rawAttributes, ['steps']);\n\
 \n\
-        processedAttributes.steps = new OTP.models.OtpItineraryWalkSteps();\n\
-        processedAttributes.steps.add(rawAttributes['steps']);\n\
+        processedAttributes.steps = new ItineraryWalkSteps();\n\
+        processedAttributes.steps.add(rawAttributes.steps);\n\
 \n\
         this.set(processedAttributes);\n\
 \n\
@@ -31466,46 +36342,46 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
 \n\
       isTransit : function(mode) {\n\
         mode = mode || this.get('mode');\n\
-        return mode === \"TRANSIT\" || mode === \"SUBWAY\" || mode === \"RAIL\" || mode === \"BUS\" || mode === \"TRAM\" || mode === \"GONDOLA\" || mode === \"TRAINISH\" || mode === \"BUSISH\";\n\
+        return mode === 'TRANSIT' || mode === 'SUBWAY' || mode === 'RAIL' || mode === 'BUS' || mode === 'TRAM' || mode === 'GONDOLA' || mode === 'TRAINISH' || mode === 'BUSISH';\n\
       },\n\
 \n\
       isWalk : function(mode) {\n\
         mode = mode || this.get('mode');\n\
-        return mode === \"WALK\";\n\
+        return mode === 'WALK';\n\
       },\n\
 \n\
       isBicycle : function(mode) {\n\
         mode = mode || this.get('mode');\n\
-        return mode === \"BICYCLE\";\n\
+        return mode === 'BICYCLE';\n\
       },\n\
 \n\
       isCar : function(mode) {\n\
         mode = mode || this.get('mode');\n\
-        return mode === \"CAR\";\n\
+        return mode === 'CAR';\n\
       },\n\
 \n\
       getMapColor : function(mode) {\n\
         mode = mode || this.get('mode');\n\
-        if(mode === \"WALK\") return '#444';\n\
-        if(mode === \"BICYCLE\") return '#0073e5';\n\
-        if(mode === \"SUBWAY\") return '#f00';\n\
-        if(mode === \"RAIL\") return '#b00';\n\
-        if(mode === \"BUS\") return '#080';\n\
-        if(mode === \"TRAM\") return '#800';\n\
-        if(mode === \"CAR\") return '#444';\n\
+        if(mode === 'WALK') return '#444';\n\
+        if(mode === 'BICYCLE') return '#0073e5';\n\
+        if(mode === 'SUBWAY') return '#f00';\n\
+        if(mode === 'RAIL') return '#b00';\n\
+        if(mode === 'BUS') return '#080';\n\
+        if(mode === 'TRAM') return '#800';\n\
+        if(mode === 'CAR') return '#444';\n\
         return '#aaa';\n\
       },\n\
 \n\
   });\n\
 \n\
-  module.exports.OtpItineraryLegs = Backbone.Collection.extend({\n\
+  var ItineraryLegs = module.exports.OtpItineraryLegs = Backbone.Collection.extend({\n\
 \n\
       type: 'OtpItineraryLegs',\n\
-      model: module.exports.OtpItineraryLeg\n\
+      model: ItineraryLeg\n\
   });\n\
 \n\
 \n\
-  module.exports.OtpItineraryStop = Backbone.Model.extend({\n\
+  var ItineraryStop = module.exports.OtpItineraryStop = Backbone.Model.extend({\n\
 \n\
     initialize: function(){\n\
 \n\
@@ -31526,7 +36402,7 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
 \n\
   });\n\
 \n\
-  module.exports.OtpItineraryWalkStep = Backbone.Model.extend({\n\
+  var ItineraryWalkStep = module.exports.OtpItineraryWalkStep = Backbone.Model.extend({\n\
 \n\
       initialize: function(){\n\
 \n\
@@ -31547,10 +36423,10 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
       }\n\
   });\n\
 \n\
-  module.exports.OtpItineraryWalkSteps = Backbone.Collection.extend({\n\
+  var ItineraryWalkSteps = module.exports.OtpItineraryWalkSteps = Backbone.Collection.extend({\n\
 \n\
       type: 'OtpItineraryWalkSteps',\n\
-      model: module.exports.OtpItineraryWalkStep\n\
+      model: ItineraryWalkStep\n\
   });\n\
 \n\
 // to do: alert model\n\
@@ -31559,7 +36435,7 @@ module.exports.OtpItineraryLeg = Backbone.Model.extend({\n\
 \n\
 \n\
 \n\
-module.exports.OtpStopsInRectangleRequest = Backbone.Model.extend({\n\
+var StopsInRectangleRequest = module.exports.OtpStopsInRectangleRequest = Backbone.Model.extend({\n\
 \n\
       initialize: function(opts) {\n\
 \n\
@@ -31598,28 +36474,28 @@ module.exports.OtpStopsInRectangleRequest = Backbone.Model.extend({\n\
 \n\
       processRequest: function(data) {\n\
 \n\
-        var response = new OTP.models.OtpStopsResponse(data);\n\
+        var response = new StopsResponse(data);\n\
         response.set('request', this);\n\
         return response;\n\
       },\n\
 \n\
 });\n\
 \n\
-module.exports.OtpStopsResponse = Backbone.Model.extend({\n\
+var StopsResponse = module.exports.OtpStopsResponse = Backbone.Model.extend({\n\
 \n\
       initialize: function() {\n\
 \n\
         var rawAttributes = arguments[0];\n\
         var processedAttributes = _.omit(rawAttributes, ['stops']);\n\
 \n\
-        // re-map the stop's \"id\" object to \"stopId\"; otherwise the backbone collection doesn't properly initialize\n\
-        _.each(rawAttributes['stops'], function(stop) {\n\
+        // re-map the stop's 'id' object to 'stopId'; otherwise the backbone collection doesn't properly initialize\n\
+        _.each(rawAttributes.stops, function(stop) {\n\
           stop.stopId = stop.id;\n\
           delete stop.id;\n\
         });\n\
 \n\
-        processedAttributes.stops = new OTP.models.OtpStops();\n\
-        processedAttributes.stops.add(rawAttributes['stops']);\n\
+        processedAttributes.stops = new Stops();\n\
+        processedAttributes.stops.add(rawAttributes.stops);\n\
 \n\
         this.set(processedAttributes);\n\
       },\n\
@@ -31632,7 +36508,7 @@ module.exports.OtpStopsResponse = Backbone.Model.extend({\n\
 });\n\
 \n\
 \n\
-module.exports.OtpStop = Backbone.Model.extend({\n\
+var Stop = module.exports.OtpStop = Backbone.Model.extend({\n\
 \n\
     initialize: function() {\n\
     },\n\
@@ -31655,20 +36531,25 @@ module.exports.OtpStop = Backbone.Model.extend({\n\
 });\n\
 \n\
 \n\
-module.exports.OtpStops = Backbone.Collection.extend({\n\
+var Stops = module.exports.OtpStops = Backbone.Collection.extend({\n\
 \n\
     type: 'OtpStops',\n\
-    model: module.exports.OtpStop\n\
+    model: Stop\n\
 });\n\
-//@ sourceURL=otpjs/lib/models.js"
-));
-require.register("otpjs/lib/views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
-var Backbone = require('backbone');\n\
-Backbone.$ = $;\n\
-var Handlebars = require('handlebars');\n\
 \n\
+//# sourceURL=lib/models.js"
+));
+
+require.register("otpjs/lib/views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
+Backbone.$ = $;\n\
+var Handlebars = require('./local/handlebars');\n\
+\n\
+var MapViews = require('otpjs/lib/map_views.js');\n\
+var NarrativeViews = require('otpjs/lib/narrative_views.js');\n\
+var TopoViews = require('otpjs/lib/topo_views.js');\n\
 \n\
 var OtpPlanResponseView = Backbone.View.extend({\n\
 \n\
@@ -31678,11 +36559,11 @@ var OtpPlanResponseView = Backbone.View.extend({\n\
 \n\
         this.render();\n\
     },\n\
- \n\
+\n\
     render : function() {\n\
 \n\
         if(this.options.narrative) {\n\
-            this.narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({\n\
+            this.narrativeView = new NarrativeViews.OtpPlanResponseNarrativeView({\n\
                 el: this.options.narrative,\n\
                 model: this.model,\n\
                 autoResize: this.options.autoResize,\n\
@@ -31694,18 +36575,18 @@ var OtpPlanResponseView = Backbone.View.extend({\n\
 \n\
         if(this.model) {\n\
             this.model.getTimeOffset();\n\
-        \tvar itins = this.model.get(\"itineraries\");\n\
+        \tvar itins = this.model.get('itineraries');\n\
 \n\
             if(_.size(itins) > 0) {\n\
             \t_.each(itins.models, this.processItinerary, this);\n\
 \n\
-                itins.at(0).trigger(\"activate\");\n\
+                itins.at(0).trigger('activate');\n\
             }\n\
         }\n\
     },\n\
 \n\
     processItinerary : function(itin, index) {\n\
-    \t\n\
+\n\
         if(this.options.map) {\n\
             var mapViewOptions = {\n\
                 map: this.options.map,\n\
@@ -31714,10 +36595,10 @@ var OtpPlanResponseView = Backbone.View.extend({\n\
                 metric: this.options.metric\n\
             };\n\
             if(this.options.legColor) mapViewOptions.legColor = this.options.legColor;\n\
-            var itinMapView = new OTP.map_views.OtpItineraryMapView(mapViewOptions);\n\
+            var itinMapView = new MapViews.OtpItineraryMapView(mapViewOptions);\n\
         }\n\
         if(this.options.topo) {\n\
-            var itinTopoView = new OTP.topo_views.OtpItineraryTopoView({\n\
+            var itinTopoView = new TopoViews.OtpItineraryTopoView({\n\
                 map: this.options.map,\n\
                 el: this.options.topo,\n\
                 model : itin,\n\
@@ -31729,8 +36610,8 @@ var OtpPlanResponseView = Backbone.View.extend({\n\
     newResponse : function(response) {\n\
 \n\
         // fire a deactivate event on the old active itin, if needed\n\
-        if(this.model && this.model.get(\"itineraries\") && this.model.get(\"itineraries\").activeItinerary) {\n\
-            this.model.get(\"itineraries\").activeItinerary.trigger(\"deactivate\");\n\
+        if(this.model && this.model.get('itineraries') && this.model.get('itineraries').activeItinerary) {\n\
+            this.model.get('itineraries').activeItinerary.trigger('deactivate');\n\
         }\n\
 \n\
         this.model = response;\n\
@@ -31740,18 +36621,20 @@ var OtpPlanResponseView = Backbone.View.extend({\n\
 \n\
 module.exports.OtpPlanResponseView = OtpPlanResponseView;\n\
 \n\
-//@ sourceURL=otpjs/lib/views.js"
+\n\
+//# sourceURL=lib/views.js"
 ));
-require.register("otpjs/lib/bike_views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
-var Backbone = require('backbone');\n\
+
+require.register("otpjs/lib/bike_views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
 Backbone.$ = $;\n\
-var Raphael = require('raphael');\n\
+var Raphael = require('./local/raphael');\n\
 \n\
 \n\
-var OtpBikeTrianglePanel = Backbone.View.extend({\n\
-   \n\
+var BikeTrianglePanel = module.exports = Backbone.View.extend({\n\
+\n\
 \tcursor_size : 19,\n\
     barWidth    : 0,\n\
     tri_size    : 0,\n\
@@ -31760,13 +36643,13 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
     triangleflatFactor:   null,\n\
     trianglesafeFactor:  null,\n\
 \n\
-    // default is even mixture \n\
+    // default is even mixture\n\
     quickFactor : 0.333,\n\
     flatFactor  : 0.333,\n\
     safeFactor  : 0.334,\n\
 \n\
     onChanged   : null,\n\
-    \n\
+\n\
     quickBar    : null,\n\
     flatBar     : null,\n\
     safeBar     : null,\n\
@@ -31774,30 +36657,30 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
     quickLabel  : null,\n\
     flatLabel   : null,\n\
     safeLabel   : null,\n\
-    \n\
+\n\
     cursorVert  : null,\n\
     cursorHoriz : null,\n\
     cursor      : null,\n\
 \n\
-    quickName   : \"Quick\",\n\
-    flatName    : \"Flat\",\n\
-    safeName    : \"Bike Friendly\",\n\
+    quickName   : 'Quick',\n\
+    flatName    : 'Flat',\n\
+    safeName    : 'Bike Friendly',\n\
 \n\
     initialize : function(options) {\n\
         this.options = options || {};\n\
 \n\
         this.render();\n\
     },\n\
-    \n\
+\n\
     render : function() {\n\
-    \n\
+\n\
         var this_ = this;\n\
-   \n\
+\n\
         var width = this.$el.width(), height = this.$el.height();\n\
         var tri_side = 2 * (height - this.cursor_size) * 1/Math.sqrt(3);\n\
         this.tri_side = tri_side;\n\
-        var margin = this.cursor_size/2;\t\n\
-        \n\
+        var margin = this.cursor_size/2;\n\
+\n\
         //console.log()\n\
 \n\
         var canvas = Raphael(this.$el.attr('id'), width, height);\n\
@@ -31807,83 +36690,83 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
               fill: 'none'\n\
           });\n\
 \n\
-        var triangle = canvas.path([\"M\",margin+tri_side/2,margin,\"L\",margin+tri_side,height-margin,\"L\",margin,height-margin,\"z\"]);\n\
+        var triangle = canvas.path(['M',margin+tri_side/2,margin,'L',margin+tri_side,height-margin,'L',margin,height-margin,'z']);\n\
 \n\
 \n\
-        triangle.attr({fill:\"#fff\", stroke:\"#aaa\"});\n\
-        \n\
-        var labelSize = \"18px\";\n\
+        triangle.attr({fill:'#fff', stroke:'#aaa'});\n\
 \n\
-        var safeFill = \"#bbe070\"; \n\
-        var safeFill2 = \"#77b300\"; \n\
-        var safeSym  = \"B\"; //locale.bikeTriangle.safeSym;\n\
+        var labelSize = '18px';\n\
 \n\
-        var flatFill = \"#8cc4ff\"; \n\
-        var flatFill2 = \"#61a7f2\"; \n\
-        var flatSym  = \"F\"; //locale.bikeTriangle.flatSym;\n\
-        \n\
-        var quickFill = \"#ffb2b2\";\n\
-        var quickFill2 = \"#f27979\";\n\
-        var quickSym  = \"Q\"; //locale.bikeTriangle.quickSym;\n\
+        var safeFill = '#bbe070';\n\
+        var safeFill2 = '#77b300';\n\
+        var safeSym  = 'B'; //locale.bikeTriangle.safeSym;\n\
+\n\
+        var flatFill = '#8cc4ff';\n\
+        var flatFill2 = '#61a7f2';\n\
+        var flatSym  = 'F'; //locale.bikeTriangle.flatSym;\n\
+\n\
+        var quickFill = '#ffb2b2';\n\
+        var quickFill2 = '#f27979';\n\
+        var quickSym  = 'Q'; //locale.bikeTriangle.quickSym;\n\
 \n\
         var labelT = canvas.text(margin + tri_side/2, margin+24, quickSym);\n\
-        labelT.attr({fill:quickFill2, \"font-size\":labelSize, \"font-weight\":\"bold\"});\t\n\
+        labelT.attr({fill:quickFill2, 'font-size':labelSize, 'font-weight':'bold'});\n\
 \n\
         var labelH = canvas.text(margin + 22, height-margin-14, flatSym);\n\
-        labelH.attr({fill:flatFill2, \"font-size\":labelSize, \"font-weight\":\"bold\"});\t\n\
+        labelH.attr({fill:flatFill2, 'font-size':labelSize, 'font-weight':'bold'});\n\
 \n\
         var labelS = canvas.text(margin + tri_side - 22, height-margin-14, safeSym);\n\
-        labelS.attr({fill:safeFill2, \"font-size\":labelSize, \"font-weight\":\"bold\"});\t\n\
+        labelS.attr({fill:safeFill2, 'font-size':labelSize, 'font-weight':'bold'});\n\
 \n\
-        var barLeft = margin*2 + tri_side; \n\
+        var barLeft = margin*2 + tri_side;\n\
         this.barWidth = width - margin*3 - tri_side;\n\
         var barWidth = this.barWidth;\n\
         var barHeight = (height-margin*4)/3;\n\
 \n\
-        this.quickBar = canvas.rect(barLeft, margin, barWidth*.333, barHeight);\n\
-        this.quickBar.attr({fill:quickFill, stroke:\"none\"});\n\
+        this.quickBar = canvas.rect(barLeft, margin, barWidth*0.333, barHeight);\n\
+        this.quickBar.attr({fill:quickFill, stroke:'none'});\n\
 \n\
-        this.flatBar = canvas.rect(barLeft, margin*2+barHeight, barWidth*.333, barHeight);\n\
-        this.flatBar.attr({fill:flatFill, stroke:\"none\"});\n\
+        this.flatBar = canvas.rect(barLeft, margin*2+barHeight, barWidth*0.333, barHeight);\n\
+        this.flatBar.attr({fill:flatFill, stroke:'none'});\n\
 \n\
-        this.safeBar = canvas.rect(barLeft, margin*3 + barHeight*2, barWidth*.333, barHeight);\n\
-        this.safeBar.attr({fill:safeFill, stroke:\"none\"});\n\
+        this.safeBar = canvas.rect(barLeft, margin*3 + barHeight*2, barWidth*0.333, barHeight);\n\
+        this.safeBar.attr({fill:safeFill, stroke:'none'});\n\
 \n\
-        this.quickLabel = canvas.text(barLeft + margin, margin+barHeight/2, this.quickName + \": 33%\");\n\
-        this.quickLabel.attr({\"font-size\":\"13px\", \"text-anchor\" : \"start\",  opacity:1});\n\
+        this.quickLabel = canvas.text(barLeft + margin, margin+barHeight/2, this.quickName + ': 33%');\n\
+        this.quickLabel.attr({'font-size':'13px', 'text-anchor' : 'start',  opacity:1});\n\
 \n\
-        this.flatLabel = canvas.text(barLeft + margin, margin*2+barHeight+barHeight/2,  this.flatName + \": 33%\");\n\
-        this.flatLabel.attr({\"font-size\":\"13px\", \"text-anchor\" : \"start\", opacity:1});\n\
+        this.flatLabel = canvas.text(barLeft + margin, margin*2+barHeight+barHeight/2,  this.flatName + ': 33%');\n\
+        this.flatLabel.attr({'font-size':'13px', 'text-anchor' : 'start', opacity:1});\n\
 \n\
-        this.safeLabel = canvas.text(barLeft + margin, margin*3+barHeight*2+barHeight/2, this.safeName + \": 33%\");\n\
-        this.safeLabel.attr({\"font-size\":\"13px\", \"text-anchor\" : \"start\", opacity:1});\n\
+        this.safeLabel = canvas.text(barLeft + margin, margin*3+barHeight*2+barHeight/2, this.safeName + ': 33%');\n\
+        this.safeLabel.attr({'font-size':'13px', 'text-anchor' : 'start', opacity:1});\n\
 \n\
         var cx = margin+tri_side/2, cy = height-margin-(1/Math.sqrt(3))*(tri_side/2);\n\
-        this.cursorVert = canvas.rect(cx-.5, cy-this.cursor_size/2-2, 1, this.cursor_size+4).attr({\n\
-            fill: \"rgb(0,0,0)\",\n\
-            stroke: \"none\"\n\
+        this.cursorVert = canvas.rect(cx-0.5, cy-this.cursor_size/2-2, 1, this.cursor_size+4).attr({\n\
+            fill: 'rgb(0,0,0)',\n\
+            stroke: 'none'\n\
         });\n\
-        this.cursorHoriz = canvas.rect(cx-this.cursor_size/2-2, cy-.5, this.cursor_size+4, 1).attr({\n\
-            fill: \"rgb(0,0,0)\",\n\
-            stroke: \"none\"\n\
+        this.cursorHoriz = canvas.rect(cx-this.cursor_size/2-2, cy-0.5, this.cursor_size+4, 1).attr({\n\
+            fill: 'rgb(0,0,0)',\n\
+            stroke: 'none'\n\
         });\n\
         this.cursor = canvas.circle(cx, cy, this.cursor_size/2).attr({\n\
-            fill: \"rgb(128,128,128)\",\n\
-            stroke: \"none\",\n\
+            fill: 'rgb(128,128,128)',\n\
+            stroke: 'none',\n\
             opacity: 0.25\n\
         });\n\
-            \n\
+\n\
         var time, topo, safety;\n\
 \n\
-        var this_ = this;\n\
+        this_ = this;\n\
         var animTime = 250;\n\
         var start = function () {\n\
             // storing original coordinates\n\
-            this.ox = this.attr(\"cx\");\n\
-            this.oy = this.attr(\"cy\");\n\
-            this_.quickBar.animate({opacity: .25}, animTime);\n\
-            this_.flatBar.animateWith(this_.quickBar, {opacity: .25}, animTime);\n\
-            this_.safeBar.animateWith(this_.quickBar, {opacity: .25}, animTime);\n\
+            this.ox = this.attr('cx');\n\
+            this.oy = this.attr('cy');\n\
+            this_.quickBar.animate({opacity: 0.25}, animTime);\n\
+            this_.flatBar.animateWith(this_.quickBar, {opacity: 0.25}, animTime);\n\
+            this_.safeBar.animateWith(this_.quickBar, {opacity: 0.25}, animTime);\n\
             //quickLabel.animate({opacity: 1}, animTime);\n\
             //flatLabel.animate({opacity: 1}, animTime);\n\
             //safeLabel.animate({opacity: 1}, animTime);\n\
@@ -31893,8 +36776,8 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
             var nx = this.ox + dx, ny = this.oy + dy;\n\
             if(ny >  height-margin) ny = height-margin;\n\
             if(ny < margin) ny = margin;\n\
-            var offset =  (ny-margin)/(height-margin*2) * tri_side/2; \t\n\
-            if(nx < margin + (tri_side/2) - offset) nx = margin + (tri_side/2) - offset; \n\
+            var offset =  (ny-margin)/(height-margin*2) * tri_side/2;\n\
+            if(nx < margin + (tri_side/2) - offset) nx = margin + (tri_side/2) - offset;\n\
             if(nx > margin + (tri_side/2) + offset) nx = margin + (tri_side/2) + offset;\n\
 \n\
             time = ((height-2*margin)-(ny-margin))/(height-2*margin);\n\
@@ -31904,10 +36787,10 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
             this_.quickBar.attr({width: barWidth*time});\n\
             this_.flatBar.attr({width: barWidth*topo});\n\
             this_.safeBar.attr({width: barWidth*safety});\n\
-            this_.quickLabel.attr(\"text\", this_.quickName + \": \"+Math.round(time*100)+\"%\");\n\
-            this_.flatLabel.attr(\"text\", this_.flatName + \": \" +Math.round(topo*100)+\"%\");\n\
-            this_.safeLabel.attr(\"text\", this_.safeName + \": \" +Math.round(safety*100)+\"%\");\n\
-    \n\
+            this_.quickLabel.attr('text', this_.quickName + ': '+Math.round(time*100)+'%');\n\
+            this_.flatLabel.attr('text', this_.flatName + ': ' +Math.round(topo*100)+'%');\n\
+            this_.safeLabel.attr('text', this_.safeName + ': ' +Math.round(safety*100)+'%');\n\
+\n\
             this_.moveCursor(nx, ny);\n\
         },\n\
         up = function () {\n\
@@ -31923,14 +36806,14 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
             if(topo < 0.005) {\n\
                 topo = 0.0;\n\
             }\n\
-            \n\
+\n\
             this_.quickFactor = time;\n\
             this_.flatFactor = topo;\n\
             this_.safeFactor = safety;\n\
 \n\
             this_.updateModel();\n\
 \n\
-            if(this_.onChanged && typeof(this_.onChanged) === \"function\") {\n\
+            if(this_.onChanged && typeof(this_.onChanged) === 'function') {\n\
                 this_.onChanged();\n\
             }\n\
         };\n\
@@ -31942,22 +36825,22 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
         this.cursor.mouseout(function() {\n\
             this.animate({opacity: 0.25}, animTime);\n\
         });\n\
-        \n\
+\n\
     },\n\
 \n\
     updateModel: function() {\n\
         this.model.set({'triangleSafetyFactor':  this.safeFactor, 'triangleSlopeFactor':  this.quickFactor, 'triangleTimeFactor':  this.flatFactor, 'optimize': 'TRIANGLE'});\n\
-        \n\
+\n\
     },\n\
-    \n\
+\n\
     moveCursor : function(x, y) {\n\
         this.cursor.attr({cx: x, cy: y});\n\
-        this.cursorVert.attr({x: x-.5, y: y-this.cursor_size/2-2});\n\
-        this.cursorHoriz.attr({x: x-this.cursor_size/2-2, y: y-.5});\n\
+        this.cursorVert.attr({x: x-0.5, y: y-this.cursor_size/2-2});\n\
+        this.cursorHoriz.attr({x: x-this.cursor_size/2-2, y: y-0.5});\n\
     },\n\
 \n\
     enable : function() {\n\
-          if(this.container.findById('trip-bike-triangle') == null) {\n\
+          if(this.container.findById('trip-bike-triangle') === null) {\n\
                this.container.add(this.panel);\n\
           }\n\
           this.panel.show();\n\
@@ -31986,59 +36869,51 @@ var OtpBikeTrianglePanel = Backbone.View.extend({\n\
         this.quickFactor = quick;\n\
         this.flatFactor = flat;\n\
         this.safeFactor = safe;\n\
-        \n\
+\n\
         this.quickBar.attr({width: this.barWidth*quick});\n\
         this.flatBar.attr({width: this.barWidth*flat});\n\
         this.safeBar.attr({width: this.barWidth*safe});\n\
-        this.quickLabel.attr(\"text\",   this.quickName + \": \"+Math.round(quick*100)+\"%\");\n\
-        this.flatLabel.attr(\"text\",   this.flatName + \": \" +Math.round(flat*100)+\"%\");\n\
-        this.safeLabel.attr(\"text\", this.safeName + \": \" +Math.round(safe*100)+\"%\");\n\
+        this.quickLabel.attr('text',   this.quickName + ': '+Math.round(quick*100)+'%');\n\
+        this.flatLabel.attr('text',   this.flatName + ': ' +Math.round(flat*100)+'%');\n\
+        this.safeLabel.attr('text', this.safeName + ': ' +Math.round(safe*100)+'%');\n\
 \n\
         var margin = this.cursor_size/2;\n\
-        \n\
+\n\
         var x = margin + this.tri_side/2;\n\
         var y = margin + this.tri_side / Math.sqrt(3);\n\
-        \n\
+\n\
         var qx = 0, qy = -this.tri_side / Math.sqrt(3);\n\
         var fx = -this.tri_side/2, fy = (this.tri_side/2) / Math.sqrt(3);\n\
         var sx = this.tri_side/2, sy = (this.tri_side/2) / Math.sqrt(3);\n\
-        \n\
+\n\
         x  = x + quick*qx + flat*fx + safe*sx;\n\
         y  = y + quick*qy + flat*fy + safe*sy;\n\
-        \n\
+\n\
         this.moveCursor(x, y);\n\
 \n\
     }\n\
 \n\
 });\n\
-\n\
-module.exports.OtpBikeTrianglePanel = OtpBikeTrianglePanel;//@ sourceURL=otpjs/lib/bike_views.js"
+//# sourceURL=lib/bike_views.js"
 ));
-require.register("otpjs/lib/map_views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
-var Backbone = require('backbone');\n\
+
+require.register("otpjs/lib/map_views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
 Backbone.$ = $;\n\
 \n\
-require('leaflet.label');\n\
-var Handlebars = require('handlebars');\n\
+require('./local/leaflet.label');\n\
+var Handlebars = require('./local/handlebars');\n\
 \n\
-var utils = require('./utils');\n\
+var utils = require('otpjs/lib/utils.js');\n\
+\n\
+var L = window.L;\n\
 \n\
 \n\
 /** Map Views **/\n\
 \n\
-var legFromBubbleTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-legBubble-icon-topRow-{{orientation}}\">',\n\
-        '<div class=\"otp-legBubble-arrow-right\" style=\"float: left; margin-left:4px;\"></div>',\n\
-        '<div style=\"width: 16px; height: 16px; margin-left: 12px;\">',\n\
-            '<div class=\"otp-modeIcon-{{mode}}\" style=\"margin: auto auto;\"></div>',\n\
-            '<div class=\"otp-routeShortName\">{{routeShortName}}</div>',\n\
-        '</div>',\n\
-    '</div>',\n\
-    '{{{formatTime from.departure format=\"h:mm\"}}}'\n\
-].join('\\n\
-'));\n\
+var legFromBubbleTemplate = Handlebars.compile(require('otpjs/lib/leg-from-bubble.html'));\n\
 \n\
 module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
 \n\
@@ -32050,63 +36925,63 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
         this.pathMarkerLayer = new L.LayerGroup();\n\
         this.highlightLayer = new L.LayerGroup();\n\
 \n\
-        this.listenTo(this.model, \"activate\", function() {\n\
+        this.listenTo(this.model, 'activate', function() {\n\
             this.preview = false;\n\
             this.render();\n\
             //this.options.map.fitBounds(this.model.getBoundsArray())\n\
         });\n\
 \n\
-        this.listenTo(this.model, \"deactivate\", this.clearLayers);\n\
+        this.listenTo(this.model, 'deactivate', this.clearLayers);\n\
 \n\
-        this.listenTo(this.model, \"mouseenter\", function() {\n\
+        this.listenTo(this.model, 'mouseenter', function() {\n\
             this.preview = true;\n\
             this.render();\n\
         });\n\
-        this.listenTo(this.model, \"mouseleave\", this.clearLayers);\n\
+        this.listenTo(this.model, 'mouseleave', this.clearLayers);\n\
 \n\
-        for(var l=0; l < this.model.get('legs').length; l++) {\n\
-           var leg = this.model.get('legs').at(l);\n\
 \n\
-            this.listenTo(leg, \"mouseenter\", _.bind(function() {\n\
+\n\
+        this.model.get('legs').each(function(leg) {\n\
+\n\
+            this.listenTo(leg, 'mouseenter', _.bind(function() {\n\
                 this.view.highlightLeg = this.leg;\n\
                 this.view.render();\n\
             }, {view: this, leg : leg}));\n\
 \n\
-            this.listenTo(leg, \"mouseleave\", _.bind(function() {\n\
+            this.listenTo(leg, 'mouseleave', _.bind(function() {\n\
                 this.view.highlightLeg = null;\n\
                 this.view.render();\n\
             }, {view: this, leg : leg}));\n\
 \n\
-            this.listenTo(leg, \"fromclick\", _.bind(function() {\n\
-                this.view.options.map.panTo([this.leg.get(\"from\").lat, this.leg.get(\"from\").lon]);\n\
+            this.listenTo(leg, 'fromclick', _.bind(function() {\n\
+                this.view.options.map.panTo([this.leg.get('from').lat, this.leg.get('from').lon]);\n\
             }, {view: this, leg : leg}));\n\
 \n\
-            this.listenTo(leg, \"toclick\", _.bind(function() {\n\
-                this.view.options.map.panTo([this.leg.get(\"to\").lat, this.leg.get(\"to\").lon]);\n\
+            this.listenTo(leg, 'toclick', _.bind(function() {\n\
+                this.view.options.map.panTo([this.leg.get('to').lat, this.leg.get('to').lon]);\n\
             }, {view: this, leg : leg}));\n\
 \n\
             var steps = leg.get('steps');\n\
-            if(!steps) continue;\n\
-            for(var s=0; s < steps.length; s++) {\n\
-                var step = steps.at(s);\n\
+            if(!steps) return;\n\
 \n\
-                this.listenTo(step, \"click\", _.bind(function() {\n\
+            steps.each(function(step) {\n\
+                this.listenTo(step, 'click', _.bind(function() {\n\
                     this.view.options.map.panTo([this.step.get('lat'), this.step.get('lon')]);\n\
                 }, {view: this, step : step}));\n\
 \n\
-                this.listenTo(step, \"mouseenter\", _.bind(function() {\n\
+                this.listenTo(step, 'mouseenter', _.bind(function() {\n\
                     //var popup = L.popup()\n\
                     //.setLatLng([this.step.get('lat'), this.step.get('lon')])\n\
                     //.setContent(this.step.get('streetName'))\n\
                     //.openOn(this.view.options.map);\n\
                 }, {view: this, step : step}));\n\
 \n\
-                this.listenTo(step, \"mouseleave\", _.bind(function() {\n\
+                this.listenTo(step, 'mouseleave', _.bind(function() {\n\
                     this.view.options.map.closePopup();\n\
                 }, {view: this, step : step}));\n\
 \n\
-            }\n\
-        }\n\
+            });\n\
+        });\n\
     },\n\
 \n\
     attachToMap : function() {\n\
@@ -32128,7 +37003,8 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
         if(!this.attachedToMap) this.attachToMap();\n\
         this.clearLayers();\n\
 \n\
-        var mapBounds = new L.LatLngBounds()\n\
+        var mapBounds = new L.LatLngBounds();\n\
+        var popupContent, minutes;\n\
 \n\
 \n\
         for(var i=0; i < this.model.get('legs').length; i++) {\n\
@@ -32141,7 +37017,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
             if(this.highlightLeg === leg) {\n\
                 var highlight = new L.Polyline(points);\n\
                 highlight.setStyle({\n\
-                    color : \"#ffff00\",\n\
+                    color : '#ffff00',\n\
                     weight: weight * 2,\n\
                     opacity: this.preview ? 0.75 : 0.75\n\
                 });\n\
@@ -32161,11 +37037,11 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
             mapBounds.extend(polyline.getBounds());\n\
 \n\
             if(leg.isWalk() || leg.isBicycle()) {\n\
-                var popupContent = '<div class=\"otp-legMode-icon otp-legMode-icon-' + leg.get('mode') + '\"></div> <div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div> ' + leg.get('to').name;\n\
+                popupContent = '<div class=\"otp-legMode-icon otp-legMode-icon-' + leg.get('mode') + '\"></div> <div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div> ' + leg.get('to').name;\n\
 \n\
                 popupContent += '<br/>';\n\
 \n\
-                var minutes = leg.get('duration') / 60;\n\
+                minutes = leg.get('duration') / 1000 / 60;\n\
                 popupContent += Math.round(minutes) + ' mins ';\n\
 \n\
                 var distance = utils.distanceString(leg.get('distance'), this.options.metric);\n\
@@ -32178,13 +37054,13 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
                 }\n\
             }\n\
             else if (leg.isTransit()) {\n\
-                var popupContent = '<div class=\"otp-legMode-icon otp-legMode-icon-' + leg.get('mode') + '\"></div> ';\n\
+                popupContent = '<div class=\"otp-legMode-icon otp-legMode-icon-' + leg.get('mode') + '\"></div> ';\n\
 \n\
                 if(leg.get('routeShortName'))\n\
                     popupContent += leg.get('routeShortName');\n\
 \n\
                 if(leg.get('routeLongName')) {\n\
-                    if(popupContent != '')\n\
+                    if(popupContent !== '')\n\
                         popupContent += ' ';\n\
 \n\
                     popupContent += leg.get('routeLongName') + '<br/> ';\n\
@@ -32193,7 +37069,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
                 popupContent += ' <div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div> ' + leg.get('to').name;\n\
 \n\
 \n\
-                var minutes = leg.get('duration') / 60;\n\
+                minutes = leg.get('duration') / 1000 / 60;\n\
                 popupContent += ' (' + Math.round(minutes) + ' mins)';\n\
 \n\
                 polyline.bindLabel(popupContent);\n\
@@ -32229,18 +37105,13 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
     },\n\
 \n\
     getLegFromBubbleMarker : function(leg, highlight) {\n\
-        //var quadrant = (leg.get('from').lat < leg.get('to').lat ? 's' : 'n') + (leg.get('from').lon < leg.get('to').lon ? 'w' : 'e');        highlight = highlight || false;\n\
-\n\
-        //var context = _.clone(leg.attributes);\n\
-        //context.orientation = quadrant[0];\n\
-\n\
         var popupContent = '<div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div>  <div class=\"otp-legMode-icon otp-legMode-icon-' + leg.get('mode') + '\"></div> ';\n\
 \n\
         if(leg.get('routeShortName'))\n\
             popupContent += leg.get('routeShortName');\n\
 \n\
         if(leg.get('routeLongName')) {\n\
-            if(popupContent != '')\n\
+            if(popupContent !== '')\n\
                 popupContent += ' ';\n\
 \n\
             popupContent += leg.get('routeLongName');\n\
@@ -32270,13 +37141,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({\n\
 });\n\
 \n\
 \n\
-var mapContextMenuTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-mapContextMenu\">',\n\
-        '<div class=\"otp-mapContextMenuItem setStartLocation\">Set Start Location</div>',\n\
-        '<div class=\"otp-mapContextMenuItem setEndLocation\">Set End Location</div>',\n\
-    '</div>'\n\
-].join('\\n\
-'));\n\
+var mapContextMenuTemplate = Handlebars.compile(require('otpjs/lib/map-context-menu.html'));\n\
 \n\
 module.exports.OtpRequestMapView = Backbone.View.extend({\n\
 \n\
@@ -32297,7 +37162,7 @@ module.exports.OtpRequestMapView = Backbone.View.extend({\n\
             if(mouseEvent.which === 3) {\n\
 \n\
                 if(!this.contextMenu) {\n\
-                    this.contextMenu = $(mapContextMenuTemplate()).appendTo('body')\n\
+                    this.contextMenu = $(mapContextMenuTemplate()).appendTo('body');\n\
                 }\n\
 \n\
                 this.contextMenu.find('.setStartLocation').click(_.bind(function() {\n\
@@ -32314,7 +37179,7 @@ module.exports.OtpRequestMapView = Backbone.View.extend({\n\
             return false;\n\
         }, this));\n\
 \n\
-        $(document).bind(\"click\", _.bind(function(event) {\n\
+        $(document).bind('click', _.bind(function(event) {\n\
             if(this.contextMenu) this.contextMenu.hide();\n\
         }, this));\n\
 \n\
@@ -32404,12 +37269,12 @@ module.exports.OtpRequestMapView = Backbone.View.extend({\n\
 module.exports.OtpStopsRequestMapView = Backbone.View.extend({\n\
 \n\
     initialize : function(options) {\n\
-        _.bindAll(this, \"mapViewChanged\");\n\
+        _.bindAll(this, 'mapViewChanged');\n\
         this.options = options || {};\n\
 \n\
         if(!this.options.minimumZoom) this.options.minimumZoom = 15;\n\
 \n\
-        this.options.map.on(\"viewreset dragend\", this.mapViewChanged);\n\
+        this.options.map.on('viewreset dragend', this.mapViewChanged);\n\
     },\n\
 \n\
     mapViewChanged : function(e) {\n\
@@ -32429,12 +37294,12 @@ module.exports.OtpStopsRequestMapView = Backbone.View.extend({\n\
 module.exports.OtpStopsResponseMapView = Backbone.View.extend({\n\
 \n\
     initialize : function(options) {\n\
-        _.bindAll(this, \"mapViewChanged\");\n\
+        _.bindAll(this, 'mapViewChanged');\n\
         this.options = options || {};\n\
 \n\
         this.markerLayer = new L.LayerGroup();\n\
         this.options.map.addLayer(this.markerLayer);\n\
-        this.options.map.on(\"viewreset dragend\", this.mapViewChanged);\n\
+        this.options.map.on('viewreset dragend', this.mapViewChanged);\n\
     },\n\
 \n\
     render : function() {\n\
@@ -32465,39 +37330,21 @@ module.exports.OtpStopsResponseMapView = Backbone.View.extend({\n\
         this.markerLayer.clearLayers();\n\
     }\n\
 });\n\
-//@ sourceURL=otpjs/lib/map_views.js"
+//# sourceURL=lib/map_views.js"
 ));
-require.register("otpjs/lib/narrative_views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
-var Backbone = require('backbone');\n\
+
+require.register("otpjs/lib/narrative_views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
 Backbone.$ = $;\n\
-var Handlebars = require('handlebars');\n\
-var moment = require('moment');\n\
+var Handlebars = require('./local/handlebars');\n\
+var moment = require('moment~moment@2.8.4');\n\
 \n\
-var utils = require('./utils');\n\
+var utils = require('otpjs/lib/utils.js');\n\
 \n\
-//var Handlebars = require('handlebars');\n\
-\n\
-var narrativeNewTemplate = Handlebars.compile([\n\
-    '<div class=\"messageWell well\">',\n\
-        '<p class=\"text-info\">',\n\
-            '<strong>To plan a trip:</strong> select a start and end location by clicking the map, or by entering an address above.',\n\
-        '</p>',\n\
-    '</div>',\n\
-    '<div class=\"itineraries\"></div>'\n\
-].join('\\n\
-'));\n\
-\n\
-var narrativeAdjustTemplate = Handlebars.compile([\n\
-    '<div class=\"messageWell well\">',\n\
-        '<p class=\"text-info\">',\n\
-            'Drag start and end location pins on the map or use the form above to adjust trip settings.',\n\
-        '</p>',\n\
-    '</div>',\n\
-    '<div class=\"itineraries\"></div>'\n\
-].join('\\n\
-'));\n\
+var narrativeNewTemplate = Handlebars.compile(require('otpjs/lib/narrative-new.html'));\n\
+var narrativeAdjustTemplate = Handlebars.compile(require('otpjs/lib/narrative-adjust.html'));\n\
 \n\
 var OtpPlanResponseNarrativeView = Backbone.View.extend({\n\
 \n\
@@ -32510,7 +37357,7 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({\n\
         if(this.model) {\n\
             this.$el.html(narrativeAdjustTemplate());\n\
 \n\
-            var itins = this.model.get(\"itineraries\");\n\
+            var itins = this.model.get('itineraries');\n\
     \t   _.each(itins.models, this.processItinerary, this);\n\
 \n\
             if(this.options.autoResize) {\n\
@@ -32540,50 +37387,31 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({\n\
 module.exports.OtpPlanResponseNarrativeView = OtpPlanResponseNarrativeView;\n\
 \n\
 \n\
-var itinNarrativeTemplate = Handlebars.compile([\n\
-\t'<div class=\"well\">',\n\
-        '<div class=\"otp-itinHeader\">',\n\
-    \t\t'<span style=\"float:right;\">{{formatDuration duration}}</span>',\n\
-            'Option {{index}}:',\n\
-            '{{#each legs}}',\n\
-                '<nobr>',\n\
-                    '<div class=\"otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}\"></div>',\n\
-                    '{{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}',\n\
-                    '{{#unless @last}}',\n\
-                        '<div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div>',\n\
-                    '{{/unless}}',\n\
-                '</nobr>',\n\
-            '{{/each}}',\n\
-            '<br/><span>{{formatTime startTime timeOffset}} - {{formatTime endTime timeOffset}}</span>',\n\
-        '</div>',\n\
-        '<div class=\"otp-itinBody\"></div>',\n\
-\t'</div>'\n\
-].join('\\n\
-'));\n\
+var itinNarrativeTemplate = Handlebars.compile(require('otpjs/lib/narrative-itinerary.html'));\n\
 \n\
 var OtpItineraryNarrativeView = Backbone.View.extend({\n\
 \n\
     events: {\n\
-        \"click .otp-itinHeader\" : \"headerClicked\",\n\
-        \"mouseenter .otp-itinHeader\" : \"headerMouseenter\",\n\
-        \"mouseleave .otp-itinHeader\" : \"headerMouseleave\",\n\
+        'click .otp-itinHeader' : 'headerClicked',\n\
+        'mouseenter .otp-itinHeader' : 'headerMouseenter',\n\
+        'mouseleave .otp-itinHeader' : 'headerMouseleave',\n\
     },\n\
 \n\
     initialize : function(options) {\n\
         this.options = options || {};\n\
 \n\
-        _.bindAll(this, \"headerClicked\", \"headerMouseenter\", \"headerMouseleave\");\n\
+        _.bindAll(this, 'headerClicked', 'headerMouseenter', 'headerMouseleave');\n\
 \n\
-        this.listenTo(this.model, \"activate\", this.expand);\n\
-        this.listenTo(this.model, \"deactivate\", this.collapse);\n\
+        this.listenTo(this.model, 'activate', this.expand);\n\
+        this.listenTo(this.model, 'deactivate', this.collapse);\n\
     },\n\
 \n\
     render : function() {\n\
-        var legs = this.model.get(\"legs\");\n\
+        var legs = this.model.get('legs');\n\
         var timeOffset = this.options.planView.model.getTimeOffset();\n\
         var duration = this.options.planView.options.showFullDuration ?\n\
             this.model.getFullDuration(this.options.planView.model.get('request'), timeOffset) :\n\
-            this.model.get(\"duration\");\n\
+            this.model.get('duration');\n\
 \n\
         var context = _.clone(this.model.attributes);\n\
         context.index = this.options.index + 1;\n\
@@ -32594,7 +37422,7 @@ var OtpItineraryNarrativeView = Backbone.View.extend({\n\
 \n\
         _.each(legs.models, this.processLeg, this);\n\
 \n\
-        this.$el.find(\".otp-itinBody\").hide();\n\
+        this.$el.find('.otp-itinBody').hide();\n\
     },\n\
 \n\
     processLeg : function(leg) {\n\
@@ -32607,33 +37435,33 @@ var OtpItineraryNarrativeView = Backbone.View.extend({\n\
     },\n\
 \n\
     collapse : function() {\n\
-        this.$el.find(\".otp-itinBody\").slideUp(\"fast\");\n\
+        this.$el.find('.otp-itinBody').slideUp('fast');\n\
     },\n\
 \n\
     expand : function() {\n\
-        this.$el.find(\".otp-itinBody\").slideDown(\"fast\");\n\
+        this.$el.find('.otp-itinBody').slideDown('fast');\n\
     },\n\
 \n\
     headerClicked : function(e) {\n\
         if(!this.isActive()) {\n\
-            this.model.trigger(\"activate\");\n\
+            this.model.trigger('activate');\n\
         }\n\
     },\n\
 \n\
     headerMouseenter : function(e) {\n\
         if(!this.isActive()) {\n\
-            this.model.trigger(\"mouseenter\");\n\
+            this.model.trigger('mouseenter');\n\
         }\n\
     },\n\
 \n\
     headerMouseleave : function(e) {\n\
         if(!this.isActive()) {\n\
-            this.model.trigger(\"mouseleave\");\n\
+            this.model.trigger('mouseleave');\n\
         }\n\
     },\n\
 \n\
     isActive : function() {\n\
-        return this.options.planView.model.get(\"itineraries\").activeItinerary === this.model;\n\
+        return this.options.planView.model.get('itineraries').activeItinerary === this.model;\n\
     }\n\
 \n\
 });\n\
@@ -32643,14 +37471,14 @@ module.exports.OtpItineraryNarrativeView = OtpItineraryNarrativeView;\n\
 \n\
 Handlebars.registerHelper('formatTime', function(time, offset, options) {\n\
     if(time)\n\
-        return utils.formatTime(time, options.hash['format'], offset);\n\
+        return utils.formatTime(time, options.hash.format, offset);\n\
     else\n\
         return '';\n\
 });\n\
 \n\
 Handlebars.registerHelper('formatDuration', function(duration) {\n\
     if(duration)\n\
-        return utils.secToHrMin(duration); \n\
+        return utils.msToHrMin(duration);\n\
     else\n\
         return '';\n\
 });\n\
@@ -32658,54 +37486,19 @@ Handlebars.registerHelper('formatDuration', function(duration) {\n\
 \n\
 /** Leg Templates & View **/\n\
 \n\
-var accessLegTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-leg\">',\n\
-        '<div class=\"otp-legHeader\">',\n\
-            '<span style=\"float:right;\">{{formatDuration duration}}</span><b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div></b> to {{to.name}}',\n\
-        '</div>',\n\
-        '<div class=\"otp-legBody\">',\n\
-        '</div>',\n\
-    '</div>'\n\
-].join('\\n\
-'));\n\
-\n\
-var transitLegTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-leg\">',\n\
-        '<div class=\"otp-legHeader\">',\n\
-            '<b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div> {{routeShortName}}</b> {{routeLongName}} to {{to.name}}',\n\
-        '</div>',\n\
-        '<div class=\"otp-legBody\">',\n\
-            '<div class=\"otp-transitLeg-leftCol\">{{formatTime startTime timeOffset}}</div>',\n\
-            '<div class=\"otp-transitLeg-endpointDesc otp-from\"><b>Depart</b>: {{from.name}}</div>',\n\
-            '<div class=\"otp-transitLeg-endpointDescSub\">Stop #{{from.stopId.id}}</div>',\n\
-            '<div class=\"otp-transitLeg-buffer\"></div>',\n\
-            '<div class=\"otp-transitLeg-elapsedDesc\"><i>Time in transit: {{formatDuration duration}}</i></div>',\n\
-            '<div class=\"otp-transitLeg-buffer\"></div>',\n\
-            '<div class=\"otp-transitLeg-leftCol\">{{formatTime endTime timeOffset}}</div>',\n\
-            '<div class=\"otp-transitLeg-endpointDesc otp-to\"><b>Arrive</b>: {{to.name}}</div>',\n\
-        '</div>',\n\
-    '</div>'\n\
-].join('\\n\
-'));\n\
-\n\
-var genericLegTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-leg\">',\n\
-        '<div class=\"otp-legHeader\">',\n\
-            '<span style=\"float:right;\">{{formatDuration duration}}</span><b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div></b> to {{to.name}}',\n\
-        '</div>',\n\
-    '</div>'\n\
-].join('\\n\
-'));\n\
+var accessLegTemplate = Handlebars.compile(require('otpjs/lib/access-leg.html'));\n\
+var transitLegTemplate = Handlebars.compile(require('otpjs/lib/transit-leg.html'));\n\
+var genericLegTemplate = Handlebars.compile(require('otpjs/lib/generic-leg.html'));\n\
 \n\
 \n\
 var OtpLegNarrativeView = Backbone.View.extend({\n\
 \n\
     events: {\n\
-        \"click .otp-legHeader\" : \"headerClicked\",\n\
-        \"mouseenter .otp-legHeader\" : \"headerMouseenter\",\n\
-        \"mouseleave .otp-legHeader\" : \"headerMouseleave\",\n\
-        \"click .otp-from\" : \"fromClicked\",\n\
-        \"click .otp-to\" : \"toClicked\",\n\
+        'click .otp-legHeader' : 'headerClicked',\n\
+        'mouseenter .otp-legHeader' : 'headerMouseenter',\n\
+        'mouseleave .otp-legHeader' : 'headerMouseleave',\n\
+        'click .otp-from' : 'fromClicked',\n\
+        'click .otp-to' : 'toClicked',\n\
     },\n\
 \n\
     initialize : function(options) {\n\
@@ -32742,25 +37535,25 @@ var OtpLegNarrativeView = Backbone.View.extend({\n\
     },\n\
 \n\
     headerClicked : function(e) {\n\
-        var body = this.$el.find(\".otp-legBody\");\n\
-        if(body.is(\":visible\")) body.slideUp(\"fast\");\n\
-        else body.slideDown(\"fast\");\n\
+        var body = this.$el.find('.otp-legBody');\n\
+        if(body.is(':visible')) body.slideUp('fast');\n\
+        else body.slideDown('fast');\n\
     },\n\
 \n\
     headerMouseenter : function(e) {\n\
-        this.model.trigger(\"mouseenter\");\n\
+        this.model.trigger('mouseenter');\n\
     },\n\
 \n\
     headerMouseleave : function(e) {\n\
-        this.model.trigger(\"mouseleave\");\n\
+        this.model.trigger('mouseleave');\n\
     },\n\
 \n\
     fromClicked : function(e) {\n\
-        this.model.trigger(\"fromclick\");\n\
+        this.model.trigger('fromclick');\n\
     },\n\
 \n\
     toClicked : function(e) {\n\
-        this.model.trigger(\"toclick\");\n\
+        this.model.trigger('toclick');\n\
     },\n\
 \n\
 }); module.exports.OtpLegNarrativeView = OtpLegNarrativeView;\n\
@@ -32770,47 +37563,23 @@ var OtpLegNarrativeView = Backbone.View.extend({\n\
 \n\
 // can this be handled by i18n framework?\n\
 Handlebars.registerHelper('ordinal', function(n) {\n\
-    if(n > 10 && n < 14) return n+\"th\";\n\
+    if(n > 10 && n < 14) return n+'th';\n\
     switch(n % 10) {\n\
-        case 1: return n+\"st\";\n\
-        case 2: return n+\"nd\";\n\
-        case 3: return n+\"rd\";\n\
+        case 1: return n+'st';\n\
+        case 2: return n+'nd';\n\
+        case 3: return n+'rd';\n\
     }\n\
-    return n+\"th\";\n\
+    return n+'th';\n\
 });\n\
 \n\
-var stepTemplate = Handlebars.compile([\n\
-    '<div class=\"otp-legStep-row\">',\n\
-        '<div class=\"otp-legStep-icon otp-legStep-icon-{{relativeDirection}}\"></div>',\n\
-        '<div class=\"otp-legStep-dist\">',\n\
-            '<span style=\"font-weight:bold; font-size: 1.2em;\">{{distanceValue}}</span><br>{{distanceUnit}}',\n\
-        '</div>',\n\
-        '<div class=\"otp-legStep-text\">',\n\
-            '{{#if isRoundabout}}',\n\
-            \t'Take roundabout {{relativeDirection}} to {{ordinal exit}} exit on {{streetName}}',\n\
-            '{{else}}',\n\
-\t            '{{#if isFirst}}',\n\
-\t            \t'Start on <b>{{streetName}}</b> heading {{absoluteDirection}}',\n\
-            \t'{{else}}',\n\
-\t\t            '{{#if stayOn}}',\n\
-\t            \t\t'<b>{{relativeDirection}}</b> to continue on <b>{{streetName}}</b>',\n\
-\t            \t'{{else}}',\n\
-\t            \t\t'<b>{{relativeDirection}}</b> on to <b>{{streetName}}</b>',\n\
-\t\t            '{{/if}}',\n\
-\t            '{{/if}}',\n\
-            '{{/if}}',\n\
-        '</div>',\n\
-        '<div style=\"clear:both;\"></div>',\n\
-    '</div>',\n\
-].join('\\n\
-'));\n\
+var stepTemplate = Handlebars.compile(require('otpjs/lib/step.html'));\n\
 \n\
 var OtpStepNarrativeView = Backbone.View.extend({\n\
 \n\
     events: {\n\
-        \"click .otp-legStep-row\" : \"rowClicked\",\n\
-        \"mouseenter .otp-legStep-row\" : \"rowMouseenter\",\n\
-        \"mouseleave .otp-legStep-row\" : \"rowMouseleave\",\n\
+        'click .otp-legStep-row' : 'rowClicked',\n\
+        'mouseenter .otp-legStep-row' : 'rowMouseenter',\n\
+        'mouseleave .otp-legStep-row' : 'rowMouseleave',\n\
     },\n\
 \n\
     initialize : function(options) {\n\
@@ -32825,199 +37594,59 @@ var OtpStepNarrativeView = Backbone.View.extend({\n\
         context.isFirst = (this.options.index === 0);\n\
 \n\
         // handle the special case of roundabout / traffic circle steps\n\
-    \tif(relDir === \"CIRCLE_COUNTERCLOCKWISE\" || relDir === \"CIRCLE_CLOCKWISE\") {\n\
+    \tif(relDir === 'CIRCLE_COUNTERCLOCKWISE' || relDir === 'CIRCLE_CLOCKWISE') {\n\
 \t    \tcontext.isRoundabout = true;\n\
-\t    \tcontext.roundaboutDirection = (relDir === \"CIRCLE_CLOCKWISE\") ? \"clockwise\" : \"counterclockwise\"; // TODO: i18n\n\
+\t    \tcontext.roundaboutDirection = (relDir === 'CIRCLE_CLOCKWISE') ? 'clockwise' : 'counterclockwise'; // TODO: i18n\n\
     \t}\n\
 \n\
         // format the leg distance\n\
         var metric = this.options.legView.options.itinView.options.planView.options.metric;\n\
         var distStr = utils.distanceString(this.model.get('distance'), metric);\n\
-        context.distanceValue = distStr.split(\" \")[0];\n\
-        context.distanceUnit = distStr.split(\" \")[1];\n\
+        context.distanceValue = distStr.split(' ')[0];\n\
+        context.distanceUnit = distStr.split(' ')[1];\n\
 \n\
         this.$el.html(stepTemplate(context));\n\
     },\n\
 \n\
     rowClicked : function(e) {\n\
-        this.model.trigger(\"click\");\n\
+        this.model.trigger('click');\n\
     },\n\
 \n\
     rowMouseenter : function(e) {\n\
-        this.model.trigger(\"mouseenter\");\n\
+        this.model.trigger('mouseenter');\n\
     },\n\
 \n\
     rowMouseleave : function(e) {\n\
-        this.model.trigger(\"mouseleave\");\n\
+        this.model.trigger('mouseleave');\n\
     },\n\
 \n\
 }); module.exports.OtpStepNarrativeView = OtpStepNarrativeView;\n\
-//@ sourceURL=otpjs/lib/narrative_views.js"
+\n\
+//# sourceURL=lib/narrative_views.js"
 ));
-require.register("otpjs/lib/request_views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
+
+require.register("otpjs/lib/request_views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
 window.jQuery = $;\n\
-var Backbone = require('backbone');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
 Backbone.$ = $;\n\
-var moment = require('moment');\n\
-var Handlebars = require('handlebars');\n\
-var select2 = require('select2');\n\
-require('datetimepicker');\n\
+var moment = require('moment~moment@2.8.4');\n\
+var Handlebars = require('./local/handlebars');\n\
+var select2 = require('kpwebb~select2@3.4.8');\n\
+require('./local/datetimepicker');\n\
 \n\
-var requestFormTemplate = Handlebars.compile([\n\
+var BikeView = require('otpjs/lib/bike_views.js');\n\
 \n\
-                '<div class=\"visibleSettings\">',\n\
-\n\
-                    '<div class=\"row fromPlaceControl\">',\n\
-                        '<input class=\"apiParam col-sm-12\" id=\"fromPlace\" placeholder=\"Start Address\"/>',\n\
-                    '</div>',\n\
-                    '<div class=\"row toPlaceControl\">',\n\
-                        '<input id=\"toPlace\" class=\"apiParam col-sm-12\" placeholder=\"End Address\"/>',\n\
-                    '</div>',\n\
-\n\
-                '</div>',\n\
-\n\
-                '<div id=\"hidableSettings\">',\n\
-\n\
-                     '<div class=\"row arriveByControl\">',\n\
-                        '<div class=\"col-md-12\">',\n\
-                            '<select id=\"arriveBy\" class=\"apiParam form-control\" placeholder=\"Arrive\"><option value=\"true\">Arrive at</option><option value=\"false\" selected>Depart by</option></select>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-\n\
-\n\
-                    '<div class=\"row timeControl\">',\n\
-                        '<div class=\"input-group date col-md-12\" id=\"time\">',\n\
-                            '<input type=\"text\" class=\"form-control apiParam\" data-format=\"HH:mm PP\"/>',\n\
-                            '<span class=\"input-group-addon\"><span class=\"glyphicon glyphicon-time\"></span></span>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-                    '<div class=\"row dateControl\">',\n\
-                        '<div class=\"input-group date col-md-12\" id=\"date\">',\n\
-                            '<input type=\"text\" class=\"form-control apiParam\"/>',\n\
-                            '<span class=\"input-group-addon\"><span class=\"glyphicon glyphicon-time\"></span></span>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-\n\
-                    '<div class=\"row travelByControl\">',\n\
-                        '<div class=\"col-sm-4\">',\n\
-                            '<label for=\"mode\">Travel by: </label>',\n\
-                        '</div>',\n\
-\n\
-                        '<div class=\"col-sm-8\">',\n\
-                            '<select id=\"mode\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                '<option value=\"TRANSIT,WALK\">Transit</option>',\n\
-                                '<option value=\"WALK\">Walk only</option>',\n\
-                                '<option value=\"BICYCLE\">Bike only</option>',\n\
-                                '<option value=\"TRANSIT,BICYCLE\">Transit & Bike</option>',\n\
-                            '</select>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-\n\
-                    '<div class=\"row optimizeControl\">',\n\
-                        '<div class=\"col-sm-4\">',\n\
-                            '<label for=\"type\">Find: </label>',\n\
-                        '</div>',\n\
-\n\
-                        '<div class=\"col-sm-8\">',\n\
-                            '<select id=\"optimize\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                '<option value=\"QUICK\" selected>Quickest trip</option>',\n\
-                                '<option value=\"TRANSFERS\">Fewest transfers</option>',\n\
-                            '</select>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-\n\
-                    '<div class=\"maxWalkControl row\">',\n\
-                        '<div class=\"col-sm-6\">',\n\
-                           '<label for=\"maxWalkDist\">Maximum walk:</label>',\n\
-                        '</div>',\n\
-                        '{{#metric}}',\n\
-                            '<div class=\"col-sm-6\">',\n\
-                                '<select id=\"maxWalkDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                    '<option value=\"250\">1/4 km</option>',\n\
-                                    '<option value=\"500\">1/2 km</option>',\n\
-                                    '<option value=\"1000\" selected>1 km</option>',\n\
-                                    '<option value=\"2500\">2.5 km</option>',\n\
-                                    '<option value=\"5000\">5 km</option>',\n\
-                                '</select>',\n\
-                            '</div>',\n\
-                        '{{/metric}}',\n\
-                        '{{^metric}}',\n\
-                            '<div class=\"col-sm-6\">',\n\
-                                '<select id=\"maxWalkDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                    '<option value=\"402\">1/4 mile</option>',\n\
-                                    '<option value=\"804\">1/2 mile</option>',\n\
-                                    '<option value=\"1223\">3/4 mile</option>',\n\
-                                    '<option value=\"1609\" selected>1 mile</option>',\n\
-                                    '<option value=\"3218\">2 miles</option>',\n\
-                                    '<option value=\"4828\">3 miles</option>',\n\
-                                '</select>',\n\
-                            '</div>',\n\
-                        '{{/metric}}',\n\
-                    '</div>',\n\
-\n\
-                    '<div class=\"maxBikeControl row\">',\n\
-                        '<div class=\"col-sm-6\">',\n\
-                            '<label class=\"control-label\" for=\"maxWalkDist\">Maximum bike: </label>',\n\
-                        '</div>',\n\
-\n\
-                        '{{#metric}}',\n\
-                            '<div class=\"col-sm-6\">',\n\
-                                '<select id=\"maxBikeDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                    '<option value=\"1000\">1 km</option>',\n\
-                                    '<option value=\"2500\">2.5 km</option>',\n\
-                                    '<option value=\"5000\" selected>5 km</option>',\n\
-                                    '<option value=\"10000\">10 km</option>',\n\
-                                    '<option value=\"15000\">15 km</option>',\n\
-                                '</select>',\n\
-                            '</div>',\n\
-                        '{{/metric}}',\n\
-                        '{{^metric}}',\n\
-                            '<div class=\"col-sm-6\">',\n\
-                                '<select id=\"maxBikeDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">',\n\
-                                    '<option value=\"804\">1/2 mile</option>',\n\
-                                    '<option value=\"1609\">1 mile</option>',\n\
-                                    '<option value=\"4026\" selected>2.5 miles</option>',\n\
-                                    '<option value=\"8047\">5 miles</option>',\n\
-                                    '<option value=\"16093\">10 miles</option>',\n\
-                                '</select>',\n\
-                            '</div>',\n\
-                        '{{/metric}}',\n\
-\n\
-                    '</div>',\n\
-\n\
-                    '<div class=\"row bikeTriangleControl\">',\n\
-                        '<div class=\" col-md-offset-2 col-lg-offset-4\">',\n\
-                            '<div id=\"bikeTriangle\" style=\"height: 110px; cursor: pointer;\"></div>',\n\
-                        '</div>',\n\
-                    '</div>',\n\
-                '</div>',\n\
-\n\
-                '<div class=\"row\" id=\"hideSettings\">',\n\
-                    '<div class=\"col-sm-12\">',\n\
-                        '<button class=\"btn toggleSettings btn-default col-sm-12\">Hide Settings <span class=\"glyphicon glyphicon-chevron-up\"></span></button>',\n\
-                    '</div>',\n\
-                '</div>',\n\
-\n\
-                '<div class=\"row\" id=\"showSettings\">',\n\
-                    '<div class=\"col-sm-12\">',\n\
-                        '<button class=\"btn toggleSettings btn-default col-sm-12\">Show Settings <span class=\"glyphicon glyphicon-chevron-down\"></span></button>',\n\
-                    '</div>',\n\
-                '</div>'\n\
-\n\
-\n\
-\n\
-].join('\\n\
-'));\n\
+var requestFormTemplate = Handlebars.compile(require('otpjs/lib/request-form.html'));\n\
 \n\
 \n\
 var OtpRequestFormView = Backbone.View.extend({\n\
 \n\
     events: {\n\
-        \"change .apiParam\"      : \"changeForm\",\n\
-        \"change #mode\"          : \"updateModeControls\",\n\
-        \"click .toggleSettings\" : \"toggleSettings\"\n\
+        'change .apiParam'      : 'changeForm',\n\
+        'change #mode'          : 'updateModeControls',\n\
+        'click .toggleSettings' : 'toggleSettings'\n\
     },\n\
 \n\
     initialize : function(options) {\n\
@@ -33040,28 +37669,22 @@ var OtpRequestFormView = Backbone.View.extend({\n\
 '));\n\
 \n\
 \n\
-        this.model.on(\"change\", function(data) {\n\
+        this.model.on('change', function(data) {\n\
 \n\
-            var reverseLookup = OTP.config.reverseGeocode;\n\
+            var reverseLookup = window.OTP_config.reverseGeocode;\n\
 \n\
             if(_.has(data.changed, 'fromPlace') && data.attributes.fromPlace &&  view.selectFrom) {\n\
-\n\
-                var select = view.selectFrom;\n\
-                view.updateReverseGeocoder('From',  data.attributes.fromPlace, select);\n\
+                view.updateReverseGeocoder('From',  data.attributes.fromPlace, view.selectTo);\n\
 \n\
             }\n\
 \n\
             if(_.has(data.changed, 'toPlace') && data.attributes.toPlace && view.selectTo) {\n\
-\n\
-                var select = view.selectTo;\n\
-                 view.updateReverseGeocoder('To',  data.attributes.toPlace, select);\n\
+                 view.updateReverseGeocoder('To',  data.attributes.toPlace, view.selectTo);\n\
 \n\
             }\n\
 \n\
             if(_.has(data.changed, 'toPlace') && data.attributes.toPlace && view.selectTo) {\n\
-\n\
-                var select = view.selectTo;\n\
-                 view.updateReverseGeocoder('To',  data.attributes.toPlace, select);\n\
+                 view.updateReverseGeocoder('To',  data.attributes.toPlace, view.selectTo);\n\
 \n\
             }\n\
 \n\
@@ -33070,10 +37693,10 @@ var OtpRequestFormView = Backbone.View.extend({\n\
             view.$('#maxWalkDistance').val(data.attributes.maxWalkDistance);\n\
             view.$('#optimize').val(data.attributes.optimize);\n\
 \n\
-            var date = moment(data.attributes.date, \"MM-DD-YYYY\").toDate();\n\
+            var date = moment(data.attributes.date, 'MM-DD-YYYY').toDate();\n\
             view.datepicker.setDate(date);\n\
 \n\
-            var time = moment(data.attributes.time, \"hh:mm a\").toDate();\n\
+            var time = moment(data.attributes.time, 'hh:mm a').toDate();\n\
             view.timepicker.setDate(time);\n\
 \n\
             view.updateModeControls();\n\
@@ -33083,32 +37706,32 @@ var OtpRequestFormView = Backbone.View.extend({\n\
 \n\
     updateReverseGeocoder: function (field, latlon, select) {\n\
 \n\
-        var reverseLookup = OTP.config.reverseGeocode;\n\
+        var reverseLookup = window.OTP_config.reverseGeocode;\n\
 \n\
         var view = this;\n\
 \n\
 \n\
         if(reverseLookup) {\n\
 \n\
-            error = function() {\n\
+            var error = function() {\n\
                 view.updatingForm = true;\n\
 \n\
-                select.select2(\"data\", []);\n\
+                select.select2('data', []);\n\
 \n\
                 view.updatingForm = false;\n\
 \n\
             };\n\
 \n\
-            success = function(response) {\n\
+            var success = function(response) {\n\
                 view.updatingForm = true;\n\
-                select.select2(data, null);\n\
+                select.select2('data', null);\n\
                 response.text =  field + ' ' + response.address;\n\
-                select.select2(\"data\", response);\n\
+                select.select2('data', response);\n\
                 view.updatingForm = false;\n\
 \n\
             };\n\
 \n\
-            reverse(latlon, error, success)\n\
+            reverseLookup(latlon, error, success);\n\
         }\n\
         else {\n\
 \n\
@@ -33116,11 +37739,11 @@ var OtpRequestFormView = Backbone.View.extend({\n\
             view.updatingForm = true;\n\
 \n\
             var item = {\n\
-                            text: field + \" marker location\",\n\
+                            text: field + ' marker location',\n\
                             id : latlon\n\
             };\n\
 \n\
-            select.select2(\"data\", item);\n\
+            select.select2('data', item);\n\
 \n\
             view.updatingForm = false;\n\
 \n\
@@ -33161,22 +37784,22 @@ var OtpRequestFormView = Backbone.View.extend({\n\
         this.timepicker.setDate(new Date());\n\
         this.$('#time').on('changeDate', this.changeForm);\n\
 \n\
-        this.bikeTriangle = new OTP.bike_views.OtpBikeTrianglePanel({\n\
+        this.bikeTriangle = new BikeView({\n\
             model: this.model,\n\
             el: this.$('#bikeTriangle')\n\
         });\n\
 \n\
-        var url = OTP.config.esriApi + 'findAddressCandidates';\n\
+        var url = window.OTP_config.esriApi + 'findAddressCandidates';\n\
 \n\
         this.selectFrom = this.$('#fromPlace').select2({\n\
-            placeholder: \"Start Address\",\n\
+            placeholder: 'Start Address',\n\
             minimumInputLength: 4,\n\
             allowClear: true,\n\
             selectOnBlur: true,\n\
             createSearchChoice : function(term) {\n\
-                if(view.lastResults.length == 0) {\n\
-                    var text = term + \" (not found)\";\n\
-                    return { id: \"not found\", text: text };\n\
+                if(view.lastResults.length === 0) {\n\
+                    var text = term + ' (not found)';\n\
+                    return { id: 'not found', text: text };\n\
                 }\n\
             },\n\
             formatResult: function(object, container, query) {\n\
@@ -33194,30 +37817,30 @@ var OtpRequestFormView = Backbone.View.extend({\n\
                 data: function (term, page) {\n\
                     view.lastResults = [];\n\
 \n\
-                    var searchLocation = \"-73.7562271,42.6525795\";\n\
+                    var searchLocation = '-73.7562271,42.6525795';\n\
 \n\
                     if(view.options.map) {\n\
                       var latlng = view.options.map.getCenter();\n\
-                      searchLocation = latlng.lng + \",\" + latlng.lat;\n\
+                      searchLocation = latlng.lng + ',' + latlng.lat;\n\
                     }\n\
 \n\
                     return {\n\
                         singleLine: term, // search term\n\
-                        outFields: \"City,Region\",\n\
+                        outFields: 'City,Region',\n\
                         location: searchLocation,\n\
-                        f: \"json\"\n\
+                        f: 'json'\n\
                     };\n\
                 },\n\
                 results: function (res, page) {\n\
-                    var data = new Array();\n\
+                    var data = [];\n\
                     for(var itemPos in res.candidates.slice(0, 10)) {\n\
 \n\
-                        item = {\n\
-                            text: res.candidates[itemPos].address.split(\",\")[0],\n\
+                        var item = {\n\
+                            text: res.candidates[itemPos].address.split(',')[0],\n\
                             city : res.candidates[itemPos].attributes.City,\n\
                             state : res.candidates[itemPos].attributes.Region,\n\
                             id : res.candidates[itemPos].location.y + ',' + res.candidates[itemPos].location.x\n\
-                        }\n\
+                        };\n\
 \n\
                         data.push(item);\n\
                     }\n\
@@ -33227,7 +37850,7 @@ var OtpRequestFormView = Backbone.View.extend({\n\
                     view.lastResults = data;\n\
 \n\
                     if(data.length > 0) {\n\
-                        view.$(\"#fromPlace\").select2(\"data\", data[0]);\n\
+                        view.$('#fromPlace').select2('data', data[0]);\n\
                         view.changeForm();\n\
                     }\n\
 \n\
@@ -33239,14 +37862,14 @@ var OtpRequestFormView = Backbone.View.extend({\n\
 \n\
 \n\
         this.selectTo = this.$('#toPlace').select2({\n\
-            placeholder: \"End Address\",\n\
+            placeholder: 'End Address',\n\
             minimumInputLength: 4,\n\
             allowClear: true,\n\
             selectOnBlur: true,\n\
             createSearchChoice : function(term) {\n\
-                if(view.lastResults.length == 0) {\n\
-                    var text = term + \" (not found)\";\n\
-                    return { id: \"not found\", text: text };\n\
+                if(view.lastResults.length === 0) {\n\
+                    var text = term + ' (not found)';\n\
+                    return { id: 'not found', text: text };\n\
                 }\n\
             },\n\
             formatResult: function(object, container, query) {\n\
@@ -33264,30 +37887,30 @@ var OtpRequestFormView = Backbone.View.extend({\n\
                 data: function (term, page) {\n\
                     view.lastResults = [];\n\
 \n\
-                    var searchLocation = \"-73.7562271,42.6525795\";\n\
+                    var searchLocation = '-73.7562271,42.6525795';\n\
 \n\
                     if(view.options.map) {\n\
                       var latlng = view.options.map.getCenter();\n\
-                      searchLocation = latlng.lng + \",\" + latlng.lat;\n\
+                      searchLocation = latlng.lng + ',' + latlng.lat;\n\
                     }\n\
 \n\
                     return {\n\
                         singleLine: term, // search term\n\
-                        outFields: \"City,Region\",\n\
+                        outFields: 'City,Region',\n\
                         location: searchLocation,\n\
-                        f: \"json\"\n\
+                        f: 'json'\n\
                     };\n\
                 },\n\
                 results: function (res, page) {\n\
-                    var data = new Array();\n\
+                    var data = [];\n\
                     for(var itemPos in res.candidates.slice(0, 10)) {\n\
 \n\
-                        item = {\n\
-                            text: res.candidates[itemPos].address.split(\",\")[0],\n\
+                        var item = {\n\
+                            text: res.candidates[itemPos].address.split(',')[0],\n\
                             city : res.candidates[itemPos].attributes.City,\n\
                             state : res.candidates[itemPos].attributes.Region,\n\
                             id : res.candidates[itemPos].location.y + ',' + res.candidates[itemPos].location.x\n\
-                        }\n\
+                        };\n\
 \n\
                         data.push(item);\n\
                     }\n\
@@ -33297,7 +37920,7 @@ var OtpRequestFormView = Backbone.View.extend({\n\
                     view.lastResults = data;\n\
 \n\
                     if(data.length > 0) {\n\
-                        view.$(\"#toPlace\").select2(\"data\", data[0]);\n\
+                        view.$('#toPlace').select2('data', data[0]);\n\
                         view.changeForm();\n\
                     }\n\
 \n\
@@ -33320,12 +37943,12 @@ var OtpRequestFormView = Backbone.View.extend({\n\
         if(this.updatingForm)\n\
             return;\n\
 \n\
-        var maxDistance = $('#mode').val().indexOf(\"WALK\") != -1 ?\n\
-            $('#maxWalkDistance').val() : $('#maxBikeDistance').val()\n\
+        var maxDistance = $('#mode').val().indexOf('WALK') != -1 ?\n\
+            $('#maxWalkDistance').val() : $('#maxBikeDistance').val();\n\
 \n\
         var data = {\n\
-            fromPlace: this.$('#fromPlace').select2(\"val\"),\n\
-            toPlace: this.$('#toPlace').select2(\"val\"),\n\
+            fromPlace: this.$('#fromPlace').select2('val'),\n\
+            toPlace: this.$('#toPlace').select2('val'),\n\
             date: this.$('#date input').val(),\n\
             time: this.$('#time input').val(),\n\
             arriveBy: this.$('#arriveBy').val(),\n\
@@ -33335,13 +37958,13 @@ var OtpRequestFormView = Backbone.View.extend({\n\
         };\n\
 \n\
         // skip if either to/from fields are unset\n\
-        if(this.$('#fromPlace').select2(\"val\") == \"not found\")\n\
+        if(this.$('#fromPlace').select2('val') == 'not found')\n\
             data.fromPlace = false;\n\
-        if(this.$('#toPlace').select2(\"val\") == \"not found\")\n\
+        if(this.$('#toPlace').select2('val') == 'not found')\n\
             data.toPlace = false;\n\
 \n\
         var mode = $('#mode').val();\n\
-        if(mode.indexOf(\"BICYCLE\") != -1) {\n\
+        if(mode.indexOf('BICYCLE') != -1) {\n\
             data.triangleSafetyFactor = $('#').val();\n\
             data.triangleSlopeFactor = $('#').val();\n\
             data.triangleTimeFactor = $('#').val();\n\
@@ -33359,32 +37982,32 @@ var OtpRequestFormView = Backbone.View.extend({\n\
     updateModeControls : function() {\n\
         var mode = $('#mode').val();\n\
 \n\
-        if(mode.indexOf(\"WALK\") != -1 && mode.indexOf(\"TRANSIT\") != -1) this.$el.find(\".maxWalkControl\").show();\n\
-        else this.$el.find(\".maxWalkControl\").hide();\n\
+        if(mode.indexOf('WALK') != -1 && mode.indexOf('TRANSIT') != -1) this.$el.find('.maxWalkControl').show();\n\
+        else this.$el.find('.maxWalkControl').hide();\n\
 \n\
-        if(mode.indexOf(\"BICYCLE\") != -1 && mode.indexOf(\"TRANSIT\") != -1) this.$el.find(\".maxBikeControl\").show();\n\
-        else this.$el.find(\".maxBikeControl\").hide();\n\
+        if(mode.indexOf('BICYCLE') != -1 && mode.indexOf('TRANSIT') != -1) this.$el.find('.maxBikeControl').show();\n\
+        else this.$el.find('.maxBikeControl').hide();\n\
 \n\
-        if(mode.indexOf(\"TRANSIT\") != -1 && mode.indexOf(\"BICYCLE\") == -1)\n\
-            this.$el.find(\".optimizeControl\").show();\n\
+        if(mode.indexOf('TRANSIT') != -1 && mode.indexOf('BICYCLE') == -1)\n\
+            this.$el.find('.optimizeControl').show();\n\
         else\n\
-            this.$el.find(\".optimizeControl\").hide();\n\
+            this.$el.find('.optimizeControl').hide();\n\
 \n\
-        if(mode.indexOf(\"BICYCLE\") != -1) this.$el.find(\".bikeTriangleControl\").show();\n\
-        else this.$el.find(\".bikeTriangleControl\").hide();\n\
+        if(mode.indexOf('BICYCLE') != -1) this.$el.find('.bikeTriangleControl').show();\n\
+        else this.$el.find('.bikeTriangleControl').hide();\n\
     },\n\
 \n\
     toggleSettings : function() {\n\
 \n\
-        if($('#hidableSettings').is(\":visible\")) {\n\
-            $('#hidableSettings').slideUp(\"fast\", function(){\n\
+        if($('#hidableSettings').is(':visible')) {\n\
+            $('#hidableSettings').slideUp('fast', function(){\n\
                 $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));\n\
             });\n\
             $('#showSettings').show();\n\
             $('#hideSettings').hide();\n\
         }\n\
         else {\n\
-            $('#hidableSettings').slideDown(\"fast\", function(){\n\
+            $('#hidableSettings').slideDown('fast', function(){\n\
                 $('#itineraries').height($(window).height() - ($('#request').height() + $('#messageWell').height() + 80));\n\
             });\n\
             $('#showSettings').hide();\n\
@@ -33402,9 +38025,9 @@ var OtpRequestFormView = Backbone.View.extend({\n\
         var lonlat = parts[1] + ',' + parts[0];\n\
 \n\
         $.ajax({\n\
-            url: OTP.config.esriApi + 'reverseGeocode?location=' + encodeURIComponent(lonlat) + '&f=pjson',\n\
+            url: window.OTP_config.esriApi + 'reverseGeocode?location=' + encodeURIComponent(lonlat) + '&f=pjson',\n\
             type: 'GET',\n\
-            dataType : \"jsonp\",\n\
+            dataType : 'jsonp',\n\
             error: function() {\n\
                error();\n\
             },\n\
@@ -33425,31 +38048,36 @@ var OtpRequestFormView = Backbone.View.extend({\n\
 });\n\
 \n\
 module.exports.OtpRequestFormView = OtpRequestFormView;\n\
-//@ sourceURL=otpjs/lib/request_views.js"
+\n\
+//# sourceURL=lib/request_views.js"
 ));
-require.register("otpjs/lib/topo_views.js", Function("exports, require, module",
-"var _ = require('underscore');\n\
-var $ = require('jquery');\n\
-var Backbone = require('backbone');\n\
+
+require.register("otpjs/lib/topo_views.js", Function("exports, module",
+"var _ = require('jashkenas~underscore@1.7.0');\n\
+var $ = require('components~jquery@1.11.1');\n\
+var Backbone = require('jashkenas~backbone@1.1.2');\n\
 Backbone.$ = $;\n\
 \n\
-var utils = require('./utils');\n\
+var L = window.L;\n\
+var Raphael = window.Raphael;\n\
+\n\
+var utils = require('otpjs/lib/utils.js');\n\
 \n\
 var getElevation = function(elevCoord) {\n\
     return elevCoord.second * 3.28084;\n\
-}\n\
+};\n\
 \n\
 var OtpItineraryTopoView = Backbone.View.extend({\n\
- \n\
+\n\
     initialize : function(options) {\n\
         this.options = options || {};\n\
-        _.bindAll(this, \"refresh\", \"mousemove\", \"mouseleave\", \"click\");\n\
+        _.bindAll(this, 'refresh', 'mousemove', 'mouseleave', 'click');\n\
         this.refresh();\n\
-        \n\
+\n\
         this.$el.resize(this.refresh);\n\
 \n\
-        this.listenTo(this.model, \"activate\", this.render);\n\
-        this.listenTo(this.model, \"deactivate\", this.clear);\n\
+        this.listenTo(this.model, 'activate', this.render);\n\
+        this.listenTo(this.model, 'deactivate', this.clear);\n\
     },\n\
 \n\
     render : function() {\n\
@@ -33459,8 +38087,8 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
 \n\
     refresh : function() {\n\
         this.$el.css({\n\
-            width: \"100%\",\n\
-            height: \"100%\"\n\
+            width: '100%',\n\
+            height: '100%'\n\
         });\n\
         var w = this.$el.width(), h = this.$el.height();\n\
         if(w === 0 || h === 0 || (w === this._renderedW && h === this._renderedH)) return;\n\
@@ -33470,8 +38098,8 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
         var axisWidth = 30;\n\
         var graphHeight = h, graphWidth = w - axisWidth;\n\
 \n\
-        \n\
-        this._graph = $(\"<div>\");\n\
+\n\
+        this._graph = $('<div>');\n\
 \n\
         // apply mouse listeners for map interactivity, if map reference provided\n\
         if(this.options.map) {\n\
@@ -33486,9 +38114,9 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
         var totalWalkBikeDist = 0, minElev = 999999, maxElev = -999999;\n\
         _.each(legs.models, function(leg) {\n\
             if(leg.isWalk() || leg.isBicycle()) {\n\
-                totalWalkBikeDist += leg.get(\"distance\");\n\
-                _.each(leg.get(\"steps\").models, function(step, index) {\n\
-                    _.each(step.get(\"elevation\"), function(elev, index) {\n\
+                totalWalkBikeDist += leg.get('distance');\n\
+                _.each(leg.get('steps').models, function(step, index) {\n\
+                    _.each(step.get('elevation'), function(elev, index) {\n\
                         //console.log(elev.second);\n\
                         minElev = Math.min(minElev, getElevation(elev));\n\
                         maxElev = Math.max(maxElev, getElevation(elev));\n\
@@ -33497,7 +38125,7 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
             }\n\
         }, this);\n\
 \n\
-        // expand the min/max elevation range to align with interval multiples \n\
+        // expand the min/max elevation range to align with interval multiples\n\
         minElev = elevInterval * Math.floor(minElev / elevInterval);\n\
         maxElev = elevInterval * Math.ceil(maxElev / elevInterval);\n\
 \n\
@@ -33505,18 +38133,18 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
             //console.log(e);\n\
             var y = graphHeight - (e - minElev) / (maxElev - minElev) * graphHeight;\n\
             if(e > minElev && e < maxElev) {\n\
-                paper.rect(0, y, w, 1).attr({ \"fill\": \"#bbb\", \"stroke\" : null });\n\
+                paper.rect(0, y, w, 1).attr({ 'fill': '#bbb', 'stroke' : null });\n\
             }\n\
             if(e < maxElev) y -= 15;\n\
 \n\
-            $(\"<div>\").html(e+\"'\").css({\n\
+            $('<div>').html(e+'\\'').css({\n\
                 position : 'absolute',\n\
                 top : y,\n\
                 left : 0,\n\
                 width: 25,\n\
                 'text-align': 'right'\n\
             }).appendTo(this._graph[0]);\n\
-            \n\
+\n\
         }\n\
 \n\
         var walkBikeDist = 0;\n\
@@ -33528,31 +38156,31 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
 \n\
         _.each(legs.models, function(leg, index) {\n\
             if(leg.isWalk() || leg.isBicycle()) {\n\
-                var legDistance = leg.get(\"distance\");\n\
+                var legDistance = leg.get('distance');\n\
                 var legDistanceCovered = 0;\n\
                 var graphArray = [];\n\
-                \n\
+\n\
                 var latLngs = utils.decodePolyline(leg.get('legGeometry').points);\n\
                 this._legLatLngs.push(latLngs);\n\
-                \n\
+\n\
                 var legDistDeg = 0;\n\
                 for(var i = 0; i < latLngs.length - 1; i++) {\n\
                     var from = latLngs[i], to = latLngs[i+1];\n\
                     legDistDeg += Math.sqrt(Math.pow(to.lat - from.lat, 2) + Math.pow(to.lng - from.lng, 2));\n\
                 }\n\
                 this._legDistances.push(legDistDeg);\n\
-                \n\
-                _.each(leg.get(\"steps\").models, function(step, index) {\n\
+\n\
+                _.each(leg.get('steps').models, function(step, index) {\n\
                     var stepDistance = step.get('distance');\n\
 \n\
                     var elevArray;\n\
 \n\
                     // check for old style strings -- covert to array of pairs\n\
-                    if(_.isArray(step.get(\"elevation\")))\n\
-                        elevArray = step.get(\"elevation\");\n\
+                    if(_.isArray(step.get('elevation')))\n\
+                        elevArray = step.get('elevation');\n\
                     else{\n\
                         var pairs = _([]);\n\
-                        elevArray = _.reduce(step.get(\"elevation\").split(','), function(m, v) {\n\
+                        elevArray = _.reduce(step.get('elevation').split(','), function(m, v) {\n\
 \n\
                             if(m.last() && m.last().size() == 1) {\n\
                                 var p = m.last();\n\
@@ -33562,11 +38190,11 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
                             else {\n\
                                 m.push(_([v]));\n\
                             }\n\
-                                \n\
+\n\
                             return m;\n\
                         }, pairs);\n\
                     }\n\
-                        \n\
+\n\
 \n\
 \n\
                     elevArray.sort(function(a,b) {\n\
@@ -33596,41 +38224,41 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
 \n\
                         var x = axisWidth + ((walkBikeDist + (legDistanceCovered + first)) / totalWalkBikeDist) * graphWidth;\n\
                         var y = (1 - (second - minElev) / (maxElev - minElev)) * graphHeight;\n\
-                        \n\
+\n\
                         graphArray.push([x, y]);\n\
                     }, this);\n\
-                    legDistanceCovered += step.get(\"distance\");\n\
+                    legDistanceCovered += step.get('distance');\n\
                 }, this);\n\
 \n\
                 if(graphArray.length > 0) {\n\
-                    var pathStr = \"\";\n\
+                    var pathStr = '';\n\
                     _.each(graphArray, function(coord, index) {\n\
-                        if(index === 0) pathStr += \"M\" + coord[0] + \" \" + coord[1];\n\
-                        else pathStr += \" L\" + coord[0] + \" \" + coord[1];\n\
+                        if(index === 0) pathStr += 'M' + coord[0] + ' ' + coord[1];\n\
+                        else pathStr += ' L' + coord[0] + ' ' + coord[1];\n\
                     });\n\
 \n\
-                    var fillStr = pathStr + \" L\" + graphArray[graphArray.length-1][0] + \" \" + graphHeight;\n\
-                    fillStr += \" L\" + graphArray[0][0] + \" \" + graphHeight;\n\
+                    var fillStr = pathStr + ' L' + graphArray[graphArray.length-1][0] + ' ' + graphHeight;\n\
+                    fillStr += ' L' + graphArray[0][0] + ' ' + graphHeight;\n\
                     path = paper.path(fillStr);\n\
                     path.attr({\n\
-                        fill: \"#aaa\",\n\
+                        fill: '#aaa',\n\
                         stroke: null,\n\
-                        opacity: .5\n\
+                        opacity: 0.5\n\
                     });\n\
 \n\
                     var path = paper.path(pathStr);\n\
                     path.attr({\n\
-                        stroke: \"#888\",\n\
-                        \"stroke-width\" : 3\n\
+                        stroke: '#888',\n\
+                        'stroke-width' : 3\n\
                     });\n\
 \n\
                 }\n\
-                \n\
+\n\
                 walkBikeDist += legDistance;\n\
                 var t = walkBikeDist / totalWalkBikeDist;\n\
                 if(t < 1) {\n\
                     var x = axisWidth +  Math.round(t * graphWidth);\n\
-                    paper.rect(x, 0, 1, graphHeight).attr({ \"fill\": \"#aaa\", \"stroke\" : null });\n\
+                    paper.rect(x, 0, 1, graphHeight).attr({ 'fill': '#aaa', 'stroke' : null });\n\
                     this._legXCoords.push(x);\n\
                 }\n\
 \n\
@@ -33643,19 +38271,17 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
         this._renderedH = h;\n\
         this._renderedW = w;\n\
 \n\
-        if(this.options.planView.model.get(\"itineraries\").activeItinerary === this.model) {\n\
+        if(this.options.planView.model.get('itineraries').activeItinerary === this.model) {\n\
             this.render();\n\
         }\n\
     },\n\
 \n\
     mousemove : function(evt) {\n\
         if(!this._legXCoords || !this.options.map) return;\n\
+        var x = evt.offsetX;\n\
 \n\
-        if(evt.offsetX === undefined) { // Firefox\n\
+        if(x === undefined) { // Firefox\n\
             x = evt.pageX - this._graph.offset().left;\n\
-        }             \n\
-        else { // Chrome\n\
-            x = evt.offsetX;\n\
         }\n\
 \n\
         for(var i=0; i < this._legXCoords.length - 1; i++) {\n\
@@ -33728,7 +38354,7 @@ var OtpItineraryTopoView = Backbone.View.extend({\n\
         }\n\
 \n\
         return latLngs[latLngs.length-1];\n\
-    },    \n\
+    },\n\
 \n\
 });\n\
 \n\
@@ -33736,7 +38362,7 @@ module.exports.OtpItineraryTopoView = OtpItineraryTopoView;\n\
 \n\
 \n\
 var LeafletTopoGraphControl = L.Control.extend({\n\
-    \n\
+\n\
     options: {\n\
         collapsed: true,\n\
         position: 'bottomright',\n\
@@ -33746,7 +38372,7 @@ var LeafletTopoGraphControl = L.Control.extend({\n\
     initialize: function (options) {\n\
         L.setOptions(this, options);\n\
     },\n\
-    \n\
+\n\
     onAdd: function (map) {\n\
         this._map = map;\n\
 \n\
@@ -33754,12 +38380,12 @@ var LeafletTopoGraphControl = L.Control.extend({\n\
         var container = this._container = L.DomUtil.create('div', className);\n\
         L.DomUtil.addClass(this._container, 'leaflet-control-topo-collapsed');\n\
 \n\
-        this._graphContainer = $(\"<div>\").addClass(\"leaflet-control-topo-graph\").appendTo(this._container);        \n\
-        this._graphDiv = $(\"<div>\").appendTo(this._graphContainer);\n\
+        this._graphContainer = $('<div>').addClass('leaflet-control-topo-graph').appendTo(this._container);\n\
+        this._graphDiv = $('<div>').appendTo(this._graphContainer);\n\
 \n\
         var link = this._layersLink = L.DomUtil.create('div', className + '-toggle', container);\n\
         L.DomEvent.on(link, 'click', this._toggle, this);\n\
-        \n\
+\n\
         return this._container;\n\
     },\n\
 \n\
@@ -33788,19 +38414,22 @@ var LeafletTopoGraphControl = L.Control.extend({\n\
 });\n\
 \n\
 module.exports.LeafletTopoGraphControl = LeafletTopoGraphControl;\n\
-//@ sourceURL=otpjs/lib/topo_views.js"
+\n\
+//# sourceURL=lib/topo_views.js"
 ));
-require.register("otpjs/lib/utils.js", Function("exports, require, module",
+
+require.register("otpjs/lib/utils.js", Function("exports, module",
 "'use strict';\n\
 \n\
-var _ = require('underscore');\n\
-var moment = require('moment');\n\
+var _ = require('jashkenas~underscore@1.7.0');\n\
+var moment = require('moment~moment@2.8.4');\n\
+var L = window.L;\n\
 \n\
 var filterParams = function(data) {\n\
 \n\
 \t// filter empty attributes from request\n\
     var omitList = _.map(_.pairs(data), function(pair){\n\
-        if(pair[1] == undefined)\n\
+        if(pair[1] === undefined)\n\
           return pair[0];\n\
       });\n\
 \n\
@@ -33819,7 +38448,7 @@ var decodePolyline = function(polyline) {\n\
 \n\
     var dataLength  = polyline.length;\n\
 \n\
-    var polylineLatLngs = new Array();\n\
+    var polylineLatLngs = [];\n\
 \n\
     while (currentPosition < dataLength) {\n\
 \n\
@@ -33860,33 +38489,21 @@ module.exports.decodePolyline = decodePolyline;\n\
 \n\
 \n\
 var formatTime = function(time, format, offsetHrs) {\n\
-    var format = format || \"h:mma\";\n\
+    format = format || 'h:mma';\n\
 \tvar m = moment(time);\n\
-  if(offsetHrs) m = m.add(\"hours\", offsetHrs);\n\
+    if(offsetHrs) m = m.add('hours', offsetHrs);\n\
 \treturn m.format(format);\n\
 };\n\
 \n\
 module.exports.formatTime = formatTime;\n\
 \n\
 \n\
-var secToHrMin = function(sec) {\n\
-    var hrs = Math.floor(sec / 3600);\n\
-    var mins = Math.floor(sec / 60) % 60;\n\
-\n\
-    // TODO: localization\n\
-    var str = (hrs > 0 ? (hrs +\" hr, \") : \"\") + mins + \" min\";\n\
-\n\
-    return str;\n\
-};\n\
-\n\
-module.exports.secToHrMin = secToHrMin;\n\
-\n\
 var msToHrMin = function(ms) {\n\
     var hrs = Math.floor(ms / 3600000);\n\
     var mins = Math.floor(ms / 60000) % 60;\n\
 \n\
     // TODO: localization\n\
-    var str = (hrs > 0 ? (hrs +\" hr, \") : \"\") + mins + \" min\";\n\
+    var str = (hrs > 0 ? (hrs +' hr, ') : '') + mins + ' min';\n\
 \n\
     return str;\n\
 };\n\
@@ -33897,7 +38514,7 @@ module.exports.msToHrMin = msToHrMin;\n\
 var distanceStringImperial = function(m) {\n\
     var ft = m*3.28084;\n\
     if(ft < 528) return Math.round(ft) + ' feet';\n\
-    return Math.round(ft/528)/10+\" miles\";\n\
+    return Math.round(ft/528)/10+' miles';\n\
 };\n\
 \n\
 var distanceStringMetric = function(m) {\n\
@@ -33905,15 +38522,15 @@ var distanceStringMetric = function(m) {\n\
     if ( km > 100 ) {\n\
         //100 km => 999999999 km\n\
         km = km.toFixed(0);\n\
-        return km+\" km\";\n\
+        return km+' km';\n\
     } else if ( km > 1 ) {\n\
         //1.1 km => 99.9 km\n\
         km = km.toFixed(1);\n\
-        return km+\" km\";\n\
+        return km+' km';\n\
     } else {\n\
         //1m => 999m\n\
         m = m.toFixed(0);\n\
-        return m+\" m\";\n\
+        return m+' m';\n\
     }\n\
 };\n\
 \n\
@@ -33922,76 +38539,33 @@ var distanceString = function(m, metric) {\n\
 };\n\
 \n\
 module.exports.distanceString = distanceString;\n\
-//@ sourceURL=otpjs/lib/utils.js"
+\n\
+\n\
+\n\
+//# sourceURL=lib/utils.js"
 ));
 
+require.define("otpjs/lib/access-leg.html", "<div class=\"otp-leg\">\n  <div class=\"otp-legHeader\">\n    <span style=\"float:right;\">{{formatDuration duration}}</span>\n    <b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div></b> to {{to.name}}\n  </div>\n  <div class=\"otp-legBody\"></div>\n</div>");
+
+require.define("otpjs/lib/generic-leg.html", "<div class=\"otp-leg\">\n  <div class=\"otp-legHeader\">\n    <span style=\"float:right;\">{{formatDuration duration}}</span>\n    <b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div></b> to {{to.name}}\n  </div>\n</div>");
+
+require.define("otpjs/lib/leg-from-bubble.html", "<div class=\"otp-legBubble-icon-topRow-{{orientation}}\">\n  <div class=\"otp-legBubble-arrow-right\" style=\"float: left; margin-left:4px;\"></div>\n  <div style=\"width: 16px; height: 16px; margin-left: 12px;\">\n    <div class=\"otp-modeIcon-{{mode}}\" style=\"margin: auto auto;\"></div>\n    <div class=\"otp-routeShortName\">{{routeShortName}}</div>\n  </div>\n</div>\n{{{formatTime from.departure format=\"h:mm\"}}}");
+
+require.define("otpjs/lib/map-context-menu.html", "<div class=\"otp-mapContextMenu\">\n  <div class=\"otp-mapContextMenuItem setStartLocation\">Set Start Location</div>\n  <div class=\"otp-mapContextMenuItem setEndLocation\">Set End Location</div>\n</div>");
+
+require.define("otpjs/lib/narrative-adjust.html", "<div class=\"messageWell well\">\n  <p class=\"text-info\">Drag start and end location pins on the map or use the form above to adjust trip settings.</p>\n</div>\n<div class=\"itineraries\"></div>");
+
+require.define("otpjs/lib/narrative-new.html", "<div class=\"messageWell well\">\n  <p class=\"text-info\">\n    <strong>To plan a trip:</strong> select a start and end location by clicking the map or by entering an address above.\n  </p>\n</div>\n<div class=\"itineraries\"></div>\n");
+
+require.define("otpjs/lib/narrative-itinerary.html", "<div class=\"well\">\n  <div class=\"otp-itinHeader\">\n    <span style=\"float:right;\">{{formatDuration duration}}</span>\n    Option {{index}}:\n    {{#each legs}}\n    <nobr>\n      <div class=\"otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}\"></div>\n      {{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}\n      {{#unless @last}}\n      <div class=\"otp-legMode-icon otp-legMode-icon-arrow-right\"></div>\n      {{/unless}}\n    </nobr>\n    {{/each}}\n    <br>\n    <span>{{formatTime startTime timeOffset}} - {{formatTime endTime timeOffset}}</span>\n  </div>\n  <div class=\"otp-itinBody\"></div>\n</div>");
+
+require.define("otpjs/lib/request-form.html", "<div class=\"visibleSettings\">\n  <div class=\"row fromPlaceControl\">\n    <input class=\"apiParam col-sm-12\" id=\"fromPlace\" placeholder=\"Start Address\">\n  </div>\n\n  <div class=\"row toPlaceControl\">\n    <input id=\"toPlace\" class=\"apiParam col-sm-12\" placeholder=\"End Address\">\n  </div>\n</div>\n\n<div id=\"hidableSettings\">\n  <div class=\"row arriveByControl\">\n    <div class=\"col-md-12\">\n      <select id=\"arriveBy\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"true\">Arrive at</option>\n        <option value=\"false\" selected>Depart by</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"row timeControl\">\n    <div class=\"input-group date col-md-12\" id=\"time\">\n      <input type=\"text\" class=\"form-control apiParam\" data-format=\"HH:mm PP\">\n      <span class=\"input-group-addon\">\n        <span class=\"glyphicon glyphicon-time\"></span>\n      </span>\n    </div>\n  </div>\n\n  <div class=\"row dateControl\">\n    <div class=\"input-group date col-md-12\" id=\"date\">\n      <input type=\"text\" class=\"form-control apiParam\">\n      <span class=\"input-group-addon\">\n        <span class=\"glyphicon glyphicon-time\"></span>\n      </span>\n    </div>\n  </div>\n\n  <div class=\"row travelByControl\">\n    <div class=\"col-sm-4\">\n      <label for=\"mode\">Travel by: </label>\n    </div>\n\n    <div class=\"col-sm-8\">\n      <select id=\"mode\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"TRANSITWALK\">Transit</option>\n        <option value=\"WALK\">Walk only</option>\n        <option value=\"BICYCLE\">Bike only</option>\n        <option value=\"TRANSITBICYCLE\">Transit & Bike</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"row optimizeControl\">\n    <div class=\"col-sm-4\">\n      <label for=\"type\">Find: </label>\n    </div>\n\n    <div class=\"col-sm-8\">\n      <select id=\"optimize\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"QUICK\" selected>Quickest trip</option>\n        <option value=\"TRANSFERS\">Fewest transfers</option>\n      </select>\n    </div>\n  </div>\n\n  <div class=\"maxWalkControl row\">\n    <div class=\"col-sm-6\">\n      <label for=\"maxWalkDist\">Maximum walk:</label>\n    </div>\n    {{#metric}}\n    <div class=\"col-sm-6\">\n      <select id=\"maxWalkDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"250\">1/4 km</option>\n        <option value=\"500\">1/2 km</option>\n        <option value=\"1000\" selected>1 km</option>\n        <option value=\"2500\">2.5 km</option>\n        <option value=\"5000\">5 km</option>\n      </select>\n    </div>\n    {{/metric}}\n    {{^metric}}\n    <div class=\"col-sm-6\">\n      <select id=\"maxWalkDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"402\">1/4 mile</option>\n        <option value=\"804\">1/2 mile</option>\n        <option value=\"1223\">3/4 mile</option>\n        <option value=\"1609\" selected>1 mile</option>\n        <option value=\"3218\">2 miles</option>\n        <option value=\"4828\">3 miles</option>\n      </select>\n    </div>\n    {{/metric}}\n  </div>\n\n  <div class=\"maxBikeControl row\">\n    <div class=\"col-sm-6\">\n      <label class=\"control-label\" for=\"maxWalkDist\">Maximum bike: </label>\n    </div>\n\n    {{#metric}}\n    <div class=\"col-sm-6\">\n      <select id=\"maxBikeDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"1000\">1 km</option>\n        <option value=\"2500\">2.5 km</option>\n        <option value=\"5000\" selected>5 km</option>\n        <option value=\"10000\">10 km</option>\n        <option value=\"15000\">15 km</option>\n      </select>\n    </div>\n    {{/metric}}\n\n    {{^metric}}\n    <div class=\"col-sm-6\">\n      <select id=\"maxBikeDistance\" class=\"apiParam form-control\" placeholder=\"Arrive\">\n        <option value=\"804\">1/2 mile</option>\n        <option value=\"1609\">1 mile</option>\n        <option value=\"4026\" selected>2.5 miles</option>\n        <option value=\"8047\">5 miles</option>\n        <option value=\"16093\">10 miles</option>\n      </select>\n    </div>\n    {{/metric}}\n  </div>\n\n  <div class=\"row bikeTriangleControl\">\n    <div class=\" col-md-offset-2 col-lg-offset-4\">\n      <div id=\"bikeTriangle\" style=\"height: 110px; cursor: pointer;\"></div>\n    </div>\n  </div>\n</div>\n\n<div class=\"row\" id=\"hideSettings\">\n  <div class=\"col-sm-12\">\n    <button class=\"btn toggleSettings btn-default col-sm-12\">Hide Settings <span class=\"glyphicon glyphicon-chevron-up\"></span></button>\n  </div>\n</div>\n\n<div class=\"row\" id=\"showSettings\">\n  <div class=\"col-sm-12\">\n    <button class=\"btn toggleSettings btn-default col-sm-12\">Show Settings <span class=\"glyphicon glyphicon-chevron-down\"></span></button>\n  </div>\n</div>");
+
+require.define("otpjs/lib/step.html", "<div class=\"otp-legStep-row\">\n  <div class=\"otp-legStep-icon otp-legStep-icon-{{relativeDirection}}\"></div>\n  <div class=\"otp-legStep-dist\">\n    <span style=\"font-weight:bold; font-size: 1.2em;\">{{distanceValue}}</span><br>{{distanceUnit}}\n  </div>\n  <div class=\"otp-legStep-text\">\n  {{#if isRoundabout}}\n    Take roundabout {{relativeDirection}} to {{ordinal exit}} exit on {{streetName}}\n  {{else}}\n    {{#if isFirst}}\n      Start on <b>{{streetName}}</b> heading {{absoluteDirection}}\n    {{else}}\n      {{#if stayOn}}\n        <b>{{relativeDirection}}</b> to continue on <b>{{streetName}}</b>\n      {{else}}\n        <b>{{relativeDirection}}</b> on to <b>{{streetName}}</b>\n      {{/if}}\n    {{/if}}\n  {{/if}}\n  </div>\n  <div style=\"clear:both;\"></div>\n</div>\n");
+
+require.define("otpjs/lib/transit-leg.html", "<div class=\"otp-leg\">\n  <div class=\"otp-legHeader\">\n    <b><div class=\"otp-legMode-icon otp-legMode-icon-{{ mode }}\"></div> {{routeShortName}}</b> {{routeLongName}} to {{to.name}}\n  </div>\n  <div class=\"otp-legBody\">\n    <div class=\"otp-transitLeg-leftCol\">{{formatTime startTime timeOffset}}</div>\n    <div class=\"otp-transitLeg-endpointDesc otp-from\"><b>Depart</b>: {{from.name}}</div>\n    <div class=\"otp-transitLeg-endpointDescSub\">Stop #{{from.stopId.id}}</div>\n    <div class=\"otp-transitLeg-buffer\"></div>\n    <div class=\"otp-transitLeg-elapsedDesc\"><i>Time in transit: {{formatDuration duration}}</i></div>\n    <div class=\"otp-transitLeg-buffer\"></div>\n    <div class=\"otp-transitLeg-leftCol\">{{formatTime endTime timeOffset}}</div>\n    <div class=\"otp-transitLeg-endpointDesc otp-to\"><b>Arrive</b>: {{to.name}}</div>\n  </div>\n</div>");
+
+require.modules["otpjs"] = require.modules["otpjs"];
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-require.alias("jashkenas-underscore/underscore.js", "otpjs/deps/underscore/underscore.js");
-require.alias("jashkenas-underscore/underscore.js", "otpjs/deps/underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-underscore/index.js");
-require.alias("jashkenas-backbone/backbone.js", "otpjs/deps/backbone/backbone.js");
-require.alias("jashkenas-backbone/backbone.js", "otpjs/deps/backbone/index.js");
-require.alias("jashkenas-backbone/backbone.js", "backbone/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-backbone/deps/underscore/underscore.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-backbone/deps/underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-underscore/index.js");
-require.alias("jashkenas-backbone/backbone.js", "jashkenas-backbone/index.js");
-require.alias("moment-moment/moment.js", "otpjs/deps/moment/moment.js");
-require.alias("moment-moment/moment.js", "otpjs/deps/moment/index.js");
-require.alias("moment-moment/moment.js", "moment/index.js");
-require.alias("moment-moment/moment.js", "moment-moment/index.js");
-require.alias("components-jquery/jquery.js", "otpjs/deps/jquery/jquery.js");
-require.alias("components-jquery/jquery.js", "otpjs/deps/jquery/index.js");
-require.alias("components-jquery/jquery.js", "jquery/index.js");
-require.alias("components-jquery/jquery.js", "components-jquery/index.js");
-require.alias("kpwebb-select2/select2.js", "otpjs/deps/select2/select2.js");
-require.alias("kpwebb-select2/select2_locale_en.js", "otpjs/deps/select2/select2_locale_en.js");
-require.alias("kpwebb-select2/select2.js", "otpjs/deps/select2/index.js");
-require.alias("kpwebb-select2/select2.js", "select2/index.js");
-require.alias("kpwebb-select2/select2.js", "kpwebb-select2/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "otpjs/deps/leaflet.label/leaflet.label-src.js");
-require.alias("leaflet.label/leaflet.label-src.js", "otpjs/deps/leaflet.label/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "leaflet.label/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "leaflet.label/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "otpjs/deps/handlebars/handlebars-v1.1.2.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "otpjs/deps/handlebars/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "handlebars/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "handlebars/index.js");
-require.alias("raphael/raphael.js", "otpjs/deps/raphael/raphael.js");
-require.alias("raphael/raphael.js", "otpjs/deps/raphael/index.js");
-require.alias("raphael/raphael.js", "raphael/index.js");
-require.alias("raphael/raphael.js", "raphael/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "otpjs/deps/bootstrap/js/bootstrap.min.js");
-require.alias("bootstrap/js/bootstrap.min.js", "otpjs/deps/bootstrap/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "bootstrap/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "bootstrap/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "otpjs/deps/datetimepicker/bootstrap-datetimepicker.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "otpjs/deps/datetimepicker/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "datetimepicker/index.js");
-require.alias("components-jquery/jquery.js", "datetimepicker/deps/jquery/jquery.js");
-require.alias("components-jquery/jquery.js", "datetimepicker/deps/jquery/index.js");
-require.alias("components-jquery/jquery.js", "components-jquery/index.js");
-require.alias("moment-moment/moment.js", "datetimepicker/deps/moment/moment.js");
-require.alias("moment-moment/moment.js", "datetimepicker/deps/moment/index.js");
-require.alias("moment-moment/moment.js", "moment-moment/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "datetimepicker/index.js");
-require.alias("otpjs/lib/index.js", "otpjs/index.js");
+require("otpjs");
