@@ -2,7 +2,7 @@ build
 node_modules/
 bower_components/
 components/
-client/build/
+client/build
 otp.js
 otp.css
 otpjs/
