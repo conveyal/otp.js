@@ -9,5 +9,4 @@ window.OTP_config = {
   esriApi: 'http://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/',
 
   reverseGeocode: false
-
 };

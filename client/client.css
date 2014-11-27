@@ -1,16 +1,11 @@
 body {
-	font-family: sans-serif;
-	padding: 15px;
-    margin: 0;
-    overflow: hidden;
-    max-height: 100%;
-
+  overflow: hidden;
+  max-height: 100%;
 }
 
-.row {
-	margin-bottom: 10px;
+.container {
+	width: 100%;
 }
-
 
 .title {
 	display: block;
@@ -26,12 +21,11 @@ body {
 	overflow: hidden;
 }
 
-.well {
-	padding: 10px;
+#narrative {
+  margin-top: 15px;
 }
 
 #itineraries {
-
 	overflow-y: auto;
 	padding-right: 5px;
 }
@@ -43,16 +37,36 @@ body {
 	-moz-user-select: none;
 	-ms-user-select: none;
 	user-select: none;
+
+  margin-bottom: 10px;
+  text-align: center;
 }
 
+.bikeTriangleControl > div {
+  width: 75%;
+}
 
-#map {
-	border: thin solid #aaa;
-	margin-left: 5px;
+.map-container {
+	border-left: 1px solid #aaa;
+  padding: 0;
+}
+
+.map-container:before {
+  content: '';
+  position: absolute;
+  top:0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: block;
+  z-index: 10;
+  pointer-events: none;
+
+  box-shadow: inset 20px 0 20px -20px rgba(0,0,0,0.35);
 }
 
 #sidebar {
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding-right: 15px;
+  padding: 10px;
 }

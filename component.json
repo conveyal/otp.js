@@ -3,17 +3,12 @@
   "version": "0.10.0",
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
-    "jashkenas/underscore": "*",
-    "jashkenas/backbone": "*",
-    "moment/moment": "*",
-    "components/bootstrap": "3.3.1",
+    "components/handlebars.js": "*",
     "kpwebb/select2": "*"
   },
   "local": [
     "leaflet.label",
-    "handlebars",
-    "raphael",
-    "datetimepicker"
+    "raphael"
   ],
   "paths": [
     "local"

@@ -1,8 +1,3 @@
-var $ = require('jquery');
-var _ = require('underscore');
-var L = window.L;
-
-var Backbone = require('backbone');
 
 var OTP = require('otpjs');
 
@@ -132,7 +127,7 @@ $(document).ready(function() {
 
   // make the UI responsive to resizing of the containing window
   var resize = function() {
-    var height = $(window).height() - 30;
+    var height = $(window).height();
     $('#map').height(height);
     $('#sidebar').height(height);
     map.invalidateSize();
