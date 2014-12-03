@@ -1,9 +1,0 @@
-{
-  "name": "microplugin",
-  "version": "",
-  "description": "",
-  "main" : "microplugin.js",
-  "scripts": [
-    "microplugin.js"
-  ]
-}

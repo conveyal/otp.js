@@ -1,9 +1,0 @@
-{
-  "name": "raphael",
-  "version": "0.4.2",
-  "description": "",
-  "main" : "raphael.js",
-  "scripts": [
-    "raphael.js"
-  ]
-}

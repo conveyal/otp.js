@@ -1,26 +1,17 @@
 
-.otp-itinerary {
-	margin-top: 1em;
-	border: 2px solid black;
-}
-
 .otp-itinHeader {
 	font-weight: bold;
 	cursor: pointer;
+	padding: 0.5em 0.5em 0;
 }
-
-.otp-itinBody {
-	padding: .5em;	
-}
-
 
 .otp-leg {
-	margin-top: .5em;
-	font-size: .9em;
+	margin-top: 0.5em;
+	font-size: 0.9em;
 }
 
 .otp-legHeader {
-	padding: .5em;
+	padding: 0.5em;
 	background: #ddd;
 	cursor: pointer;
 }
@@ -84,7 +75,7 @@
     float: right;
     text-align: center;
     color: gray;
-    
+
 }
 
 .otp-legStep-text {

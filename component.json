@@ -3,24 +3,29 @@
   "version": "0.10.0",
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
+    "component/querystring": "*",
     "components/handlebars.js": "*",
-    "kpwebb/select2": "*"
+    "kpwebb/select2": "*",
+    "trevorgerhardt/haversine": "*"
+  },
+  "development": {
+
   },
   "local": [
-    "leaflet.label",
-    "raphael"
+    "leaflet.label"
   ],
   "paths": [
     "local"
   ],
   "main": "lib/index.js",
   "scripts": [
+    "lib/geocoder.js",
     "lib/index.js",
     "lib/models.js",
-    "lib/views.js",
     "lib/bike_views.js",
     "lib/map_views.js",
     "lib/narrative_views.js",
+    "lib/plan-response-view.js",
     "lib/request_views.js",
     "lib/topo_views.js",
     "lib/utils.js"

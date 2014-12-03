@@ -36,20 +36,19 @@ $(document).ready(function() {
 
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
-  var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest();
-  stopsRequestModel.urlRoot = window.OTP_config.otpApi +
-    '/transit/stopsInRectangle';
+  var stopsRequestModel = new OTP.models.StopsInRectangleRequest();
+  stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/transit/stopsInRectangle';
 
   // create the stops request view, which monitors the map and updates the
   // bounds of the visible stops request as the viewable area changes
-  var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
+  var stopsRequestMapView = new OTP.map_views.StopsRequestMapView({
     model: stopsRequestModel,
     map: map
   });
 
   // create the stops response view, which refreshes the stop markers on the
   // map whenever the underlying visible stops model changes
-  var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
+  var stopsResponseMapView = new OTP.map_views.StopsResponseMapView({
     map: map
   });
   stopsRequestModel.on('success', function(response) {
@@ -57,12 +56,12 @@ $(document).ready(function() {
   });
 
   // create the main OTP trip plan request model and point it to the API
-  var requestModel = new OTP.models.OtpPlanRequest();
-  requestModel.urlRoot = window.OTP_config.otpApi + 'default' + '/plan';
+  var requestModel = new OTP.models.PlanRequest();
+  requestModel.urlRoot = window.OTP_config.otpApi + 'default/plan';
 
   // create and render the main request view, which displays the trip
   // preference form
-  var requestView = new OTP.request_views.OtpRequestFormView({
+  var requestView = new OTP.RequestView({
     model: requestModel,
     map: map,
     el: $('#request')
@@ -71,7 +70,7 @@ $(document).ready(function() {
 
   // create and render the request map view, which handles the map-specific
   // trip request elements( e.g. the start and end markers)
-  var requestMapView = new OTP.map_views.OtpRequestMapView({
+  var requestMapView = new OTP.map_views.RequestMapView({
     model: requestModel,
     map: map
   });
@@ -79,7 +78,7 @@ $(document).ready(function() {
 
   // create the main response view, which refreshes the trip narrative display
   // and map elements as the underlying OTP response changes
-  var responseView = new OTP.views.OtpPlanResponseView({
+  var responseView = new OTP.PlanResponseView({
     narrative: $('#narrative'),
     map: map,
     topo: topoControl.getGraphElement()
@@ -107,11 +106,8 @@ $(document).ready(function() {
     startWithRouterId: function(lat, lon, zoom, routerId) {
       window.OTP_config.routerId = routerId;
 
-      requestModel.urlRoot = window.OTP_config.otpApi + routerId +
-        '/plan';
-
+      requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan';
       map.setView(L.latLng(lat, lon), zoom);
-
     },
     plan: function(querystring) {
       requestModel.fromQueryString(querystring);
