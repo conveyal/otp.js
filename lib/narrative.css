@@ -95,75 +95,76 @@
     height: 20px;
     display: inline-block;
     vertical-align:middle;
+		background-size: 100%;
 }
 
 
 .otp-legStep-icon-LEFT {
-    background: url('images/directions/left.png')
+    background-image: url('images/directions/left.png')
 }
 
 .otp-legStep-icon-RIGHT {
-    background: url('images/directions/right.png')
+    background-image: url('images/directions/right.png')
 }
 
 .otp-legStep-icon-HARD_LEFT {
-    background: url('images/directions/hard_left.png')
+    background-image: url('images/directions/hard_left.png')
 }
 
 .otp-legStep-icon-HARD_RIGHT {
-    background: url('images/directions/hard_right.png')
+    background-image: url('images/directions/hard_right.png')
 }
 
 .otp-legStep-icon-SLIGHTLY_LEFT {
-    background: url('images/directions/slightly_left.png')
+    background-image: url('images/directions/slightly_left.png')
 }
 
 .otp-legStep-icon-SLIGHTLY_RIGHT {
-    background: url('images/directions/slightly_right.png')
+    background-image: url('images/directions/slightly_right.png')
 }
 
 .otp-legStep-icon-TURN_LEFT {
-    background: url('images/directions/turn_left.png')
+    background-image: url('images/directions/turn_left.png')
 }
 
 .otp-legStep-icon-TURN_RIGHT {
-    background: url('images/directions/turn_right.png')
+    background-image: url('images/directions/turn_right.png')
 }
 
 .otp-legStep-icon-EXIT_LEFT {
-    background: url('images/directions/exit_left.png')
+    background-image: url('images/directions/exit_left.png')
 }
 
 .otp-legStep-icon-EXIT_RIGHT {
-    background: url('images/directions/exit_right.png')
+    background-image: url('images/directions/exit_right.png')
 }
 
 .otp-legStep-icon-UTURN_LEFT {
-    background: url('images/directions/uturn_left.png')
+    background-image: url('images/directions/uturn_left.png')
 }
 
 .otp-legStep-icon-UTURN_RIGHT {
-    background: url('images/directions/uturn_right.png')
+    background-image: url('images/directions/uturn_right.png')
 }
 
 .otp-legStep-icon-CONTINUE {
-    background: url('images/directions/continue.png')
+    background-image: url('images/directions/continue.png')
 }
 
 .otp-legStep-icon-MERGE {
-    background: url('images/directions/merge.png')
+    background-image: url('images/directions/merge.png')
 }
 
 .otp-legStep-icon-ELEVATOR {
-    background: url('images/directions/elevator.png')
+    background-image: url('images/directions/elevator.png')
 }
 
 .otp-legStep-icon-CIRCLE_CLOCKWISE {
-    background: url('images/directions/circle_clockwise.png')
+    background-image: url('images/directions/circle_clockwise.png')
 }
 
 .otp-legStep-icon-CIRCLE_COUNTERCLOCKWISE {
-    background: url('images/directions/circle_counterclockwise.png')
+    background-image: url('images/directions/circle_counterclockwise.png')
 }
 
 
@@ -174,37 +175,38 @@
     margin-top: -4px;
     height: 20px;
     display: inline-block;
-    vertical-align:middle;
+    vertical-align: middle;
+		background-size: 100%;
 }
 
 .otp-legMode-icon-WALK {
-    background: url('images/mode/walk.png')
+    background-image: url('images/mode/walk.png')
 }
 
 .otp-legMode-icon-BUS {
-    background: url('images/mode/bus.png')
+    background-image: url('images/mode/bus.png')
 }
 
 .otp-legMode-icon-RAIL {
-    background: url('images/mode/rail.png')
+    background-image: url('images/mode/rail.png')
 }
 
 .otp-legMode-icon-BICYCLE {
-    background: url('images/mode/bicycle.png')
+    background-image: url('images/mode/bicycle.png')
 }
 
 .otp-legMode-icon-SUBWAY {
-    background: url('images/mode/subway.png')
+    background-image: url('images/mode/subway.png')
 }
 
 .otp-legMode-icon-TRAM {
-    background: url('images/mode/tram.png')
+    background-image: url('images/mode/tram.png')
 }
 
 .otp-legMode-icon-arrow-right {
-    background: url('images/mode/arrow_right.png')
+    background-image: url('images/mode/arrow_right.png')
 }
 
 .otp-legMode-icon-arrow-left {
-    background: url('images/mode/arrow_left.png')
+    background-image: url('images/mode/arrow_left.png')
 }
