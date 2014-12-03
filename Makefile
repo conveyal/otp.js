@@ -1,5 +1,5 @@
 
-BEAUTIFY = beautify
+BEAUTIFY = js-beautify
 COMPONENT = component
 JSHINT = jshint
 SERVE = serve
@@ -35,4 +35,4 @@ server:
 watch:
 	watch $(MAKE) build
 
-.PHONY: build clean install lint release server watch
+.PHONY: beautify build clean install lint release server watch
