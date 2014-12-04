@@ -30,9 +30,11 @@ $(document).ready(function() {
   // display the OSM street layer by default
   osmLayer.addTo(map);
 
+
+  // disabling topo control
   // create the trip topography widget and add it to the map
-  var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-  topoControl.addTo(map);
+  //var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
+  //topoControl.addTo(map);
 
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
@@ -81,7 +83,7 @@ $(document).ready(function() {
   var responseView = new OTP.PlanResponseView({
     narrative: $('#narrative'),
     map: map,
-    topo: topoControl.getGraphElement()
+    //topo: topoControl.getGraphElement()
   });
 
   // instruct the response view to listen to relevant request model events
