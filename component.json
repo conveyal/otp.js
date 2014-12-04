@@ -6,7 +6,8 @@
     "component/querystring": "*",
     "components/handlebars.js": "*",
     "kpwebb/select2": "*",
-    "trevorgerhardt/haversine": "*"
+    "trevorgerhardt/haversine": "*",
+    "visionmedia/debug": "*"
   },
   "development": {
 
@@ -21,6 +22,7 @@
   "scripts": [
     "lib/geocoder.js",
     "lib/index.js",
+    "lib/log.js",
     "lib/models.js",
     "lib/bike_views.js",
     "lib/map_views.js",
@@ -33,6 +35,7 @@
   "styles": [
     "lib/narrative.css",
     "lib/map.css",
+    "lib/request-form.css",
     "lib/topo.css"
   ],
   "images": [
