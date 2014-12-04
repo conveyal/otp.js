@@ -6,7 +6,7 @@ window.OTP_config = {
   aerialMapKey: 'conveyal.map-a3mk3jug', // unset
 
   otpApi: 'http://otp-prod.nysdot.conveyal.com/otp/routers/',
-  esriApi: 'http://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/',
+  esriApi: 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/',
 
   reverseGeocode: true
 };
