@@ -9,15 +9,15 @@ $(document).ready(function() {
   map.attributionControl.setPrefix('');
 
   // create OpenStreetMap tile layers for streets and aerial imagery
-  var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + window.OTP_config
+  var osmLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
     .osmMapKey + '/{z}/{x}/{y}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
-      attribution: 'Street Map <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
+      attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>'
     });
-  var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + window.OTP_config
+  var aerialLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
     .aerialMapKey + '/{z}/{x}/{y}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
-      attribution: 'Satellite Map <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
+      attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>'
     });
 
   // create a leaflet layer control and add it to the map
@@ -30,6 +30,10 @@ $(document).ready(function() {
   // display the OSM street layer by default
   osmLayer.addTo(map);
 
+  // disable map drag on mobile
+  if( /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ) {
+    map.dragging.disable();
+  }
 
   // disabling topo control
   // create the trip topography widget and add it to the map
