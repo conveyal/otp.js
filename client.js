@@ -1,7 +1,8 @@
 
-var OTP = require('otpjs');
-
 $(document).ready(function() {
+
+  var OTP = require('otpjs');
+  var log = OTP.log('client');
 
   // set up the leafet map object
   var map = L.map('map').setView(window.OTP_config.initLatLng, (window.OTP_config
@@ -35,11 +36,6 @@ $(document).ready(function() {
     map.dragging.disable();
   }
 
-  // disabling topo control
-  // create the trip topography widget and add it to the map
-  //var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-  //topoControl.addTo(map);
-
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
   var stopsRequestModel = new OTP.models.StopsInRectangleRequest();
@@ -72,7 +68,6 @@ $(document).ready(function() {
     map: map,
     el: $('#request')
   });
-  requestView.render();
 
   // create and render the request map view, which handles the map-specific
   // trip request elements( e.g. the start and end markers)
@@ -80,25 +75,15 @@ $(document).ready(function() {
     model: requestModel,
     map: map
   });
-  requestMapView.render();
 
   // create the main response view, which refreshes the trip narrative display
   // and map elements as the underlying OTP response changes
   var responseView = new OTP.PlanResponseView({
     narrative: $('#narrative'),
     map: map,
-    //topo: topoControl.getGraphElement()
   });
 
   // instruct the response view to listen to relevant request model events
-  requestModel.on('success', function(response) {
-    responseView.newResponse(null, response);
-  });
-  requestModel.on('failure', function(error) {
-    responseView.newResponse(error, false);
-  });
-
-  requestModel.request();
 
   var Router = Backbone.Router.extend({
     routes: {
@@ -116,19 +101,32 @@ $(document).ready(function() {
       map.setView(L.latLng(lat, lon), zoom);
     },
     plan: function(querystring) {
+      log('loading plan from querystring');
       requestModel.fromQueryString(querystring);
-      requestModel.once('success', function() {
-        requestView.changeForm();
-      });
     }
   });
 
   var router = new Router();
-  Backbone.history.start();
 
   requestModel.on('change', function() {
-    router.navigate('plan' + requestModel.toQueryString());
+    log('replacing url');
+    router.navigate('plan' + requestModel.toQueryString(), { trigger: false });
   });
+  requestModel.on('success', function(response) {
+    responseView.newResponse(null, response);
+  });
+  requestModel.on('failure', function(error) {
+    responseView.newResponse(error, false);
+  });
+
+  log('rendering request views');
+
+  requestMapView.render();
+  requestView.render();
+
+  log('starting router');
+
+  Backbone.history.start();
 
   // make the UI responsive to resizing of the containing window
   var resize = function() {
@@ -138,5 +136,5 @@ $(document).ready(function() {
     map.invalidateSize();
   };
   $(window).resize(resize);
-  resize.call();
+  resize();
 });
