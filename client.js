@@ -88,10 +88,10 @@ $(document).ready(function() {
 
   // instruct the response view to listen to relevant request model events
   requestModel.on('success', function(response) {
-    responseView.newResponse(response);
+    responseView.newResponse(null, response);
   });
-  requestModel.on('failure', function(response) {
-    responseView.newResponse(false);
+  requestModel.on('failure', function(error) {
+    responseView.newResponse(error, false);
   });
 
   requestModel.request();
@@ -113,6 +113,9 @@ $(document).ready(function() {
     },
     plan: function(querystring) {
       requestModel.fromQueryString(querystring);
+      requestModel.once('success', function() {
+        requestView.changeForm();
+      });
     }
   });
 
