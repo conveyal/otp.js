@@ -116,6 +116,7 @@ $(document).ready(function() {
     responseView.newResponse(null, response);
   });
   requestModel.on('failure', function(error) {
+    log('handling failure');
     responseView.newResponse(error, false);
   });
 
