@@ -4,14 +4,14 @@
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
     "component/querystring": "*",
+    "components/bootstrap": "^3.3.1",
     "components/handlebars.js": "*",
+    "components/jquery": "1.11.1",
     "kpwebb/select2": "*",
     "trevorgerhardt/haversine": "*",
     "visionmedia/debug": "*"
   },
-  "development": {
-
-  },
+  "development": {},
   "local": [
     "leaflet.label"
   ],
