@@ -2,7 +2,6 @@
 .otp-itinHeader {
 	font-weight: bold;
 	cursor: pointer;
-	padding: 0.5em 0.5em 0;
 	line-height: 1.8em;
 }
 
@@ -226,4 +225,14 @@
 	background-position: -154px -4px;
 	width: 8px;
 	height: 16px;
+}
+
+@media print {
+	.messageWell {
+		display: none;
+	}
+
+	.otp-itinHeader .print {
+		display: none;
+	}
 }

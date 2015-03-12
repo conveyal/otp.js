@@ -159,3 +159,10 @@
 .otp-mapContextMenuItem:hover {
     background: #ddd;
 }
+
+@media print {
+	#map {
+		height: 200px;
+		width: 100%;
+	}
+}

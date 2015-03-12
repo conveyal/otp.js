@@ -1,6 +1,9 @@
 <div class="well">
   <div class="otp-itinHeader">
-    <span style="float:right;">{{formatDuration duration}}</span>
+    <span class="pull-right">
+      {{formatDuration duration}}<br>
+      <a href="#" class="print"><span class="glyphicon glyphicon-print"></span></a>
+    </span>
     Option {{index}}:
     {{#each legs}}
     <nobr>

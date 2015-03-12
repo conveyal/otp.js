@@ -35,6 +35,18 @@
   }
 }
 
+@media print {
+  .form-control .select2-choice .select2-arrow {
+    border: none;
+  }
+
+  #hidableSettings,
+  .request-form-buttons,
+  .request-form-search-buttons {
+    display: none;
+  }
+}
+
 #showSettings {
   margin-top: 0;
 }
