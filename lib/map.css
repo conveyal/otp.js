@@ -161,8 +161,15 @@
 }
 
 @media print {
+	body {
+		overflow: visible !important;
+	}
+
+	#sidebar {
+		overflow: visible !important;
+	}
+
 	#map {
-		height: 200px;
-		width: 100%;
+		display: none !important;
 	}
 }
