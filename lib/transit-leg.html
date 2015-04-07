@@ -7,11 +7,16 @@
     <div class="alert alert-warning">{{alertDescriptionText.someTranslation}}</div>
   {{/each}}
   <div class="otp-legBody">
-    <div class="otp-transitLeg-leftCol">{{formatTime startTime timeOffset}}</div>
+    <div class="otp-transitLeg-leftCol">{{formatTime startTime timeOffset}}
+      <div class="OTPLeg-showTimes hidden">
+        <a href="#" class="showTimes">times...</a>
+        <div class="OTPLeg-times"></div>
+      </div>
+    </div>
     <div class="otp-transitLeg-endpointDesc otp-from"><b>Depart</b>: {{from.name}}</div>
     {{#if from.stopId.id}}<div class="otp-transitLeg-endpointDescSub">Stop #{{from.stopId.id}}</div>{{/if}}
     <div class="otp-transitLeg-buffer"></div>
-    <div class="otp-transitLeg-elapsedDesc"><i>Time in transit: {{formatDuration duration}}</i></div>
+    <div class="otp-transitLeg-elapsedDesc clearfix"><i>Time in transit: {{formatDuration duration}}</i></div>
     <div class="otp-transitLeg-buffer"></div>
     <div class="otp-transitLeg-leftCol">{{formatTime endTime timeOffset}}</div>
     <div class="otp-transitLeg-endpointDesc otp-to"><b>Arrive</b>: {{to.name}}</div>
