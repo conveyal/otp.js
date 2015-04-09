@@ -237,6 +237,16 @@
 	height: 16px;
 }
 
+.agencyBranding {
+	width: 22px;
+	height: 22px;
+	background-size: contain;
+	background-repeat: no-repeat;
+	background-position: right;
+	display: inline-block;
+	float: right;
+}
+
 @media print {
 	.messageWell {
 		display: none;
