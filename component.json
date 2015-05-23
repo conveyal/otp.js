@@ -4,7 +4,7 @@
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
     "component/querystring": "*",
-    "components/bootstrap": "^3.3.1",
+    "components/bootstrap": "3.3.4",
     "components/handlebars.js": "*",
     "components/jquery": "1.11.1",
     "es-shims/es5-shim": "*",
