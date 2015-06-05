@@ -6,7 +6,7 @@
     </span>
     Option {{index}}:
     {{#each legs}}
-    <nobr>
+    <nobr {{#if attributes.routeColor }}style="background-color:#{{attributes.routeColor}};color:#{{attributes.routeTextColor}};"{{/if}}>
       <div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>
       {{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}
       {{#unless @last}}
