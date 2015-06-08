@@ -38,7 +38,8 @@
     "lib/narrative.css",
     "lib/map.css",
     "lib/request-form.css",
-    "lib/topo.css"
+    "lib/topo.css",
+    "lib/tabs.css"
   ],
   "images": [
     "lib/images"

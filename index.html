@@ -22,13 +22,22 @@
 	<body>
 		<div class="container">
 	    <div class="row">
-	      <div id="sidebar" class="col-sm-4 col-md-3">
-	        <div id="request"></div>
-	        <div id="narrative"></div>
-	      </div>
-	      <div class="col-sm-8 col-md-9 map-container">
-	        <div id="map"></div>
-	      </div>
+		<ul class="nav nav-tabs visible-xs" id="tabs" data-tabs="tabs">
+			<li class="active"><a href="#sidebar" data-toggle="tab">Input</a></li>
+			<li><a class="formap" href="#mymap" data-toggle="tab">Map</a></li>
+			<li><a href="#plan" data-toggle="tab">Plan</a></li>
+		</ul>
+		<div class="tab-content">
+			<div id="sidebar" class="col-sm-4 col-md-3 active tab-pane">
+				<div class="row" id="request"></div>
+				<div class="row" id="narrative"></div>
+			</div>
+			<div class="col-sm-8 col-md-9 tab-pane" id="mymap">
+				<div id="map" style="height: 700px"></div>
+			</div>
+			<div class="col-sm-4 col-md-3 tab-pane" id="plan">
+			</div>
+		</div>
 	    </div>
 		</div>
 
