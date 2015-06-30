@@ -1,7 +1,4 @@
-// For bootstrap tabs
-require('components~bootstrap@3.3.4')
-var $ = require('jquery')
-
+var $ = window.$
 var Backbone = window.Backbone
 var L = window.L
 
@@ -15,11 +12,9 @@ function assign_bootstrap_mode () {
   if (width < 768) {
     mode = 'mode-xs'
     nar.appendTo('#plan')
-  /* console.log("Attached to plan");*/
   } else {
     mode = 'mode-other'
     nar.appendTo('#sidebar')
-  /* console.log("Attached to sidebar");*/
   }
   $('body').removeClass('mode-other').removeClass('mode-xs').addClass(mode)
 }
@@ -153,16 +148,18 @@ $(document).ready(function () {
   Backbone.history.start()
 
   // make the UI responsive to resizing of the containing window
-  var resize = function () {
+  function resize () {
     var height = $(window).height()
     $('#map').height(height)
     $('#sidebar').height(height)
     map.invalidateSize()
     assign_bootstrap_mode()
   }
+
   $(document).on('shown.bs.tab', 'a.formap', function () {
     map.invalidateSize()
   })
+
   $(window).resize(resize)
   resize()
   $('#tabs').tab()
