@@ -1,4 +1,8 @@
 
+## latest
+
+* Rename `bike_view`, `bike-triangle-control`
+
 ## 0.12.1
 
 * Fixed bike triangle control #44

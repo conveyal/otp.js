@@ -24,7 +24,7 @@
     "lib/index.js",
     "lib/log.js",
     "lib/models.js",
-    "lib/bike_views.js",
+    "lib/bike-triangle-control.js",
     "lib/map_views.js",
     "lib/narrative_views.js",
     "lib/plan-response-view.js",
