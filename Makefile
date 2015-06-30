@@ -1,7 +1,5 @@
 
-BEAUTIFY = js-beautify
 COMPONENT = component
-JSHINT = jshint
 SERVE = serve
 
 JS := $(shell find lib -name '*.js' -print)
@@ -18,13 +16,7 @@ components: component.json
 	@$(COMPONENT) install --dev
 
 install: node_modules
-	@npm install -g component js-beautify jshint myth serve
-
-beautify: $(JS)
-	@$(BEAUTIFY) --replace $(JS)
-
-lint: $(JS)
-	@$(JSHINT) --verbose $(JS)
+	@npm install -g component myth serve
 
 node_modules: package.json
 	@npm install
