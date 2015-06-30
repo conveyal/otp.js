@@ -1,5 +1,9 @@
 // For bootstrap tabs
-var bs = require('components~bootstrap@3.3.4')
+require('components~bootstrap@3.3.4')
+var $ = require('jquery')
+
+var Backbone = window.Backbone
+var L = window.L
 
 // full: http://stackoverflow.com/questions/13029904/twitter-bootstrap-add-class-to-body-referring-to-its-mode
 // Assigns class to body based on the width of screen
@@ -11,11 +15,11 @@ function assign_bootstrap_mode () {
   if (width < 768) {
     mode = 'mode-xs'
     nar.appendTo('#plan')
-  /*console.log("Attached to plan");*/
+  /* console.log("Attached to plan");*/
   } else {
     mode = 'mode-other'
     nar.appendTo('#sidebar')
-  /*console.log("Attached to sidebar");*/
+  /* console.log("Attached to sidebar");*/
   }
   $('body').removeClass('mode-other').removeClass('mode-xs').addClass(mode)
 }
@@ -25,8 +29,7 @@ $(document).ready(function () {
   var log = OTP.log('client')
 
   // set up the leafet map object
-  var map = L.map('map').setView(window.OTP_config.initLatLng, (window.OTP_config
-      .initZoom || 13))
+  var map = L.map('map').setView(window.OTP_config.initLatLng, (window.OTP_config.initZoom || 13))
   map.attributionControl.setPrefix('')
 
   // create OpenStreetMap tile layers for streets and aerial imagery
@@ -52,7 +55,7 @@ $(document).ready(function () {
   osmLayer.addTo(map)
 
   // disable map drag on mobile
-  if ( /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
     map.dragging.disable()
   }
 
@@ -79,7 +82,7 @@ $(document).ready(function () {
   // and map elements as the underlying OTP response changes
   var responseView = new OTP.PlanResponseView({
     narrative: $('#narrative'),
-    map: map,
+    map: map
   })
 
   // instruct the response view to listen to relevant request model events

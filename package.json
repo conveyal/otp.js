@@ -4,6 +4,7 @@
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "keywords": [],
   "author": "Conveyal",
+  "license": "MIT",
   "homepage": "http://conveyal.com/",
   "repository": {
     "type": "git",
@@ -15,6 +16,6 @@
     "standard": "*"
   },
   "scripts": {
-    "lint": "standard lib/* client.js config.js index.js"
+    "lint": "standard --verbose lib/*.js client.js config.js index.js"
   }
 }
