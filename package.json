@@ -12,9 +12,9 @@
   "devDependencies": {
     "component": "*",
     "component-uglifyjs": "*",
-    "jshint": "*"
+    "standard": "*"
   },
   "scripts": {
-    "test": "make lint"
+    "lint": "standard lib/* client.js config.js index.js"
   }
 }

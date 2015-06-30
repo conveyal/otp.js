@@ -2,3 +2,4 @@ build
 client/build
 components
 node_modules
+npm-debug.log
