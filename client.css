@@ -42,8 +42,16 @@ body {
   text-align: center;
 }
 
-.bikeTriangleControl > div {
-  width: 75%;
+.mode-md .bikeTriangleControl > div {
+  width: 340px;
+}
+
+.mode-sm .bikeTriangleControl > div {
+  width: 340px;
+}
+
+.mode-xs .bikeTriangleControl > div {
+  width: 340px;
 }
 
 .well {

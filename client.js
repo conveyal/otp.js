@@ -12,11 +12,15 @@ function assign_bootstrap_mode () {
   if (width < 768) {
     mode = 'mode-xs'
     nar.appendTo('#plan')
+  } else if (width < 992) {
+    mode = 'mode-sm'
+    nar.appendTo('#sidebar')
   } else {
-    mode = 'mode-other'
+    mode = 'mode-md'
     nar.appendTo('#sidebar')
   }
-  $('body').removeClass('mode-other').removeClass('mode-xs').addClass(mode)
+
+  $('body').removeClass('mode-md').removeClass('mode-sm').removeClass('mode-xs').addClass(mode)
 }
 
 $(document).ready(function () {
