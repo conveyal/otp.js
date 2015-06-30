@@ -1,4 +1,8 @@
 
+## 0.12.1
+
+* Fixed bike triangle control #44
+
 ## 0.12.0
 
 * **BREAKING:** Remove automatic installation of jquery and bootstrap. Must be included separately.
