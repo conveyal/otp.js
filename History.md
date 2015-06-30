@@ -4,6 +4,7 @@
 * Rename `bike_view`, `bike-triangle-control`
 * Move `ItineraryMapView` into it's own file
 * Move `RequestMapView` into it's own file
+* Split up `lib/models.js`
 
 ## 0.12.1
 

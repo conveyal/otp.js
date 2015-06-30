@@ -60,7 +60,7 @@ $(document).ready(function () {
 
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
-  var stopsRequestModel = new OTP.models.StopsInRectangleRequest()
+  var stopsRequestModel = new OTP.StopsInRectangleRequest()
   stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/transit/stopsInRectangle'
 
   // create the stops request view, which monitors the map and updates the
@@ -80,7 +80,7 @@ $(document).ready(function () {
   })
 
   // create the main OTP trip plan request model and point it to the API
-  var requestModel = new OTP.models.PlanRequest()
+  var requestModel = new OTP.PlanRequest()
   requestModel.urlRoot = window.OTP_config.otpApi + 'default/plan'
 
   // create and render the main request view, which displays the trip
