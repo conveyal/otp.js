@@ -29,6 +29,7 @@
     "lib/models.js",
     "lib/narrative_views.js",
     "lib/plan-response-view.js",
+    "lib/request-map-view.js",
     "lib/request_views.js",
     "lib/topo_views.js",
     "lib/utils.js"

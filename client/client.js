@@ -93,7 +93,7 @@ $(document).ready(function () {
 
   // create and render the request map view, which handles the map-specific
   // trip request elements( e.g. the start and end markers)
-  var requestMapView = new OTP.map_views.RequestMapView({
+  var requestMapView = new OTP.RequestMapView({
     model: requestModel,
     map: map
   })
