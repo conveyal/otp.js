@@ -22,7 +22,7 @@ node_modules: package.json
 	@npm install
 
 server:
-	@$(SERVE) --port $(PORT)
+	@$(SERVE) client --port $(PORT)
 
 watch:
 	watch $(MAKE) build
