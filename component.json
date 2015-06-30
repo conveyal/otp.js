@@ -1,6 +1,6 @@
 {
   "name": "otpjs",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "dependencies": {
     "component/querystring": "*",
