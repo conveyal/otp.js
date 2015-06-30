@@ -2,7 +2,7 @@
 ## 0.12.0
 
 * **BREAKING:** Remove automatic installation of jquery and bootstrap. Must be included separately.
-* Add padding to sidebar when not in tab mode
+* Add padding back to sidebar when not in tab mode
 
 ## 0.11.0
 
