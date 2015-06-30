@@ -16,6 +16,7 @@
     "standard": "*"
   },
   "scripts": {
+    "format": "standard --format lib/*.js client.js config.js index.js",
     "lint": "standard --verbose lib/*.js client.js config.js index.js"
   }
 }

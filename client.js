@@ -59,6 +59,27 @@ $(document).ready(function () {
     map.dragging.disable()
   }
 
+  // create a data model for the currently visible stops, and point it
+  // to the corresponding API method
+  var stopsRequestModel = new OTP.models.StopsInRectangleRequest()
+  stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/transit/stopsInRectangle'
+
+  // create the stops request view, which monitors the map and updates the
+  // bounds of the visible stops request as the viewable area changes
+  new OTP.map_views.StopsRequestMapView({ // eslint-disable-line no-new
+    model: stopsRequestModel,
+    map: map
+  })
+
+  // create the stops response view, which refreshes the stop markers on the
+  // map whenever the underlying visible stops model changes
+  var stopsResponseMapView = new OTP.map_views.StopsResponseMapView({
+    map: map
+  })
+  stopsRequestModel.on('success', function (response) {
+    stopsResponseMapView.newResponse(response)
+  })
+
   // create the main OTP trip plan request model and point it to the API
   var requestModel = new OTP.models.PlanRequest()
   requestModel.urlRoot = window.OTP_config.otpApi + 'default/plan'
