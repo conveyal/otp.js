@@ -20,12 +20,13 @@
   ],
   "main": "lib/index.js",
   "scripts": [
+    "lib/bike-triangle-control.js",
     "lib/geocoder.js",
     "lib/index.js",
+    "lib/itinerary-map-view.js",
     "lib/log.js",
-    "lib/models.js",
-    "lib/bike-triangle-control.js",
     "lib/map_views.js",
+    "lib/models.js",
     "lib/narrative_views.js",
     "lib/plan-response-view.js",
     "lib/request_views.js",
@@ -33,11 +34,11 @@
     "lib/utils.js"
   ],
   "styles": [
-    "lib/narrative.css",
     "lib/map.css",
+    "lib/narrative.css",
     "lib/request-form.css",
-    "lib/topo.css",
-    "lib/tabs.css"
+    "lib/tabs.css",
+    "lib/topo.css"
   ],
   "images": [
     "lib/images"

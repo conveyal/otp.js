@@ -27,4 +27,4 @@ server:
 watch:
 	watch $(MAKE) build
 
-.PHONY: beautify build clean install lint release server watch
+.PHONY: build clean install server watch
