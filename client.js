@@ -1,3 +1,25 @@
+//For bootstrap tabs
+var bs = require('components~bootstrap@3.3.4');
+
+//full: http://stackoverflow.com/questions/13029904/twitter-bootstrap-add-class-to-body-referring-to-its-mode
+//Assigns class to body based on the width of screen
+//This is used to move narrative from sidebar to own tab in small screens
+function assign_bootstrap_mode() {
+        var width = $( window ).width();
+        var mode = '';
+        var nar = $('#narrative').detach();
+        if (width<768) {
+                mode = 'mode-xs';
+                nar.appendTo('#plan');
+                /*console.log("Attached to plan");*/
+        }
+        else {
+                mode = 'mode-other';
+                nar.appendTo('#sidebar');
+                /*console.log("Attached to sidebar");*/
+        }
+        $('body').removeClass('mode-other').removeClass('mode-xs').addClass(mode);
+}
 
 $(document).ready(function() {
 
@@ -114,7 +136,14 @@ $(document).ready(function() {
     $('#map').height(height);
     $('#sidebar').height(height);
     map.invalidateSize();
+    assign_bootstrap_mode();
   };
+  $(document).on('shown.bs.tab', 'a.formap', function() {
+      map.invalidateSize();
+  });
   $(window).resize(resize);
   resize();
+  $('#tabs').tab();
+  map.invalidateSize();
+  assign_bootstrap_mode();
 });

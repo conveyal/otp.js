@@ -1,0 +1,4 @@
+/*always  shows tab pane when tabs aren't shown */
+body.mode-other .tab-pane {
+	display:block;
+} 
