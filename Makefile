@@ -7,7 +7,7 @@ JS := $(shell find lib -name '*.js' -print)
 PORT = 3000
 
 build: components $(JS)
-	@$(COMPONENT) build --dev
+	@$(COMPONENT) build --dev --out client/build
 
 clean:
 	rm -rf build components node_modules
