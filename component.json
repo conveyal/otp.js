@@ -47,26 +47,26 @@
     "lib/utils.js"
   ],
   "styles": [
-    "lib/map.css",
-    "lib/narrative.css",
-    "lib/request-form.css",
-    "lib/tabs.css",
-    "lib/topo.css"
+    "lib/styles/map.css",
+    "lib/styles/narrative.css",
+    "lib/styles/request-form.css",
+    "lib/styles/tabs.css",
+    "lib/styles/topo.css"
   ],
   "images": [
     "lib/images"
   ],
   "templates": [
-    "lib/access-leg.html",
-    "lib/generic-leg.html",
-    "lib/leg-from-bubble.html",
-    "lib/map-context-menu.html",
-    "lib/narrative-adjust.html",
-    "lib/narrative-error.html",
-    "lib/narrative-new.html",
-    "lib/narrative-itinerary.html",
-    "lib/request-form.html",
-    "lib/step.html",
-    "lib/transit-leg.html"
+    "lib/templates/access-leg.html",
+    "lib/templates/generic-leg.html",
+    "lib/templates/leg-from-bubble.html",
+    "lib/templates/map-context-menu.html",
+    "lib/templates/narrative-adjust.html",
+    "lib/templates/narrative-error.html",
+    "lib/templates/narrative-new.html",
+    "lib/templates/narrative-itinerary.html",
+    "lib/templates/request-form.html",
+    "lib/templates/step.html",
+    "lib/templates/transit-leg.html"
   ]
 }

@@ -5,6 +5,7 @@
 * Move `ItineraryMapView` into it's own file
 * Move `RequestMapView` into it's own file
 * Split up `lib/models.js`
+* Move `lib/*.css` into `lib/styles` and `lib/*.html` into `lib/templates`
 
 ## 0.12.1
 
