@@ -9,6 +9,7 @@
 * Split up `lib/map_views.js`
 * Renamed `request_views`, `request-form`
 * Split up `topo_views`
+* Split up `narrative_views`
 
 ## 0.12.1
 
