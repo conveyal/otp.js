@@ -85,7 +85,7 @@ $(document).ready(function () {
 
   // create and render the main request view, which displays the trip
   // preference form
-  var requestView = new OTP.RequestView({
+  var requestView = new OTP.RequestForm({
     model: requestModel,
     map: map,
     el: $('#request')
