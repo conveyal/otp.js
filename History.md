@@ -8,6 +8,7 @@
 * Move `lib/*.css` into `lib/styles` and `lib/*.html` into `lib/templates`
 * Split up `lib/map_views.js`
 * Renamed `request_views`, `request-form`
+* Split up `topo_views`
 
 ## 0.12.1
 

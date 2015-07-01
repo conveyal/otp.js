@@ -28,9 +28,11 @@
     "lib/itinerary-legs.js",
     "lib/itinerary-map-view.js",
     "lib/itinerary-stop.js",
+    "lib/itinerary-topo-view.js",
     "lib/itinerary-walk-step.js",
     "lib/itinerary-walk-steps.js",
     "lib/itinerary.js",
+    "lib/leaflet-topo-graph-control.js",
     "lib/log.js",
     "lib/narrative_views.js",
     "lib/plan-request.js",
@@ -44,7 +46,6 @@
     "lib/stops-response-map-view.js",
     "lib/stops-response.js",
     "lib/stops.js",
-    "lib/topo_views.js",
     "lib/utils.js"
   ],
   "styles": [
