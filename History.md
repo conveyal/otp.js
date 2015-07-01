@@ -6,6 +6,7 @@
 * Move `RequestMapView` into it's own file
 * Split up `lib/models.js`
 * Move `lib/*.css` into `lib/styles` and `lib/*.html` into `lib/templates`
+* Split up `lib/map_views.js`
 
 ## 0.12.1
 
