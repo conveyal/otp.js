@@ -1,5 +1,5 @@
 
-## latest
+## 0.13.0 — 2015-07-01
 
 * Rename `bike_view`, `bike-triangle-control`
 * Move `ItineraryMapView` into it's own file
