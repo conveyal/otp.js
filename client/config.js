@@ -1,10 +1,10 @@
 window.OTP_config = {
-  initLatLng: [42.703632059618045, -73.7948226928711],
+  initLatLng: [38.880148, -77.105933],
 
   osmMapKey: 'conveyal.ikck6888', // temporary -- do not use in production, provide your own
   aerialMapKey: 'conveyal.map-a3mk3jug', // unset
 
-  otpApi: 'http://otp-test.nysdot.conveyal.com/otp/routers/',
+  otpApi: 'http://192.168.59.103:8080/otp/routers/',
   esriApi: 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/',
 
   reverseGeocode: true

@@ -1,4 +1,8 @@
 
+## 0.13.1 — 2015-07-02
+
+* Fix paths for images #56
+
 ## 0.13.0 — 2015-07-01
 
 * Rename `bike_view`, `bike-triangle-control`
