@@ -1,5 +1,5 @@
 .otp-startFlagIcon {
-	background: url('images/marker-flag-start-shadowed.png');
+	background: url('../images/marker-flag-start-shadowed.png');
 	width: 48px;
 	height: 49px;
 	margin-left: -44px;
@@ -7,7 +7,7 @@
 }
 
 .otp-endFlagIcon {
-	background: url('images/marker-flag-end-shadowed.png');
+	background: url('../images/marker-flag-end-shadowed.png');
 	width: 48px;
 	height: 49px;
 	margin-left: -44px;
@@ -15,7 +15,7 @@
 }
 
 .otp-crosshairIcon {
-    background: url('images/marker-crosshair.png');
+    background: url('../images/marker-crosshair.png');
     width: 11px;
     height: 11px;
     margin-left: -6px;
@@ -38,35 +38,35 @@
 }
 
 .otp-legBubble-icon-nw {
-    background: url('images/legbubble/nw.png');
+    background: url('../images/legbubble/nw.png');
 }
 
 .otp-legBubble-icon-ne {
-    background: url('images/legbubble/ne.png');
+    background: url('../images/legbubble/ne.png');
 }
 
 .otp-legBubble-icon-sw {
-    background: url('images/legbubble/sw.png');
+    background: url('../images/legbubble/sw.png');
 }
 
 .otp-legBubble-icon-se {
-    background: url('images/legbubble/se.png');
+    background: url('../images/legbubble/se.png');
 }
 
 .otp-legBubble-icon-nw-highlight {
-    background: url('images/legbubble/nw_highlight.png');
+    background: url('../images/legbubble/nw_highlight.png');
 }
 
 .otp-legBubble-icon-ne-highlight {
-    background: url('images/legbubble/ne_highlight.png');
+    background: url('../images/legbubble/ne_highlight.png');
 }
 
 .otp-legBubble-icon-sw-highlight {
-    background: url('images/legbubble/sw_highlight.png');
+    background: url('../images/legbubble/sw_highlight.png');
 }
 
 .otp-legBubble-icon-se-highlight {
-    background: url('images/legbubble/se_highlight.png');
+    background: url('../images/legbubble/se_highlight.png');
 }
 
 
@@ -82,59 +82,59 @@
 
 
 .otp-legBubble-arrow-right {
-    background: url('images/mode/arrow_right.png');
+    background: url('../images/mode/arrow_right.png');
     width: 8px;
     height: 16px;
 }
 
 .otp-legBubble-arrow-left {
-    background: url('images/mode/arrow_left.png');
+    background: url('../images/mode/arrow_left.png');
     width: 8px;
     height: 16px;
 }
 
 .otp-modeIcon-BICYCLE {
-    background: url('images/mode/bicycle.png');
+    background: url('../images/mode/bicycle.png');
     width: 16px; height: 16px;
 }
 
 .otp-modeIcon-WALK {
-    background: url('images/mode/walk.png');
+    background: url('../images/mode/walk.png');
     width: 10px; height: 16px;
 }
 
 .otp-modeIcon-BUS {
-    background: url('images/mode/bus.png');
+    background: url('../images/mode/bus.png');
     width: 11px; height: 16px;
 }
 
 .otp-modeIcon-RAIL {
-    background: url('images/mode/rail.png');
+    background: url('../images/mode/rail.png');
     width: 12px; height: 16px;
 }
 
 .otp-modeIcon-TRAM {
-    background: url('images/mode/tram.png');
+    background: url('../images/mode/tram.png');
     width: 11px; height: 16px;
 }
 
 .otp-modeIcon-SUBWAY {
-    background: url('images/mode/subway.png');
+    background: url('../images/mode/subway.png');
     width: 14px; height: 16px;
 }
 
 .otp-modeIcon-FERRY {
-    background: url('images/mode/ferry.png');
+    background: url('../images/mode/ferry.png');
     width: 16px; height: 16px;
 }
 
 .otp-modeIcon-GONDOLA {
-    background: url('images/mode/gondola.png');
+    background: url('../images/mode/gondola.png');
     width: 15px; height: 16px;
 }
 
 .otp-modeIcon-CAR {
-    background: url('images/mode/car.png');
+    background: url('../images/mode/car.png');
     width: 15px; height: 16px;
 }
 
