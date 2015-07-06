@@ -65,14 +65,14 @@ $(document).ready(function () {
 
   // create the stops request view, which monitors the map and updates the
   // bounds of the visible stops request as the viewable area changes
-  new OTP.map_views.StopsRequestMapView({ // eslint-disable-line no-new
+  new OTP.StopsRequestMapView({ // eslint-disable-line no-new
     model: stopsRequestModel,
     map: map
   })
 
   // create the stops response view, which refreshes the stop markers on the
   // map whenever the underlying visible stops model changes
-  var stopsResponseMapView = new OTP.map_views.StopsResponseMapView({
+  var stopsResponseMapView = new OTP.StopsResponseMapView({
     map: map
   })
   stopsRequestModel.on('success', function (response) {
@@ -85,7 +85,7 @@ $(document).ready(function () {
 
   // create and render the main request view, which displays the trip
   // preference form
-  var requestView = new OTP.RequestView({
+  var requestView = new OTP.RequestForm({
     model: requestModel,
     map: map,
     el: $('#request')

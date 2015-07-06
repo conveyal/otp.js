@@ -1,11 +1,19 @@
 
-## latest
+## 0.13.1 — 2015-07-02
+
+* Fix paths for images #56
+
+## 0.13.0 — 2015-07-01
 
 * Rename `bike_view`, `bike-triangle-control`
 * Move `ItineraryMapView` into it's own file
 * Move `RequestMapView` into it's own file
 * Split up `lib/models.js`
 * Move `lib/*.css` into `lib/styles` and `lib/*.html` into `lib/templates`
+* Split up `lib/map_views.js`
+* Renamed `request_views`, `request-form`
+* Split up `topo_views`
+* Split up `narrative_views`
 
 ## 0.12.1
 
