@@ -61,7 +61,7 @@ $(document).ready(function () {
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
   var stopsRequestModel = new OTP.StopsInRectangleRequest()
-  stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/transit/stopsInRectangle'
+  stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/index/stops'
 
   // create the stops request view, which monitors the map and updates the
   // bounds of the visible stops request as the viewable area changes
