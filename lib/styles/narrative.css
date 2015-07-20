@@ -247,9 +247,17 @@
 	float: right;
 }
 
+.otp-legMode-title {
+	display: none;
+}
+
 @media print {
 	.messageWell {
 		display: none;
+	}
+
+	.otp-legMode-title {
+		display: inline;
 	}
 
 	.PlanResponseNarrativeView,
