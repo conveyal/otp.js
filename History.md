@@ -3,6 +3,7 @@
 
 * Show WALK in printable output
 * Add title to print icon
+* Fix next/previous
 
 ## 0.13.1 — 2015-07-02
 
