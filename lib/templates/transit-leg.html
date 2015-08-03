@@ -1,5 +1,5 @@
 <div class="otp-leg">
-  <div class="otp-legHeader" {{#if routeColor }}style="background-color:#{{routeColor}};color:#{{routeTextColor}};"{{/if}}>
+  <div class="otp-legHeader" {{#if routeColor }}style="border-top:3px solid #{{routeColor}};"{{/if}}>
     <div class="agencyBranding" style="background-image: url({{agencyLogoUrl}});"></div>
     <span><b><a target="_blank" href="{{agencyUrl}}">{{agencyName}}</a></b></span>
     <b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div> {{routeShortName}}</b> {{routeLongName}} to {{#if headsign}}{{headsign}}{{else}}{{to.name}}{{/if}}
