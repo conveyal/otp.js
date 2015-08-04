@@ -2,7 +2,8 @@
   <div class="otp-legHeader" {{#if routeColor }}style="border-top:3px solid #{{routeColor}};"{{/if}}>
     <div class="agencyBranding" style="background-image: url({{agencyLogoUrl}});"></div>
     <span><b><a target="_blank" href="{{agencyUrl}}">{{agencyName}}</a></b></span>
-    <b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div> {{routeShortName}}</b> {{routeLongName}} to {{#if headsign}}{{headsign}}{{else}}{{to.name}}{{/if}}
+	<b><div class="otp-legMode-icon otp-legMode-icon-{{ mode }}"></div>
+		{{routeShortName}}</b> {{routeLongName}}{{#if headsign}}{{! TRANSLATORS: used in sentence like: <Long name of public transport route> "to" <Public transport headsign>. Used in showing itinerary }}{{__pgettext "bus_direction" " to "}}{{headsign}}{{else}}{{! TRANSLATORS: used in a sentence like: Long name of public transport "to" alight station }}{{__pgettext "direction" " to "}}{{to.name}}{{/if}}
   </div>
   {{#each alerts}}
     <div class="alert alert-warning">{{alertDescriptionText.someTranslation}}</div>
@@ -14,12 +15,14 @@
         <div class="OTPLeg-times"></div>
       </div>
     </div>
-    <div class="otp-transitLeg-endpointDesc otp-from"><b>Depart</b>: {{from.name}}</div>
+	{{! TRANSLATORS: Depart station/ Board at station in itinerary }}
+    <div class="otp-transitLeg-endpointDesc otp-from"><b>{{__pgettext "itinerary" "Depart"}}</b>: {{from.name}}</div>
     {{#if from.stopId.id}}<div class="otp-transitLeg-endpointDescSub">Stop #{{from.stopId.id}}</div>{{/if}}
     <div class="otp-transitLeg-buffer"></div>
-    <div class="otp-transitLeg-elapsedDesc clearfix"><i>Time in transit: {{formatDuration duration}}</i></div>
+    <div class="otp-transitLeg-elapsedDesc clearfix"><i>{{_ "Time in transit"}}: {{formatDuration duration}}</i></div>
     <div class="otp-transitLeg-buffer"></div>
     <div class="otp-transitLeg-leftCol">{{formatTime endTime timeOffset}}</div>
-    <div class="otp-transitLeg-endpointDesc otp-to"><b>Arrive</b>: {{to.name}}</div>
+	{{! TRANSLATORS: Alight transit stop name (stop where user needs to leave the vehicle }}
+    <div class="otp-transitLeg-endpointDesc otp-to"><b>{{_ "Alight"}}</b>: {{to.name}}</div>
   </div>
 </div>

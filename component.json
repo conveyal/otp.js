@@ -13,7 +13,8 @@
   },
   "development": {},
   "local": [
-    "leaflet.label"
+    "leaflet.label",
+    "jed"
   ],
   "paths": [
     "local"
@@ -37,6 +38,7 @@
     "lib/leaflet-topo-graph-control.js",
     "lib/leg-narrative-view.js",
     "lib/log.js",
+    "lib/localization.js",
     "lib/plan-request.js",
     "lib/plan-response-narrative-view.js",
     "lib/plan-response-view.js",
@@ -58,6 +60,13 @@
     "lib/styles/request-form.css",
     "lib/styles/tabs.css",
     "lib/styles/topo.css"
+  ],
+  "json" : [
+    "lib/locale/fr.json",
+    "lib/locale/it.json",
+    "lib/locale/sl.json",
+    "lib/locale/de.json",
+    "lib/locale/ca_ES.json"
   ],
   "images": [
     "lib/images"

@@ -1,0 +1,9 @@
+{
+	"name": "jed",
+	"version": "1.1.0",
+	"description": "",
+	"main": "jed-1.1.0.js",
+	"scripts" :[
+		"jed-1.1.0.js"
+	]
+}

@@ -2,13 +2,13 @@
   <div class="visibleSettings">
     <div class="form-group fromPlaceControl">
       <div class="col-sm-12">
-        <input id="fromPlace" class="form-control apiParam" placeholder="Start Address">
+        <input id="fromPlace" class="form-control apiParam" placeholder="{{_ "Start Address"}}">
       </div>
     </div>
 
     <div class="form-group toPlaceControl">
       <div class="col-sm-12">
-        <input id="toPlace" class="form-control apiParam" placeholder="End Address">
+        <input id="toPlace" class="form-control apiParam" placeholder="{{_ "End Address"}}">
       </div>
     </div>
   </div>
@@ -18,8 +18,8 @@
       <button class="btn btn-default btn-block reverse-direction" title="Reverse direction"><span class="glyphicon glyphicon-retweet"></span></button>
     </div>
     <div class="col-sm-9">
-      <button id="hideSettings" class="btn toggleSettings btn-default btn-block">Hide Settings <span class="glyphicon glyphicon-chevron-up"></span></button>
-      <button id="showSettings" class="btn toggleSettings btn-default btn-block">Show Settings <span class="glyphicon glyphicon-chevron-down"></span></button>
+      <button id="hideSettings" class="btn toggleSettings btn-default btn-block">{{_ "Hide Settings"}} <span class="glyphicon glyphicon-chevron-up"></span></button>
+      <button id="showSettings" class="btn toggleSettings btn-default btn-block">{{_ "Show Settings"}} <span class="glyphicon glyphicon-chevron-down"></span></button>
     </div>
   </div>
 
@@ -27,8 +27,10 @@
     <div class="form-group arriveByControl">
       <div class="col-sm-12">
         <select id="arriveBy" class="apiParam form-control" placeholder="Arrive">
-          <option value="true">Arrive at</option>
-          <option value="false" selected>Depart by</option>
+			{{! TRANSLATORS: Arrive at [time dropdown] [date dropdown]. Used in dropdown as a label to choose wanted time/date of arrival. }}
+          <option value="true">{{_ "Arrive at"}}</option>
+		  {{! TRANSLATORS:  Depart by [time dropdown] [date dropdown]. Used in dropdown as a label to choose wanted time/date of departure }}
+          <option value="false" selected>{{_ "Depart by"}}</option>
         </select>
       </div>
     </div>
@@ -56,25 +58,35 @@
     </div>
 
     <div class="form-group travelByControl">
-      <label for="mode" class="col-sm-4 control-label">Travel by</label>
+		{{! TRANSLATORS: Label for dropdown Travel by: [mode of transport] }}
+      <label for="mode" class="col-sm-4 control-label">{{_ "Travel by"}}</label>
       <div class="col-sm-8">
         <select id="mode" class="apiParam form-control" placeholder="Arrive">
-          <option value="TRANSIT,WALK" selected>Transit</option>
-          <option value="TRAINISH,WALK">Train only</option>
-          <option value="BUS,WALK">Bus only</option>
-          <option value="WALK">Walk only</option>
-          <option value="BICYCLE">Bike only</option>
-          <option value="TRANSIT,BICYCLE">Transit & Bike</option>
+			{{! TRANSLATORS: Public transit transport mode. (Used in selection in Travel Options widgets)}}
+          <option value="TRANSIT,WALK" selected>{{_ "Transit"}}</option>
+		  {{! TRANSLATORS: Rail like transport mode (train, subway, tram etc.}}
+          <option value="TRAINISH,WALK">{{_ "Rail Only"}}</option>
+		  {{! TRANSLATORS: Bus travel mode (Used in selection in Travel Options widgets) }}
+          <option value="BUS,WALK">{{_ "Bus Only"}}</option>
+		  {{! TRANSLATORS: Walking travel mode (Used in selection in Travel Options widgets) }}
+          <option value="WALK">{{_ "Walk Only"}}</option>
+		  {{! TRANSLATORS: Cycling travel mode (Used in selection in Travel Options widgets) }}
+          <option value="BICYCLE">{{_ "Bicycle Only"}}</option>
+		  {{! TRANSLATORS: Cycling and public transit travel mode (Used in selection in Travel Options widgets) }}
+          <option value="TRANSIT,BICYCLE">Transit &amp; Bike</option>
         </select>
       </div>
     </div>
 
     <div class="form-group optimizeControl">
-      <label for="type" class="col-sm-4 control-label">Find</label>
+		{{! TRANSLATORS: How to optimize transit options: Find (Quickest trip| Fewest transfers) }}
+      <label for="type" class="col-sm-4 control-label">{{_ "Find"}}</label>
       <div class="col-sm-8">
         <select id="optimize" class="apiParam form-control" placeholder="Arrive">
-          <option value="QUICK" selected>Quickest trip</option>
-          <option value="TRANSFERS">Fewest transfers</option>
+		{{! TRANSLATORS: How to optimize transit options: Find (Quickest trip| Fewest transfers) optimize for shortest trip according tot ime }}
+          <option value="QUICK" selected>{{_ "Quickest trip"}}</option>
+		{{! TRANSLATORS: How to optimize transit options: Find (Quickest trip| Fewest transfers) optimize for smallest number of transfers }}
+          <option value="TRANSFERS">{{_ "Fewest transfers"}}</option>
         </select>
       </div>
     </div>
@@ -83,14 +95,16 @@
       <div class="col-sm-offset-4 col-sm-8">
         <div class="checkbox">
           <label>
-            <input type="checkbox" name="wheelchairAccessible" id="wheelchairAccessible"> Wheelchair Accessible
+			  {{! TRANSLATORS: Checkbox label }}
+            <input type="checkbox" name="wheelchairAccessible" id="wheelchairAccessible"> {{_ "Wheelchair accessible trip"}}
           </label>
         </div>
       </div>
     </div>
 
     <div class="form-group maxWalkControl">
-      <label for="maxWalkDist" class="col-sm-4 control-label">Max walk</label>
+		{{! TRANSLATORS: label for choosing how much should person's trip on foot be }}
+      <label for="maxWalkDist" class="col-sm-4 control-label">{{_ "Maximum walk"}}</label>
       {{#metric}}
       <div class="col-sm-8">
         <select id="maxWalkDistance" class="apiParam form-control" placeholder="Arrive">
@@ -119,10 +133,11 @@
     </div>
 
     <div class="form-group maxBikeControl">
-      <label class="col-sm-4 control-label" for="maxWalkDist">Max bike</label>
+      <label class="col-sm-4 control-label" for="maxWalkDist">{{_ "Maximum bike"}}</label>
 
       {{#metric}}
       <div class="col-sm-8">
+		  {{! TRANSLATORS: label for choosing how much should person's trip on bicycle be }}
         <select id="maxBikeDistance" class="apiParam form-control" placeholder="Arrive">
           <option value="1000">1 km</option>
           <option value="2500">2.5 km</option>
@@ -151,21 +166,35 @@
     </div>
   </div>
 
+  <div class="form-group languageSelectionControl">
+	{{! TRANSLATORS: label for choosing wanted language }}
+	<label for="languageSelect" class="col-sm-4 control-label">{{_ "Select language"}}</label>
+	<div class="col-sm-8">
+	  <select id="languageSelect" class="apiParam form-control" placeholder="Select Language">
+	  </select>
+	</div>
+
   <div class="form-group request-form-search-buttons">
     <div class="col-sm-12">
-      <button class="search-button btn btn-primary btn-block">Submit <span class="glyphicon glyphicon-search"></span></button>
+		{{! TRANSLATORS: send query to the server (button label) }}
+      <button class="search-button btn btn-primary btn-block">{{_ "Submit"}} <span class="glyphicon glyphicon-search"></span></button>
       <div class="searching-button hidden">
-        <button class="btn btn-primary btn-block disabled" diabled>Searching <span class="glyphicon glyphicon-refresh spin"></span></button>
+		  {{! TRANSLATORS: button label when query is being processed by a server }}
+        <button class="btn btn-primary btn-block disabled" diabled>{{_ "Searching"}} <span class="glyphicon glyphicon-refresh spin"></span></button>
       </div>
     </div>
   </div>
 
   <div class="nextPreviousLast hidden">
     <div class="btn-group btn-group-justified">
-      <a class="btn btn-sm btn-default first"><i class="glyphicon glyphicon-fast-backward"></i> First</a>
-      <a class="btn btn-sm btn-default previous"><i class="glyphicon glyphicon-backward"></i> Previous</a>
-      <a class="btn btn-sm btn-default next">Next <i class="glyphicon glyphicon-forward"></i></a>
-      <a class="btn btn-sm btn-default last">Last <i class="glyphicon glyphicon-fast-forward"></i></a>
+		{{! TRANSLATORS: button to first itinerary }}
+      <a class="btn btn-sm btn-default first"><i class="glyphicon glyphicon-fast-backward"></i> {{_ "First"}}</a>
+		{{! TRANSLATORS: button to previous itinerary }}
+      <a class="btn btn-sm btn-default previous"><i class="glyphicon glyphicon-backward"></i> {{_ "Previous"}}</a>
+		{{! TRANSLATORS: button to next itinerary }}
+      <a class="btn btn-sm btn-default next">{{_ "Next"}} <i class="glyphicon glyphicon-forward"></i></a>
+		{{! TRANSLATORS: button to last itinerary }}
+      <a class="btn btn-sm btn-default last">{{_ "Last"}} <i class="glyphicon glyphicon-fast-forward"></i></a>
     </div>
   </div>
 </div>

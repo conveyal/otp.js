@@ -5,15 +5,16 @@
   </div>
   <div class="otp-legStep-text">
   {{#if isRoundabout}}
-    Take roundabout {{relativeDirection}} to {{ordinal exit}} exit on {{streetName}}
+    {{!-- relativeDirection can be clock wise or counter clockwise --}}
+    {{_ "Take roundabout %(relativeDirection)s to %(ordinal_exit_number)s exit on %(streetName)s" relativeDirection=localRelativeDirection ordinal_exit_number=localExit streetName=streetName }}
   {{else}}
     {{#if isFirst}}
-      Start on <b>{{streetName}}</b> heading {{absoluteDirection}}
+	  {{{_ "Start on <b>%(streetName)s</b> heading %(absoluteDirection)s" streetName=streetName absoluteDirection=localAbsoluteDirection}}}
     {{else}}
       {{#if stayOn}}
-        <b>{{relativeDirection}}</b> to continue on <b>{{streetName}}</b>
+	    {{{_ "<b>%(relativeDirection)s</b> to continue on <b>%(streetName)s</b>" relativeDirection=localRelativeDirection streetName=streetName }}}
       {{else}}
-        <b>{{relativeDirection}}</b> on to <b>{{streetName}}</b>
+	    {{{_ "<b>%(relativeDirection)s</b> on to <b>%(streetName)s</b>" relativeDirection=localRelativeDirection streetName=streetName }}}
       {{/if}}
     {{/if}}
   {{/if}}
