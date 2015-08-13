@@ -42,6 +42,8 @@
     "lib/plan-response-view.js",
     "lib/plan-response.js",
     "lib/request-form.js",
+    "lib/request-form-common.js",
+    "lib/request-form-widget.js",
     "lib/request-map-view.js",
     "lib/step-narrative-view.js",
     "lib/stop.js",
