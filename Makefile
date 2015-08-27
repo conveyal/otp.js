@@ -1,5 +1,5 @@
 
-COMPONENT = component
+COMPONENT = node_modules/.bin/component
 SERVE = serve
 
 JS := $(shell find lib -name '*.js' -print)
