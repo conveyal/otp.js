@@ -9,8 +9,8 @@ window.OTP_config = {
   otpApi: 'http://192.168.59.103:8080/otp/routers/',
 
   // geocoders to use:
-  geocoders: [ 'esri' ],
-  reverseGeocoder: 'esri', // possible choices: esri, nominatim
+  geocoders: [ 'mapbox' ], // possible choices: esri, otp, nominatim, pelias, mapbox
+  reverseGeocoder: 'esri', // possible choices: esri, nominatim, pelias, mapbox
   reverseGeocode: true,
 
   // geocoder api endpoints
