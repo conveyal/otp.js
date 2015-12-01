@@ -1,4 +1,8 @@
 
+## 0.13.3 — 2015-12-01
+
+* Add isNaN checks before attempting to create markers. Fixes FireFox bug #72.
+
 ## 0.13.2 — 2015-07-20
 
 * Show WALK in printable output

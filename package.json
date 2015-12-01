@@ -1,6 +1,6 @@
 {
   "name": "otpjs",
-  "version": "0.13.2",
+  "version": "0.13.3",
   "description": "A lightweight library for modular development of modern OpenTripPlanner front-end interfaces",
   "keywords": [],
   "author": "Conveyal",
