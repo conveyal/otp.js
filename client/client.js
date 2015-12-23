@@ -53,11 +53,6 @@ $(document).ready(function () {
   // display the OSM street layer by default
   osmLayer.addTo(map)
 
-  // disable map drag on mobile
-  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-    map.dragging.disable()
-  }
-
   // create a data model for the currently visible stops, and point it
   // to the corresponding API method
   var stopsRequestModel = new OTP.StopsInRectangleRequest()
