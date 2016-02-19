@@ -10,7 +10,7 @@ window.OTP_config = {
   otpApi: 'http://localhost:8001/otp/routers/',
 
   // geocoders to use:
-  geocoders: [ 'edsi' ], // possible choices: esri, otp, nominatim, mapzen, mapbox
+  geocoders: [ 'esri' ], // possible choices: esri, otp, nominatim, mapzen, mapbox
   reverseGeocoder: 'esri', // possible choices: esri, nominatim, mapzen, mapbox
   reverseGeocode: true,
 
