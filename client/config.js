@@ -1,11 +1,21 @@
 window.OTP_config = {
-  initLatLng: [38.880148, -77.105933],
+  initLatLng: [45.52, -122.681944],
 
-  osmMapKey: 'conveyal.ikck6888', // temporary -- do not use in production, provide your own
-  aerialMapKey: 'conveyal.map-a3mk3jug', // unset
+  osmMapKey: 'your-mapbox-osm-key',
+  aerialMapKey: 'your-mapbox-aerial-key',
 
-  otpApi: 'https://otp.511ny.org/otp/routers/',
+  // mapzenApiKey: "your-key", // your Mapzen Search API key
+  // geocoderSearchRadius : 25, // search radius in km for mapzen geocoder from initLatLng (defaults to 50 if not specified)
+
+  otpApi: 'http://localhost:8001/otp/routers/',
+
+  // geocoders to use:
+  geocoders: [ 'edsi' ], // possible choices: esri, otp, nominatim, mapzen, mapbox
+  reverseGeocoder: 'esri', // possible choices: esri, nominatim, mapzen, mapbox
+  reverseGeocode: true,
+
+  // geocoder api endpoints
+  nominatimApi: 'https://nominatim.openstreetmap.org/',
   esriApi: 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/',
-
-  reverseGeocode: true
+  mapzenApi: 'https://search.mapzen.com/v1/'
 }
