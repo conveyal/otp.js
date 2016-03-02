@@ -59,12 +59,9 @@
       <label for="mode" class="col-sm-4 control-label">Travel by</label>
       <div class="col-sm-8">
         <select id="mode" class="apiParam form-control" placeholder="Arrive">
-          <option value="TRANSIT,WALK" selected>Transit</option>
-          <option value="TRAINISH,WALK">Train only</option>
-          <option value="BUS,WALK">Bus only</option>
-          <option value="WALK">Walk only</option>
-          <option value="BICYCLE">Bike only</option>
-          <option value="TRANSIT,BICYCLE">Transit & Bike</option>
+          {{#each modes}}
+            <option value="{{this}}" {{#if @first}}selected{{/if}}>{{modeString this}}</option>
+          {{/each}}
         </select>
       </div>
     </div>
