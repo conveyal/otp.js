@@ -1,5 +1,6 @@
 build
 client/build
+client/config.js
 components
 node_modules
 npm-debug.log
