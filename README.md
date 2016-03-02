@@ -17,6 +17,6 @@ To get started with otp.js and the sample web client:
 
 3. Run `make`, which invokes Component to download any required dependencies and package them together with the local otp.js code (a copy of the packaged code is put in `client/build/`).
 
-4. Update the default configuration in `client/config.js` to point to your OTP backend.
+4. Copy the client configuration template from `client/config.js.template` to `client/config.js`; update `client/config.js` to reflect your specific setup including OTP backend, Mapbox keys, geocoder endpoints, etc.
 
 5. Deploy the client to the web by copying the `client` directory to your web server.
