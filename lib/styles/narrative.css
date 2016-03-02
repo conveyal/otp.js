@@ -178,63 +178,76 @@
 
 
 .otp-legMode-icon {
-	background: url('../images/mode/mode_sprites.png') no-repeat;
+	background: url('../images/mode/modes_hires.png') no-repeat;
+	background-size: 200px 20px;
 	display: inline-block;
 	vertical-align:middle;
 }
 
 .otp-legMode-icon-WALK {
-	background-position: -137px 0;
-	width: 12px;
-	height: 20px;
-}
-
-.otp-legMode-icon-FERRY {
-	background-position: -63px 0;
-	width: 17px;
-	height: 20px;
-}
-
-.otp-legMode-icon-BUS {
-	background-position: -39px 0;
-	width: 16px;
-	height: 20px;
-}
-
-.otp-legMode-icon-RAIL {
-	background-position: -114px 0;
+	background-position: 0px 0;
 	width: 15px;
 	height: 20px;
 }
 
 .otp-legMode-icon-BICYCLE {
-	background-position: 0 0;
-	width: 34px;
+	background-position: -15px 0;
+	width: 23px;
 	height: 20px;
 }
 
-.otp-legMode-icon-SUBWAY {
-	background-position: -92px 0;
-	width: 13px;
+.otp-legMode-icon-BUS {
+	background-position: -39px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-RAIL {
+	background-position: -60px 0;
+	width: 17px;
 	height: 20px;
 }
 
 .otp-legMode-icon-TRAM {
-	background-position: -92px 0;
-	width: 13px;
+	background-position: -60px 0;
+	width: 17px;
 	height: 20px;
 }
 
-.otp-legMode-icon-arrow-right {
-	background-position: -165px -2px;
-	width: 20px;
+.otp-legMode-icon-SUBWAY {
+	background-position: -77px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-FERRY {
+	background-position: -97px 0;
+	width: 21px;
+	height: 20px;
+}
+
+.otp-legMode-icon-GONDOLA {
+	background-position: -119px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-CAR {
+	background-position: -139px 0;
+	width: 19px;
 	height: 20px;
 }
 
 .otp-legMode-icon-arrow-left {
-	background-position: -154px -4px;
-	width: 8px;
+	background-position: -162px 0px;
+	width: 10px;
 	height: 16px;
+}
+
+.otp-legMode-icon-arrow-right {
+	background-position: -176px 0px;
+	width: 10px;
+	height: 20px;
 }
 
 .agencyBranding {
