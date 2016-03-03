@@ -1,21 +1,28 @@
 <div class="well">
   <div class="otp-itinHeader">
-    <span class="pull-right">
-      {{formatDuration duration}}<br>
-      <a href="#" class="print" title="Print Itinerary"><span class="glyphicon glyphicon-print"></span></a>
-    </span>
-    Option {{index}}:
-    {{#each legs}}
-    <nobr>
-      <div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>
-      <span {{#if attributes.routeColor }}style="border-bottom:2px solid #{{attributes.routeColor}};"{{/if}}>{{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}</span>
-      {{#unless @last}}
-      <div class="otp-legMode-icon otp-legMode-icon-arrow-right"></div>
-      {{/unless}}
-    </nobr>
-    {{/each}}
-    <br>
-    <span>{{formatTime startTime timeOffset}} - {{formatTime endTime timeOffset}}</span>
+    <div class="otp-itinHeader-title">
+      <span class="pull-right">
+        <a href="#" class="print" title="Print Itinerary"><span class="glyphicon glyphicon-print"></span></a>
+      </span>
+      <strong>Option {{index}}</strong>: {{formatDuration duration}}
+    </div>
+    <div class="otp-itinHeader-preview">
+      {{#each legs}}
+      <nobr>
+        <div class="otp-legMode-icon otp-legMode-icon-{{ attributes.mode }}"></div>
+        <span {{#if attributes.routeColor }}style="border-bottom:2px solid #{{attributes.routeColor}};"{{/if}}>{{#if attributes.routeShortName }}{{attributes.routeShortName}}{{/if}}</span>
+        {{#unless @last}}
+          <div class="otp-legMode-icon otp-legMode-icon-arrow-right" style="margin-left: 4px;"></div>
+        {{/unless}}
+      </nobr>
+      {{/each}}
+    </div>
+    <div class="otp-itinHeader-details">
+      {{#fare}}
+        <span class='pull-right'>{{fareString fare}}</span>
+      {{/fare}}
+      <span>{{formatTime startTime timeOffset}} - {{formatTime endTime timeOffset}}</span>
+    </div>
   </div>
   <div class="otp-itinBody"></div>
 </div>
