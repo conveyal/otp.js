@@ -9,6 +9,9 @@ window.OTP_config = {
 
   otpApi: 'http://localhost:8001/otp/routers/',
 
+  // default query parameters to pass to otp router
+  routerDefaults: {maxPreTransitTime: 1800},
+
   // geocoders to use:
   geocoders: [ 'esri' ], // possible choices: esri, otp, nominatim, mapzen, mapbox
   reverseGeocoder: 'esri', // possible choices: esri, nominatim, mapzen, mapbox
