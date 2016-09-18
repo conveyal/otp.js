@@ -14,7 +14,7 @@
     "component": "*",
     "component-uglifyjs": "*",
     "serve": "^1.4.0",
-    "standard": "*"
+    "standard": "8.1.0"
   },
   "scripts": {
     "start": "serve client",
