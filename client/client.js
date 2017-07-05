@@ -114,6 +114,8 @@ $(document).ready(function () {
     },
     start: function (lat, lon, zoom, querystring) {
       map.setView(L.latLng(lat, lon), zoom)
+
+      // if query string is specified in the start route, toggle the form settings on
       if (querystring) {
         requestModel.fromQueryString(querystring)
         requestView.toggleSettings()
