@@ -33,18 +33,18 @@ $(document).ready(function () {
 
   // create OpenStreetMap tile layers for streets and aerial imagery
   var osmLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
-      .osmMapKey + '/{z}/{x}/{y}{scale}.png', {
+    .osmMapKey + '/{z}/{x}/{y}{scale}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
       attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
-			detectRetina: true
+      detectRetina: true
     })
   var aerialLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
-      .aerialMapKey + '/{z}/{x}/{y}{scale}.png', {
+    .aerialMapKey + '/{z}/{x}/{y}{scale}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
       attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
-			detectRetina: true
+      detectRetina: true
     })
 
   // create a leaflet layer control and add it to the map
@@ -108,16 +108,23 @@ $(document).ready(function () {
 
   var Router = Backbone.Router.extend({
     routes: {
-      'start/:lat/:lon/:zoom': 'start',
+      'start/:lat/:lon/:zoom(?*querystring)': 'start',
       'start/:lat/:lon/:zoom/:routerId': 'startWithRouterId',
       'plan(?*querystring)': 'plan'
     },
-    start: function (lat, lon, zoom) {
+    start: function (lat, lon, zoom, querystring) {
       map.setView(L.latLng(lat, lon), zoom)
+
+      // if query string is specified in the start route, toggle the form settings on
+      if (querystring) {
+        requestModel.fromQueryString(querystring)
+        requestView.toggleSettings()
+      }
     },
     startWithRouterId: function (lat, lon, zoom, routerId) {
       window.OTP_config.routerId = routerId
 
+      stopsRequestModel.urlRoot = window.OTP_config.otpApi + routerId + '/index/stops'
       requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan'
       map.setView(L.latLng(lat, lon), zoom)
     },
