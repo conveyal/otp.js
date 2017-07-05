@@ -108,16 +108,21 @@ $(document).ready(function () {
 
   var Router = Backbone.Router.extend({
     routes: {
-      'start/:lat/:lon/:zoom': 'start',
+      'start/:lat/:lon/:zoom(?*querystring)': 'start',
       'start/:lat/:lon/:zoom/:routerId': 'startWithRouterId',
       'plan(?*querystring)': 'plan'
     },
-    start: function (lat, lon, zoom) {
+    start: function (lat, lon, zoom, querystring) {
       map.setView(L.latLng(lat, lon), zoom)
+      if (querystring) {
+        requestModel.fromQueryString(querystring)
+        requestView.toggleSettings()
+      }
     },
     startWithRouterId: function (lat, lon, zoom, routerId) {
       window.OTP_config.routerId = routerId
 
+      stopsRequestModel.urlRoot = window.OTP_config.otpApi + routerId + '/index/stops'
       requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan'
       map.setView(L.latLng(lat, lon), zoom)
     },
