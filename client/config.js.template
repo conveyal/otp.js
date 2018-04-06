@@ -23,8 +23,8 @@ window.OTP_config = {
   mapzenApi: 'https://search.mapzen.com/v1/',
 
   // specify modes to be enabled in 'travel by' dropdown as list of OTP modes
-  // defaults to: 'TRANSIT,WALK', 'TRAINISH,WALK', 'BUS,WALK', 'WALK', 'BICYCLE', 'TRANSIT,BICYCLE'
+  // defaults to: 'TRANSIT,WALK', 'SUBWAY,WALK', 'BUS,WALK', 'WALK', 'BICYCLE', 'TRANSIT,BICYCLE'
   //
   // e.g. uncomment following line to add drive-to-transit to the default list
-  modes: [ 'TRANSIT,WALK', 'TRAINISH,WALK', 'BUS,WALK', 'WALK', 'BICYCLE', 'TRANSIT,BICYCLE', 'TRANSIT,CAR_PARK' ]
+  modes: [ 'TRANSIT,WALK', 'SUBWAY,WALK', 'BUS,WALK', 'WALK', 'BICYCLE', 'TRANSIT,BICYCLE', 'TRANSIT,CAR_PARK' ]
 }
