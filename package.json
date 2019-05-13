@@ -11,14 +11,30 @@
     "url": "git://github.com/conveyal/otp.js.git"
   },
   "devDependencies": {
-    "component": "*",
-    "component-uglifyjs": "*",
+    "babel-plugin-syntax-dynamic-import": "^6.18.0",
+    "css-loader": "^2.1.1",
     "serve": "^1.4.0",
-    "standard": "8.3.0"
+    "standard": "8.3.0",
+    "style-loader": "^0.23.1",
+    "uglifyjs-webpack-plugin": "^2.1.2",
+    "webpack": "^4.31.0",
+    "webpack-cli": "^3.3.2"
   },
   "scripts": {
     "start": "serve client",
     "format": "standard --format lib/*.js client.js config.js index.js",
     "lint": "standard --verbose lib/*.js client.js config.js index.js"
+  },
+  "bugs": {
+    "url": "https://github.com/conveyal/otp.js/issues"
+  },
+  "main": "client/client.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "dependencies": {
+    "@webpack-cli/init": "^0.1.5",
+    "debug": "^4.1.0"
   }
 }
