@@ -24,7 +24,6 @@ function assign_bootstrap_mode () {
 }
 
 $(document).ready(function () {
-  var OTP = require('otpjs')
   var log = OTP.log('client')
 
   // set up the leafet map object
@@ -32,14 +31,14 @@ $(document).ready(function () {
   map.attributionControl.setPrefix('')
 
   // create OpenStreetMap tile layers for streets and aerial imagery
-  var osmLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
+  var osmLayer = L.tileLayer('https://{s}.tiles.mapbox.com/v3/' + window.OTP_config
     .osmMapKey + '/{z}/{x}/{y}{scale}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
       attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
       detectRetina: true
     })
-  var aerialLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
+  var aerialLayer = L.tileLayer('https://{s}.tiles.mapbox.com/v3/' + window.OTP_config
     .aerialMapKey + '/{z}/{x}/{y}{scale}.png', {
       subdomains: ['a', 'b', 'c', 'd'],
       attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
@@ -171,8 +170,7 @@ $(document).ready(function () {
   })
 
   $(window).resize(resize)
-  resize()
+  setTimeout(function(){ resize() }, 10)
   $('#tabs').tab()
-  map.invalidateSize()
   assign_bootstrap_mode()
 })

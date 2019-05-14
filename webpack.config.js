@@ -25,49 +25,54 @@ const path = require('path');
 const UglifyJSPlugin = require('uglifyjs-webpack-plugin');
 
 module.exports = {
+	entry: [
+		"./lib"
+	],
+	output: {
+		filename: "build.js",
+		path: path.resolve(__dirname, './client/build'),
+		publicPath: './build'
+	},
 	module: {
 		rules: [
 			{
 				test: /\.css$/,
-
+				use: ['style-loader', 'css-loader?sourceMap'],
+			},
+      {
+       	test: /\.html$/,
 				use: [
 					{
-						loader: 'style-loader',
-
-						options: {
-							sourceMap: true
-						}
-					},
-					{
-						loader: 'css-loader'
+					  loader: 'html-loader',
+					  options: {
+					    attrs: [':data-src']
+					  }
 					}
 				]
+      },
+			{
+				test: /\.(gif|png|jpe?g|svg)$/i,
+        use: [ 'file-loader?name=/images/[name]-[hash].[ext]' ],
+
 			}
 		]
 	},
-
-	output: {
-		chunkFilename: '[name].[chunkhash].js',
-		filename: '[name].[chunkhash].js',
-		path: path.resolve(__dirname, './client/build')
-	},
-
 	mode: 'development',
 	plugins: [new UglifyJSPlugin()],
-
-	optimization: {
-		splitChunks: {
-			cacheGroups: {
-				vendors: {
-					priority: -10,
-					test: /[\\/]node_modules[\\/]/
-				}
-			},
-
-			chunks: 'async',
-			minChunks: 1,
-			minSize: 30000,
-			name: true
-		}
+	resolve: {
+	    alias: {
+				 handlebars: 'handlebars/dist/handlebars.min.js'
+	    }
+	},
+	externals: {
+	  'backbone': 'Backbone',
+		'bootstrap': 'bootstrap',
+		'jquery': 'jQuery',
+		'L': 'leaflet',
+		'moment': 'moment',
+		'underscore': 'underscore',
+		'raphael': 'Raphael',
+		'window.L': 'leaflet',
+		'$': 'jQuery'
 	}
 };
