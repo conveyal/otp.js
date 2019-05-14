@@ -24,7 +24,6 @@ function assign_bootstrap_mode () {
 }
 
 $(document).ready(function () {
-  var OTP = require('otpjs')
   var log = OTP.log('client')
 
   // set up the leafet map object
@@ -182,8 +181,7 @@ $(document).ready(function () {
   })
 
   $(window).resize(resize)
-  resize()
+  setTimeout(function(){ resize() }, 10)
   $('#tabs').tab()
-  map.invalidateSize()
   assign_bootstrap_mode()
 })
