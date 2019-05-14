@@ -40,6 +40,7 @@
   "scripts": {
     "start": "serve client",
     "watch": "webpack --watch",
+    "webpack": "webpack",
     "format": "standard --format lib/*.js client.js config.js index.js",
     "lint": "standard --verbose lib/*.js client.js config.js index.js"
   },

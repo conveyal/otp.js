@@ -1,30 +1,13 @@
-
-COMPONENT = node_modules/.bin/component
-SERVE = serve
-
-JS := $(shell find lib -name '*.js' -print)
-
-PORT = 3000
-
-build: components $(JS)
-	@$(COMPONENT) build --dev --out client/build
+build: install
+	npm run webpack
 
 clean:
-	rm -rf build components node_modules
+	rm -rf client/build node_modules
 
-components: component.json
-	@$(COMPONENT) install --dev
-
-install: node_modules
-	@npm install -g component myth serve
-
-node_modules: package.json
+install:
 	@npm install
 
-server:
-	@$(SERVE) client --port $(PORT)
-
 watch:
-	watch $(MAKE) build
+	npm run watch
 
-.PHONY: build clean install server watch
+.PHONY: build clean install watch
