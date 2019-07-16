@@ -32,16 +32,21 @@ $(document).ready(function () {
   map.attributionControl.setPrefix('')
 
   // create OpenStreetMap tile layers for streets and aerial imagery
-  var osmLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
-    .osmMapKey + '/{z}/{x}/{y}{scale}.png', {
-      subdomains: ['a', 'b', 'c', 'd'],
+  var osmLayer = L.tileLayer('https://api.tiles.mapbox.com/v4/' +
+      window.OTP_config.osmMapKey +
+      '/{z}/{x}/{y}{scale}.png?access_token=' +
+      window.OTP_config.mapToken,
+    {
       attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
       detectRetina: true
-    })
-  var aerialLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
-    .aerialMapKey + '/{z}/{x}/{y}{scale}.png', {
-      subdomains: ['a', 'b', 'c', 'd'],
+    }
+  )
+  var aerialLayer = L.tileLayer('https://api.tiles.mapbox.com/v4/' +
+      window.OTP_config.aerialMapKey +
+      '/{z}/{x}/{y}{scale}.png?access_token=' +
+      window.OTP_config.mapToken,
+    {
       attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
       detectRetina: true
