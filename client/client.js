@@ -39,6 +39,9 @@ $(document).ready(function () {
     {
       attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
+      // Zoom offset and tile size adjust for retina-sized tiles.
+      zoomOffset: -1,
+      tileSize: L.Browser.retina ? 512 : 256,
       detectRetina: true
     }
   )
@@ -49,6 +52,9 @@ $(document).ready(function () {
     {
       attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
       scale: L.Browser.retina ? '@2x' : '',
+      // Zoom offset and tile size adjust for retina-sized tiles.
+      zoomOffset: -1,
+      tileSize: L.Browser.retina ? 512 : 256,
       detectRetina: true
     })
 
