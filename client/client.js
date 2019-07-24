@@ -175,7 +175,8 @@ $(document).ready(function () {
   })
 
   $(window).resize(resize)
-  setTimeout(function(){ resize() }, 10)
+  // Trigger map#invalidateSize
+  setTimeout(function(){ resize() }, 50)
   $('#tabs').tab()
   assign_bootstrap_mode()
 })
