@@ -130,6 +130,9 @@ $(document).ready(function () {
 
       stopsRequestModel.urlRoot = window.OTP_config.otpApi + routerId + '/index/stops'
       requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan'
+      // Set routerId query param so that trip plan requests contain routerId in
+      // the query string (this ensures shared URLs will use the correct router).
+      requestModel.attributes.routerId = routerId
       map.setView(L.latLng(lat, lon), zoom)
     },
     plan: function (querystring) {
