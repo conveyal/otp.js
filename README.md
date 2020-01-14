@@ -1,3 +1,9 @@
+# Note: This project is no longer under active development. 
+
+Conveyal no longer uses this library internally. The OpenTripPlanner project has two client side libraries that are intended to replace this library.
+
+* [OTP-UI](https://github.com/opentripplanner/otp-ui)
+* [OTP-RR](https://github.com/opentripplanner/otp-react-redux)
 
 # otp.js
 
